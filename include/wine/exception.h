@@ -115,10 +115,13 @@ typedef struct { int reg; } __wine_jmp_buf;
 /* wasm32: setjmp must be called in the frame that saves, so it is not
  * wrapped; clang lowers it onto wasm exception handling
  * (-mllvm -wasm-enable-sjlj; runtime in winecrt0's wasm32.c). */
-extern int setjmp( void * ) __attribute__((__nothrow__,__returns_twice__));
-extern void DECLSPEC_NORETURN longjmp( void *, int );
-#define __wine_setjmpex( buf, frame ) setjmp( (buf) )
-#define __wine_longjmp( buf, retval ) longjmp( (buf), (retval) )
+/* By asm label: clang's lowering knows the symbols setjmp and longjmp,
+ * and msvcrt's setjmp.h has C declarations of its own for those names. */
+extern int __wine_wasm_setjmp( void * ) __asm__("setjmp") __attribute__((__nothrow__,__returns_twice__));
+/* (the same symbols msvcrt's setjmp.h declares on wasm32) */
+extern void DECLSPEC_NORETURN __wine_wasm_longjmp( void *, int ) __asm__("longjmp");
+#define __wine_setjmpex( buf, frame ) __wine_wasm_setjmp( (buf) )
+#define __wine_longjmp( buf, retval ) __wine_wasm_longjmp( (buf), (retval) )
 #else
 extern int __cdecl __attribute__ ((__nothrow__,__returns_twice__)) __wine_setjmpex( __wine_jmp_buf *buf,
                                                    EXCEPTION_REGISTRATION_RECORD *frame );

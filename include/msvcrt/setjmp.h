@@ -132,6 +132,12 @@ typedef struct _JUMP_BUFFER
 #define _JBLEN  24
 #define _JBTYPE unsigned __int64
 
+#elif defined(__wasm32__)
+
+/* native code under gex: clang's wasm SjLj lowering's buffer */
+#define _JBLEN 16
+#define _JBTYPE int
+
 #else
 
 #define _JBLEN 1
@@ -151,7 +157,7 @@ _ACRTIMP void __cdecl longjmp(jmp_buf,int);
 # define __has_builtin(x) 0
 #endif
 
-#ifdef _UCRT
+#if defined(_UCRT) && !defined(__wasm32__)
 # ifdef __i386__
 #  define _setjmp __intrinsic_setjmp
 # else
@@ -159,7 +165,10 @@ _ACRTIMP void __cdecl longjmp(jmp_buf,int);
 # endif
 #endif
 
-#ifdef __i386__
+#ifdef __wasm32__
+/* a call to setjmp is lowered by clang (-mllvm -wasm-enable-sjlj) */
+int __cdecl __attribute__((__nothrow__,__returns_twice__)) setjmp(jmp_buf);
+#elif defined(__i386__)
 _ACRTIMP int __cdecl __attribute__((__nothrow__,__returns_twice__)) _setjmp(jmp_buf);
 # define setjmp(buf) _setjmp((buf))
 #elif !defined(_setjmpex) && __has_builtin(_setjmpex)

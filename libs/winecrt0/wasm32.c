@@ -21,6 +21,10 @@
  * a module once per thread). Assembly, because clang cannot address an
  * address_space(1) global in position-independent code. */
 __asm__(
+    /* the tag clang's SjLj lowering throws and catches (wasi-libc's) */
+    "\t.tagtype __c_longjmp i32\n"
+    "\t.globl __c_longjmp\n"
+    "__c_longjmp:\n"
     "\t.globaltype gexw_icall_target_g, i32\n"
     "gexw_icall_target_g:\n"
     "\t.globaltype gexw_ctx_g, i32\n"

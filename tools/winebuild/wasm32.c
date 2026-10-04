@@ -117,7 +117,7 @@ static const char *find_func_sig( const char *name )
 static void read_wasm_object( const unsigned char *data, size_t size )
 {
     struct wasm_buf b = { data + 8, data + size };
-    char **types = NULL;
+    char **types = NULL, **import_names = NULL;
     unsigned int *func_type = NULL, ntypes = 0, nimports = 0, nfuncs = 0, i;
 
     if (size < 8 || memcmp( data, "\0asm", 4 )) return;
@@ -156,13 +156,17 @@ static void read_wasm_object( const unsigned char *data, size_t size )
             for (i = 0; i < n; i++)
             {
                 unsigned char kind;
+                char *field;
                 free( wasm_name( &s ));
-                free( wasm_name( &s ));
+                field = wasm_name( &s );
                 kind = *s.p++;
                 switch (kind)
                 {
                 case 0:
                     func_type = xrealloc( func_type, (nimports + 1) * sizeof(*func_type) );
+                    import_names = xrealloc( import_names, (nimports + 1) * sizeof(*import_names) );
+                    import_names[nimports] = field;
+                    field = NULL;
                     func_type[nimports++] = leb( &s );
                     break;
                 case 1: { unsigned int fl; s.p++; fl = leb( &s ); leb( &s ); if (fl & 1) leb( &s ); break; }
@@ -170,6 +174,7 @@ static void read_wasm_object( const unsigned char *data, size_t size )
                 case 3: s.p += 2; break;
                 case 4: s.p++; leb( &s ); break;
                 }
+                free( field );
             }
         }
         else if (id == 3)  /* functions */
@@ -203,7 +208,12 @@ static void read_wasm_object( const unsigned char *data, size_t size )
                         {
                             unsigned int idx = leb( &t );
                             char *sym = (!undefined || explicit_name) ? wasm_name( &t ) : NULL;
-                            if (sym && !undefined && !local && idx < nimports + nfuncs && func_type[idx] < ntypes)
+                            /* defined here, or called from here (an import: its
+                             * type is the caller's view, which is what an
+                             * adapter for a function another DLL defines needs) */
+                            if (!sym && undefined && idx < nimports) sym = xstrdup( import_names[idx] );
+                            if (sym && !local && idx < nimports + nfuncs && func_type[idx] < ntypes &&
+                                (!undefined || !find_func_sig( sym )))
                                 add_func( sym, types[func_type[idx]] );
                             free( sym );
                             break;
@@ -228,6 +238,8 @@ static void read_wasm_object( const unsigned char *data, size_t size )
     }
     for (i = 0; i < ntypes; i++) free( types[i] );
     free( types );
+    for (i = 0; i < nimports; i++) free( import_names[i] );
+    free( import_names );
     free( func_type );
 }
 
