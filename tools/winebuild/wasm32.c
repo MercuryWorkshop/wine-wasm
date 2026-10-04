@@ -459,8 +459,8 @@ static unsigned int adapter_count;
 
 static const char *adapter_symbol( const ORDDEF *odp )
 {
-    const char *name = odp->name ? odp->name : odp->export_name;
-    if (name) return strmake( "gexp_%s", name );
+    /* the skeleton's export table names it, unless it is -noname */
+    if (odp->name && !(odp->flags & FLAG_NONAME)) return strmake( "gexp_%s", odp->name );
     return strmake( "gexp_#%d", odp->ordinal );
 }
 
