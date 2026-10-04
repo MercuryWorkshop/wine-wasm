@@ -1228,7 +1228,9 @@ typedef struct _I386_CONTEXT
 #define CONTEXT_I386_FULL (CONTEXT_I386_CONTROL | CONTEXT_I386_INTEGER | CONTEXT_I386_SEGMENTS)
 #define CONTEXT_I386_ALL (CONTEXT_I386_FULL | CONTEXT_I386_FLOATING_POINT | CONTEXT_I386_DEBUG_REGISTERS | CONTEXT_I386_EXTENDED_REGISTERS)
 
-#ifdef __i386__
+/* wasm32: the CONTEXT is the guest's i386 register file (gex's, through
+ * BTCpu). */
+#if defined(__i386__) || defined(__wasm32__)
 
 #define CONTEXT_CONTROL CONTEXT_I386_CONTROL
 #define CONTEXT_INTEGER CONTEXT_I386_INTEGER
@@ -2494,7 +2496,7 @@ NTSYSAPI void   WINAPI RtlUnwind(void*,void*,EXCEPTION_RECORD*,void*);
 NTSYSAPI void*  WINAPI RtlPcToFileHeader(void*,void**);
 NTSYSAPI ULONG  WINAPI RtlWalkFrameChain(void**,ULONG,ULONG);
 
-#ifndef __i386__
+#if !defined(__i386__) && !defined(__wasm32__)
 
 #define UNWIND_HISTORY_TABLE_SIZE 12
 

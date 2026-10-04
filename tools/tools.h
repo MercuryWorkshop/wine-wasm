@@ -649,6 +649,9 @@ static inline int get_cpu_from_name( const char *name )
         { "arm64ec",   CPU_ARM64EC },
         { "arm64",     CPU_ARM64 },
         { "arm",       CPU_ARM },
+        /* W0 stopgap: wasm32's data layout is i386's (ILP32, MSVC
+         * alignment). winebuild gets a CPU of its own in W1. */
+        { "wasm32",    CPU_i386 },
     };
     unsigned int i;
 
