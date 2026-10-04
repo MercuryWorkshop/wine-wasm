@@ -105,13 +105,25 @@ typedef struct { DECLSPEC_ALIGN(16) struct { unsigned __int64 Part[2]; } reg[16]
 typedef struct { int reg[28]; } __wine_jmp_buf;
 #elif defined(__aarch64__)
 typedef struct { __int64 reg[24]; } __wine_jmp_buf;
+#elif defined(__wasm32__)
+typedef struct { int reg[16]; } __wine_jmp_buf;
 #else
 typedef struct { int reg; } __wine_jmp_buf;
 #endif
 
+#ifdef __wasm32__
+/* wasm32: setjmp must be called in the frame that saves, so it is not
+ * wrapped; clang lowers it onto wasm exception handling
+ * (-mllvm -wasm-enable-sjlj; runtime in winecrt0's wasm32.c). */
+extern int setjmp( void * ) __attribute__((__nothrow__,__returns_twice__));
+extern void DECLSPEC_NORETURN longjmp( void *, int );
+#define __wine_setjmpex( buf, frame ) setjmp( (buf) )
+#define __wine_longjmp( buf, retval ) longjmp( (buf), (retval) )
+#else
 extern int __cdecl __attribute__ ((__nothrow__,__returns_twice__)) __wine_setjmpex( __wine_jmp_buf *buf,
                                                    EXCEPTION_REGISTRATION_RECORD *frame );
 extern void DECLSPEC_NORETURN __cdecl __wine_longjmp( __wine_jmp_buf *buf, int retval );
+#endif
 extern void DECLSPEC_NORETURN __cdecl __wine_rtl_unwind( EXCEPTION_REGISTRATION_RECORD* frame, EXCEPTION_RECORD *record,
                                                          void (*target)(void) );
 extern DWORD __cdecl __wine_exception_handler( EXCEPTION_RECORD *record,

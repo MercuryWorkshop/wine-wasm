@@ -1121,6 +1121,8 @@ SOURCES = \
 	wine/dplaysp.h \
 	wine/epm.idl \
 	wine/exception.h \
+	wine/gex/gex_abi.h \
+	wine/gex/provider.h \
 	wine/fil_data.idl \
 	wine/gdi_driver.h \
 	wine/glu.h \

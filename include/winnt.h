@@ -2636,6 +2636,18 @@ static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
 {
     return (struct _TEB *)(ULONG_PTR)_MoveFromCoprocessor(15, 0, 13, 0, 2);
 }
+#elif defined(__wasm32__)
+/* wasm32: the TEB is the guest thread's (gex's FS base); ntdll keeps it
+ * in a per-thread wasm global (signal_wasm32.c). */
+struct _TEB * WINAPI __wine_wasm_current_teb(void);
+/* wasm has no return addresses: the caller that matters is the guest's,
+ * the return address of the innermost call from x86 into native code. */
+void * WINAPI __wine_wasm_return_address(void);
+#define __builtin_return_address(n) __wine_wasm_return_address()
+static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
+{
+    return __wine_wasm_current_teb();
+}
 #elif !defined(RC_INVOKED)
 # error You must define NtCurrentTeb() for your architecture
 #endif

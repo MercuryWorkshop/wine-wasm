@@ -1,0 +1,5 @@
+gex's ABI for native Wine modules on wasm32 (docs/wine-native.md in the gex
+tree), vendored:
+  gex_abi.h   generated: `gexc cgen-c --header` (gex-abi's constants)
+  provider.h  gex's crates/gex-cgen/providers/provider.h
+Regenerate both when gex's ABI changes (tools/wine-wasm/vendor-abi.sh in gex).

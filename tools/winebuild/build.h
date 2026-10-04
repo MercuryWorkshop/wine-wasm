@@ -184,7 +184,7 @@ static inline int is_pe(void)
 #define FLAG_CPU(cpu)  (0x10000 << (cpu))
 #define FLAG_CPU_MASK  (FLAG_CPU_WIN32 | FLAG_CPU_WIN64)
 #define FLAG_CPU_WIN64 (FLAG_CPU(CPU_x86_64) | FLAG_CPU(CPU_ARM64) | FLAG_CPU(CPU_ARM64EC))
-#define FLAG_CPU_WIN32 (FLAG_CPU(CPU_i386) | FLAG_CPU(CPU_ARM))
+#define FLAG_CPU_WIN32 (FLAG_CPU(CPU_i386) | FLAG_CPU(CPU_ARM) | FLAG_CPU(CPU_WASM32))
 
 #define MAX_ORDINALS  65535
 
@@ -270,6 +270,14 @@ extern DLLSPEC *alloc_dll_spec(void);
 extern char *make_c_identifier( const char *str );
 extern const char *get_abi_name( const ORDDEF *odp, const char *name );
 extern const char *get_link_name( const ORDDEF *odp );
+/* wasm32 (wasm32.c) */
+extern const char *wasm_module_file;
+extern void output_wasm_spec( DLLSPEC *spec, struct strarray files );
+struct wasm_module_info;
+extern void *read_wasm_module_info( const char *name );
+extern void wasm_module_layout( const void *info, unsigned int *mem_size, unsigned int *mem_align,
+                                const unsigned char **bytes, size_t *size );
+extern int wasm_module_data_export( const struct wasm_module_info *info, const char *name, unsigned int *offset );
 extern int sort_func_list( ORDDEF **list, int count, int (*compare)(const void *, const void *) );
 extern unsigned int get_section_alignment(void);
 extern unsigned int get_args_size( const ORDDEF *odp );

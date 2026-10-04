@@ -511,6 +511,17 @@ static struct strarray get_link_args( const char *output_name )
 
     if (verbose > 1) strarray_add( &flags, "-v" );
 
+    if (target.cpu == CPU_WASM32)
+    {
+        /* a position-independent wasm module (the compiler driver knows
+         * the rest: docs/wine-native.md in the gex tree) */
+        strarray_add( &link_args, "-shared" );
+        /* what other DLLs export stays an import of the module, bound
+         * when gex instantiates it */
+        strarray_add( &link_args, "-Wl,--unresolved-symbols=import-dynamic" );
+        return link_args;
+    }
+
     switch (target.platform)
     {
     case PLATFORM_APPLE:
@@ -831,6 +842,13 @@ static struct strarray get_compat_defines( int gcc_defs )
             strarray_add(&args, "-D__stdcall=__attribute__((__stdcall__)) __attribute__((__force_align_arg_pointer__))");
             strarray_add(&args, "-D__cdecl=__attribute__((__cdecl__)) __attribute__((__force_align_arg_pointer__))");
             strarray_add(&args, "-D__fastcall=__attribute__((__fastcall__))");
+            break;
+        case CPU_WASM32:
+            /* One calling convention; the i386 convention of an export is
+             * the .spec file's, and the adapters apply it. */
+            strarray_add(&args, "-D__stdcall=");
+            strarray_add(&args, "-D__cdecl=");
+            strarray_add(&args, "-D__fastcall=");
             break;
         case CPU_ARM:
             strarray_add(&args, "-D__stdcall=__attribute__((pcs(\"aapcs-vfp\")))");
@@ -1348,6 +1366,11 @@ static void build(struct strarray input_files, const char *output)
     STRARRAY_FOR_EACH( dir, &lib_dirs ) strarray_add(&link_args, strmake("-L%s", dir));
 
     strarray_addall( &link_args, spec_objs );
+    /* wasm32: the spec object's data exports, as linker options */
+    if (target.cpu == CPU_WASM32)
+        STRARRAY_FOR_EACH( obj, &spec_objs )
+            if (!access( strmake( "%s.rsp", obj ), R_OK ))
+                strarray_add( &link_args, strmake( "-Wl,@%s.rsp", obj ));
 
     if (is_pe)
     {
@@ -1390,7 +1413,7 @@ static void build(struct strarray input_files, const char *output)
 	}
     }
 
-    if (!nostdlib && !is_pe)
+    if (!nostdlib && !is_pe && target.cpu != CPU_WASM32)
     {
 	strarray_add(&link_args, "-ldl");
 	strarray_add(&link_args, "-lm");
@@ -1451,7 +1474,8 @@ static void build(struct strarray input_files, const char *output)
         spawn(implib_args, 0);
     }
 
-    if (!is_pe) fixup_constructors( output_file_name );
+    if (target.cpu == CPU_WASM32) generate_app_loader = 0;
+    else if (!is_pe) fixup_constructors( output_file_name );
     else if (wine_builtin) make_wine_builtin( output_file_name );
 
     /* create the loader script */
@@ -2005,7 +2029,7 @@ int main(int argc, char **argv)
 
     if (!file_align) file_align = section_align;
 
-    if (!is_pe && target.cpu != CPU_i386 && target.cpu != CPU_x86_64)
+    if (!is_pe && target.cpu != CPU_i386 && target.cpu != CPU_x86_64 && target.cpu != CPU_WASM32)
         error( "Non-PE builds are not supported on this platform. You need to use something like '--target=%s-windows'.\n",
                target.cpu == CPU_ARM ? "arm" : "aarch64" );
 

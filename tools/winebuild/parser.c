@@ -283,7 +283,7 @@ static int parse_spec_arguments( ORDDEF *odp, DLLSPEC *spec, int optional )
             error( "First argument of a thiscall function must be a pointer\n" );
             return 0;
         }
-        if (odp->flags & FLAG_CPU_MASK & ~FLAG_CPU(CPU_i386))
+        if (odp->flags & FLAG_CPU_MASK & ~(FLAG_CPU(CPU_i386) | FLAG_CPU(CPU_WASM32)))
         {
             error( "A thiscall function can only be exported on i386\n" );
             return 0;
@@ -338,7 +338,7 @@ static int parse_spec_export( ORDDEF *odp, DLLSPEC *spec )
     if (odp->type == TYPE_VARARGS)
         odp->flags |= FLAG_NORELAY;  /* no relay debug possible for varags entry point */
 
-    if (target.cpu != CPU_i386)
+    if (target.cpu != CPU_i386 && target.cpu != CPU_WASM32)
         odp->flags &= ~FLAG_FASTCALL;
 
     if (!(token = GetToken(1)))
@@ -538,6 +538,10 @@ static const char *parse_spec_flags( DLLSPEC *spec, ORDDEF *odp, const char *tok
     /* x86-64 implies arm64ec */
     if (odp->flags & FLAG_CPU(CPU_x86_64)) odp->flags |= FLAG_CPU(CPU_ARM64EC);
     if (cpu_mask & FLAG_CPU(CPU_x86_64)) cpu_mask |= FLAG_CPU(CPU_ARM64EC);
+    /* i386 implies wasm32: a wasm32 Wine serves i386 programs, which
+     * import i386's exports */
+    if (odp->flags & FLAG_CPU(CPU_i386)) odp->flags |= FLAG_CPU(CPU_WASM32);
+    if (cpu_mask & FLAG_CPU(CPU_i386)) cpu_mask |= FLAG_CPU(CPU_WASM32);
 
     if (cpu_mask) odp->flags |= FLAG_CPU_MASK & ~cpu_mask;
     return token;

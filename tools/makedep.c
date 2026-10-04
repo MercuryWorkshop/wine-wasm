@@ -3890,6 +3890,11 @@ static const struct
 };
 
 
+/* Wine as native wasm32 (docs/wine-native.md): a DLL's code is a wasm
+ * module (the .so), and its PE file is the skeleton gex binds it at, built
+ * from the module (data exports point into the module's data). */
+static int host_wasm32;
+
 /*******************************************************************
  *         output_fake_module
  */
@@ -3906,11 +3911,14 @@ static void output_fake_module( struct makefile *make, const char *spec_file )
     output( "%s:", obj_dir_path( make, name ));
     if (spec_file) output_filename( spec_file );
     output_filenames_obj_dir( make, make->res_files[arch] );
+    if (host_wasm32) output_filename( obj_dir_path( make, arch_module_name( make->module, arch )));
     output_filename( winebuild );
     output_filename( winegcc );
     output( "\n" );
     output_winegcc_command( make, arch );
     output_filename( "-Wb,--fake-module" );
+    if (host_wasm32)
+        output_filename( strmake( "-Wb,--wasm-module,%s", obj_dir_path( make, arch_module_name( make->module, arch ))));
     if (!make->is_exe) output_filename( "-shared" );
     if (spec_file) output_filename( spec_file );
     output_filenames( make->extradllflags );
@@ -5143,6 +5151,7 @@ int main( int argc, char *argv[] )
     so_dll_supported = !!dll_ext[0][0];  /* non-empty dll ext means supported */
 
     strarray_add( &archs, get_expanded_make_variable( top_makefile, "HOST_ARCH" ));
+    host_wasm32 = !strcmp( archs.str[0], "wasm32" );
     strarray_addall( &archs, get_expanded_make_var_array( top_makefile, "PE_ARCHS" ));
 
     /* check for ARM64X setup */

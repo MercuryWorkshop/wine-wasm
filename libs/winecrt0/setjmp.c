@@ -36,7 +36,7 @@
 #include "wine/exception.h"
 #include "wine/asm.h"
 
-#if defined(__GNUC__) || defined(__clang__)
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(__wasm32__)
 
 #if defined(__i386__)
 

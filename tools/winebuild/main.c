@@ -190,6 +190,7 @@ static const char usage_str[] =
 "   -f FLAGS                  Compiler flags (-fPIC and -fasynchronous-unwind-tables are supported)\n"
 "   -F, --filename=DLLFILE    Set the DLL filename (default: from input file name)\n"
 "       --fake-module         Create a fake binary module\n"
+"       --wasm-module=FILE    wasm32: the DLL's linked wasm module (for the skeleton)\n"
 "   -h, --help                Display this help message\n"
 "   -H, --heap=SIZE           Set the heap size for a Win16 dll\n"
 "   -I DIR                    Ignored for C flags compatibility\n"
@@ -238,6 +239,7 @@ enum long_options_values
     LONG_OPT_DISABLE_DYNAMICBASE,
     LONG_OPT_EXTERNAL_SYMS,
     LONG_OPT_FAKE_MODULE,
+    LONG_OPT_WASM_MODULE,
     LONG_OPT_FIXUP_CTORS,
     LONG_OPT_LARGE_ADDRESS_AWARE,
     LONG_OPT_LDCMD,
@@ -274,6 +276,7 @@ static const struct long_option long_options[] =
     { "disable-dynamicbase", 0, LONG_OPT_DISABLE_DYNAMICBASE },
     { "external-symbols",    0, LONG_OPT_EXTERNAL_SYMS },
     { "fake-module",         0, LONG_OPT_FAKE_MODULE },
+    { "wasm-module",         1, LONG_OPT_WASM_MODULE },
     { "large-address-aware", 0, LONG_OPT_LARGE_ADDRESS_AWARE },
     { "ld-cmd",              1, LONG_OPT_LDCMD },
     { "nm-cmd",              1, LONG_OPT_NMCMD },
@@ -471,6 +474,9 @@ static void option_callback( int optc, char *optarg )
     case LONG_OPT_DATA_ONLY:
         data_only = 1;
         break;
+    case LONG_OPT_WASM_MODULE:
+        wasm_module_file = xstrdup( optarg );
+        break;
     case LONG_OPT_FAKE_MODULE:
         fake_module = 1;
         break;
@@ -565,7 +571,7 @@ static int parse_input_file( DLLSPEC *spec )
 static void check_target(void)
 {
     if (is_pe()) return;
-    if (target.cpu == CPU_i386 || target.cpu == CPU_x86_64) return;
+    if (target.cpu == CPU_i386 || target.cpu == CPU_x86_64 || target.cpu == CPU_WASM32) return;
     fatal_error( "Non-PE builds are not supported on this platform.\n" );
 }
 
@@ -624,6 +630,12 @@ int main(int argc, char **argv)
             output_data_module( spec );
             break;
         }
+        if (target.cpu == CPU_WASM32 && spec->type == SPEC_WIN32)
+        {
+            /* the module's glue is C: entry adapters (wasm32.c) */
+            output_wasm_spec( spec, files );
+            break;
+        }
         if (!is_pe())
         {
             read_undef_symbols( spec, files );
@@ -644,6 +656,14 @@ int main(int argc, char **argv)
         check_target();
         if (!spec_file_name) fatal_error( "missing .spec file\n" );
         if (!parse_input_file( spec )) break;
+        if (target.cpu == CPU_WASM32)
+        {
+            /* wasm32: a DLL's imports stay undefined symbols of its module
+             * (imports bound when gex instantiates it), so the import
+             * library has nothing in it but the files given */
+            output_static_lib( output_file_name, files, 1 );
+            break;
+        }
         output_import_lib( spec, files );
         break;
     case MODE_STATICLIB:

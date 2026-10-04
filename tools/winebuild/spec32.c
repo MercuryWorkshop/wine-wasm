@@ -784,7 +784,8 @@ void output_module( DLLSPEC *spec )
     output( "\t.long 0x4550\n" );         /* Signature */
     switch (target.cpu)
     {
-    case CPU_i386:    machine = IMAGE_FILE_MACHINE_I386; break;
+    case CPU_i386:
+    case CPU_WASM32:  machine = IMAGE_FILE_MACHINE_I386; break;  /* it serves i386 programs */
     case CPU_ARM64EC:
     case CPU_x86_64:  machine = IMAGE_FILE_MACHINE_AMD64; break;
     case CPU_ARM:     machine = IMAGE_FILE_MACHINE_ARMNT; break;
@@ -1203,7 +1204,8 @@ static void output_pe_file( DLLSPEC *spec, const char signature[32] )
     put_dword( 0x4550 );                             /* Signature */
     switch (target.cpu)
     {
-    case CPU_i386:    put_word( IMAGE_FILE_MACHINE_I386 ); break;
+    case CPU_i386:
+    case CPU_WASM32:  put_word( IMAGE_FILE_MACHINE_I386 ); break;  /* it serves i386 programs */
     case CPU_ARM64EC:
     case CPU_x86_64:  put_word( IMAGE_FILE_MACHINE_AMD64 ); break;
     case CPU_ARM:     put_word( IMAGE_FILE_MACHINE_ARMNT ); break;
@@ -1298,6 +1300,127 @@ static void output_pe_file( DLLSPEC *spec, const char signature[32] )
  *
  * Build a fake binary module from a spec file.
  */
+/*******************************************************************
+ *         output_wasm_skeleton
+ *
+ * wasm32: the DLL's PE file is a skeleton gex binds the wasm module at
+ * (docs/wine-native.md §3.2 in the gex tree):
+ *   .text     the entry point and one 4-byte stub per exported function
+ *             (ud2; ud2), never run: gex binds the module's gexp_<name>
+ *             adapter at each
+ *   .edata    the exports: functions at their stubs, data exports in
+ *             .wasmdat, forwarders as usual
+ *   .wasmdat  the module's data (__memory_base is its start); data exports
+ *             point at their offsets in it
+ *   .wasm     the module itself
+ */
+static void output_wasm_skeleton( DLLSPEC *spec )
+{
+    struct exports *exports = &spec->exports;
+    const struct wasm_module_info *info = read_wasm_module_info( wasm_module_file );
+    unsigned int mem_size, mem_align, i, text_rva, data_rva, exp_rva, str_rva, pos, exp_count;
+    const unsigned char *bytes;
+    size_t size;
+    unsigned int *stub_rva;
+    unsigned char *zero;
+
+    wasm_module_layout( info, &mem_size, &mem_align, &bytes, &size );
+    pe.section_align = 0x1000;
+    pe.file_align    = 0x200;
+    init_output_buffer();
+
+    /* .text: the entry point first (AddressOfEntryPoint is .text's start) */
+    text_rva = current_rva();
+    stub_rva = xmalloc( (exports->limit + 2) * sizeof(*stub_rva) );
+    put_dword( 0x0b0f0b0f );
+    for (i = exports->base; i <= exports->limit; i++)
+    {
+        ORDDEF *odp = exports->ordinals[i];
+        stub_rva[i] = 0;
+        if (!odp || (odp->flags & FLAG_FORWARD) || odp->type == TYPE_EXTERN) continue;
+        stub_rva[i] = text_rva + output_buffer_pos;
+        put_dword( 0x0b0f0b0f );  /* ud2; ud2 */
+    }
+    flush_output_to_section( ".text", -1, 0x60000020 /* CNT_CODE|MEM_EXECUTE|MEM_READ */ );
+
+    /* .wasmdat: placed before the exports so data RVAs are known */
+    data_rva = (current_rva() + (1u << mem_align) - 1) & ~((1u << mem_align) - 1);
+    {
+        unsigned int len = mem_size ? mem_size : 16;
+        zero = xmalloc( len );
+        memset( zero, 0, len );
+        put_data( zero, len );
+        flush_output_to_section( ".wasmdat", -1, 0xc0000040 /* CNT_INITIALIZED_DATA|MEM_READ|MEM_WRITE */ );
+        data_rva = pe.sec[pe.sec_count - 1].rva;
+    }
+
+    /* .edata */
+    exp_count = get_exports_count( exports );
+    exp_rva = current_rva() + 40;
+    str_rva = exp_rva + 4 * exp_count + 6 * exports->nb_names;
+    if (exports->nb_entry_points)
+    {
+        put_dword( 0 );               /* Characteristics */
+        put_dword( hash_filename(spec->file_name) );     /* TimeDateStamp */
+        put_word( 0 );                /* MajorVersion */
+        put_word( 0 );                /* MinorVersion */
+        put_dword( str_rva );         /* Name */
+        put_dword( exports->base );   /* Base */
+        put_dword( exp_count );       /* NumberOfFunctions */
+        put_dword( exports->nb_names );  /* NumberOfNames */
+        put_dword( exp_rva );         /* AddressOfFunctions */
+        put_dword( exports->nb_names ? exp_rva + 4 * exp_count : 0 );                       /* AddressOfNames */
+        put_dword( exports->nb_names ? exp_rva + 4 * exp_count + 4 * exports->nb_names : 0 );  /* AddressOfNameOrdinals */
+
+        for (i = 0, pos = str_rva + strlen(spec->file_name) + 1; i < exports->nb_names; i++)
+            pos += strlen( exports->names[i]->name ) + 1;
+        for (i = exports->base; i <= exports->limit; i++)
+        {
+            ORDDEF *odp = exports->ordinals[i];
+            unsigned int off;
+            if (!odp) put_dword( 0 );
+            else if (odp->flags & FLAG_FORWARD)
+            {
+                put_dword( pos );
+                pos += strlen( odp->link_name ) + 1;
+            }
+            else if (odp->type == TYPE_EXTERN)
+            {
+                if (wasm_module_data_export( info, get_link_name( odp ), &off )) put_dword( data_rva + off );
+                else
+                {
+                    warning( "%s: data export %s is not in the module\n", spec->file_name, get_link_name( odp ));
+                    put_dword( 0 );
+                }
+            }
+            else put_dword( stub_rva[i] );
+        }
+        for (i = 0, pos = str_rva + strlen(spec->file_name) + 1; i < exports->nb_names; i++)
+        {
+            put_dword( pos );
+            pos += strlen(exports->names[i]->name) + 1;
+        }
+        for (i = 0; i < exports->nb_names; i++) put_word( exports->names[i]->ordinal - exports->base );
+        put_data( spec->file_name, strlen(spec->file_name) + 1 );
+        for (i = 0; i < exports->nb_names; i++)
+            put_data( exports->names[i]->name, strlen(exports->names[i]->name) + 1 );
+        for (i = exports->base; i <= exports->limit; i++)
+        {
+            ORDDEF *odp = exports->ordinals[i];
+            if (odp && (odp->flags & FLAG_FORWARD)) put_data( odp->link_name, strlen(odp->link_name) + 1 );
+        }
+        flush_output_to_section( ".edata", 0 /* IMAGE_DIRECTORY_ENTRY_EXPORT */,
+                                 0x40000040 /* CNT_INITIALIZED_DATA|MEM_READ */ );
+    }
+
+    /* .wasm: the module */
+    put_data( bytes, size );
+    flush_output_to_section( ".wasm", -1, 0x40000040 /* CNT_INITIALIZED_DATA|MEM_READ */ );
+
+    output_pe_file( spec, builtin_signature );
+}
+
+
 void output_fake_module( DLLSPEC *spec )
 {
     static const unsigned char dll_code_section[] = { 0x31, 0xc0,          /* xor %eax,%eax */
@@ -1307,6 +1430,11 @@ void output_fake_module( DLLSPEC *spec )
                                                       0xc2, 0x04, 0x00 };            /* ret $4 */
     unsigned int i;
 
+    if (target.cpu == CPU_WASM32 && wasm_module_file && spec->type == SPEC_WIN32)
+    {
+        output_wasm_skeleton( spec );
+        return;
+    }
     resolve_imports( spec );
     pe.section_align = 0x1000;
     pe.file_align    = 0x200;

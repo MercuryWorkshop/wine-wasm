@@ -1045,6 +1045,9 @@ void output_stubs( DLLSPEC *spec )
 
         switch (target.cpu)
         {
+        case CPU_WASM32:
+            fatal_error( "%s: winebuild emits no assembly for wasm32\n", __func__ );
+            break;
         case CPU_i386:
             output_cfi( ".cfi_startproc" );
             /* flesh out the stub a bit to make safedisc happy */
@@ -1333,6 +1336,9 @@ static void build_windows_import_lib( const char *lib_name, DLLSPEC *spec, struc
 
         switch (target.cpu)
         {
+        case CPU_WASM32:
+            fatal_error( "%s: winebuild emits no assembly for wasm32\n", __func__ );
+            break;
         case CPU_i386:
             output_cfi( ".cfi_startproc" );
             output( "\tpushl %%ecx\n" );
@@ -1510,6 +1516,9 @@ static void build_windows_import_lib( const char *lib_name, DLLSPEC *spec, struc
 
             switch (target.cpu)
             {
+            case CPU_WASM32:
+                fatal_error( "%s: winebuild emits no assembly for wasm32\n", __func__ );
+                break;
             case CPU_i386:
                 output( "\tjmp *%s\n", asm_name( imp_name ) );
                 if (is_delay)
