@@ -272,6 +272,7 @@ extern const char *get_abi_name( const ORDDEF *odp, const char *name );
 extern const char *get_link_name( const ORDDEF *odp );
 /* wasm32 (wasm32.c) */
 extern const char *wasm_module_file;
+extern const char *wasm_shared_module;
 extern void output_wasm_spec( DLLSPEC *spec, struct strarray files );
 struct wasm_module_info;
 extern void *read_wasm_module_info( const char *name );

@@ -1,0 +1,5 @@
+STATICLIB = libgexrt.a
+
+SOURCES = \
+	wasm32.c \
+	wasm32_sjlj.c

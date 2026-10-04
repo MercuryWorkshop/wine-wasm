@@ -1420,7 +1420,45 @@ static void build(struct strarray input_files, const char *output)
 	strarray_add(&link_args, "-lc");
     }
 
+    /* wasm32: the runtime every native module shares (libs/gexrt), last;
+     * a DLL's relocatable object for the one-module PE side leaves it out
+     * (tools/wine-wasm/pelink.py links it once) */
+    if (target.cpu == CPU_WASM32 && is_shared)
+    {
+        if (wine_objdir) strarray_add( &link_args, strmake( "%s/libs/gexrt/libgexrt.a", wine_objdir ));
+        else strarray_add( &link_args, "-lgexrt" );
+    }
+
     atexit( cleanup_output_files );
+
+    /* wasm32: also the DLL as one relocatable object (OUTPUT.r.o) and its
+     * export list (OUTPUT.exports), for linking Wine's whole PE side as one
+     * module (tools/wine-wasm/pelink.py in the gex tree) */
+    if (target.cpu == CPU_WASM32 && is_shared && spec_objs.count)
+    {
+        struct strarray r_args = empty_strarray;
+        const char *exports = strmake( "%s.exports", spec_objs.str[0] );
+        unsigned int i;
+        for (i = 0; i < link_args.count; i++)
+        {
+            const char *a = link_args.str[i];
+            if (!strcmp( a, "-shared" )) a = "-r";
+            else if (!strcmp( a, "-Wl,--unresolved-symbols=import-dynamic" )) continue;
+            else if (strendswith( a, "libgexrt.a" ) || !strcmp( a, "-lgexrt" )) continue;
+            else if (!strncmp( a, "-Wl,@", 5 )) continue;
+            else if (i && !strcmp( link_args.str[i - 1], "-o" )) a = strmake( "%s.r.o", output_file_name );
+            strarray_add( &r_args, a );
+        }
+        spawn( r_args, 0 );
+        if (!access( exports, R_OK ))
+        {
+            struct strarray cp = empty_strarray;
+            strarray_add( &cp, "cp" );
+            strarray_add( &cp, exports );
+            strarray_add( &cp, strmake( "%s.exports", output_file_name ));
+            spawn( cp, 0 );
+        }
+    }
 
     spawn(link_args, 0);
 

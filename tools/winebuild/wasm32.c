@@ -28,6 +28,8 @@
 #include "build.h"
 
 const char *wasm_module_file = NULL;
+/* the one module of the whole PE side (pelink.py), by file name */
+const char *wasm_shared_module = NULL;
 
 /* ---- reading wasm objects, archives and modules ------------------------- */
 
@@ -412,29 +414,6 @@ static const char *c_type( char t )
     return "int";
 }
 
-/* The wasm signature the .spec implies, when the code has none to read
- * (an export the objects do not define): ints and pointers are i32, int64
- * and double take their own types, and the result is taken to be an int. */
-static char *spec_sig( const ORDDEF *odp )
-{
-    char *sig = xmalloc( 4 + odp->u.func.nb_args ), *q = sig;
-    int i;
-    *q++ = (odp->flags & FLAG_RET64) ? 'I' : 'i';
-    *q++ = ':';
-    for (i = 0; i < odp->u.func.nb_args; i++)
-    {
-        switch (odp->u.func.args[i])
-        {
-        case ARG_INT64:  *q++ = 'I'; break;
-        case ARG_DOUBLE: *q++ = 'd'; break;
-        case ARG_FLOAT:  *q++ = 'f'; break;
-        default:         *q++ = 'i'; break;
-        }
-    }
-    *q = 0;
-    return sig;
-}
-
 static unsigned int spec_words( const ORDDEF *odp )
 {
     unsigned int i, words = 0;
@@ -677,11 +656,16 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
             /* ntdll's system calls: a direct call into the Unix side on
              * wasm32 (W2); no adapter until then */
             if (odp->flags & FLAG_SYSCALL) continue;
+            /* re-exported from a DLL it imports (-import): the owner's
+             * adapter serves it (gex binds the same slot) */
+            if (odp->flags & FLAG_IMPORT) continue;
             if (!(sig = find_func_sig( get_link_name( odp ))))
             {
-                warning( "%s: %s is not defined in the objects; using the .spec's signature\n",
+                /* not in the objects (an i386 export written in assembly
+                 * there, for one): no adapter, gex binds gexp__missing */
+                warning( "%s: %s is not defined in the objects; no adapter\n",
                          spec->file_name, get_link_name( odp ));
-                sig = spec_sig( odp );
+                continue;
             }
             if (!(ident = output_adapter( odp, sig )))
                 warning( "%s: %s: the .spec's arguments do not fit the code's (%s); no adapter\n",
@@ -737,6 +721,18 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
     if (!(rsp = fopen( strmake( "%s.rsp", output_file_name ), "w" )))
         fatal_error( "cannot create %s.rsp\n", output_file_name );
     STRARRAY_FOR_EACH( sym, &data_syms ) fprintf( rsp, "--export-if-defined=%s\n", sym );
+    fclose( rsp );
+
+    /* every exported link name, for the one-module PE side (pesym.py) */
+    if (!(rsp = fopen( strmake( "%s.exports", output_file_name ), "w" )))
+        fatal_error( "cannot create %s.exports\n", output_file_name );
+    for (i = 0; i < exports->nb_entry_points; i++)
+    {
+        ORDDEF *odp = exports->entry_points[i];
+        if (odp->flags & (FLAG_FORWARD | FLAG_IMPORT)) continue;  /* defined elsewhere */
+        if (odp->type == TYPE_STUB || odp->type == TYPE_VARIABLE) continue;
+        fprintf( rsp, "%s %s\n", get_link_name( odp ), odp->type == TYPE_EXTERN ? "data" : "func" );
+    }
     fclose( rsp );
 }
 

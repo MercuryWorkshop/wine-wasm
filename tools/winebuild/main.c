@@ -191,6 +191,7 @@ static const char usage_str[] =
 "   -F, --filename=DLLFILE    Set the DLL filename (default: from input file name)\n"
 "       --fake-module         Create a fake binary module\n"
 "       --wasm-module=FILE    wasm32: the DLL's linked wasm module (for the skeleton)\n"
+"       --wasm-shared=NAME    wasm32: the skeleton of a DLL in the one PE-side module NAME\n"
 "   -h, --help                Display this help message\n"
 "   -H, --heap=SIZE           Set the heap size for a Win16 dll\n"
 "   -I DIR                    Ignored for C flags compatibility\n"
@@ -240,6 +241,7 @@ enum long_options_values
     LONG_OPT_EXTERNAL_SYMS,
     LONG_OPT_FAKE_MODULE,
     LONG_OPT_WASM_MODULE,
+    LONG_OPT_WASM_SHARED,
     LONG_OPT_FIXUP_CTORS,
     LONG_OPT_LARGE_ADDRESS_AWARE,
     LONG_OPT_LDCMD,
@@ -277,6 +279,7 @@ static const struct long_option long_options[] =
     { "external-symbols",    0, LONG_OPT_EXTERNAL_SYMS },
     { "fake-module",         0, LONG_OPT_FAKE_MODULE },
     { "wasm-module",         1, LONG_OPT_WASM_MODULE },
+    { "wasm-shared",         1, LONG_OPT_WASM_SHARED },
     { "large-address-aware", 0, LONG_OPT_LARGE_ADDRESS_AWARE },
     { "ld-cmd",              1, LONG_OPT_LDCMD },
     { "nm-cmd",              1, LONG_OPT_NMCMD },
@@ -476,6 +479,9 @@ static void option_callback( int optc, char *optarg )
         break;
     case LONG_OPT_WASM_MODULE:
         wasm_module_file = xstrdup( optarg );
+        break;
+    case LONG_OPT_WASM_SHARED:
+        wasm_shared_module = xstrdup( optarg );
         break;
     case LONG_OPT_FAKE_MODULE:
         fake_module = 1;

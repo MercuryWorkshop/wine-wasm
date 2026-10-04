@@ -23,6 +23,4 @@ SOURCES = \
 	setjmp.c \
 	stub.c \
 	tls.c \
-	unix_lib.c \
-	wasm32.c \
-	wasm32_sjlj.c
+	unix_lib.c

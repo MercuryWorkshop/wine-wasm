@@ -1317,14 +1317,22 @@ static void output_pe_file( DLLSPEC *spec, const char signature[32] )
 static void output_wasm_skeleton( DLLSPEC *spec )
 {
     struct exports *exports = &spec->exports;
-    const struct wasm_module_info *info = read_wasm_module_info( wasm_module_file );
+    const struct wasm_module_info *info = wasm_module_file ? read_wasm_module_info( wasm_module_file ) : NULL;
     unsigned int mem_size, mem_align, i, text_rva, data_rva, exp_rva, str_rva, pos, exp_count;
     const unsigned char *bytes;
     size_t size;
     unsigned int *stub_rva;
     unsigned char *zero;
 
-    wasm_module_layout( info, &mem_size, &mem_align, &bytes, &size );
+    if (info) wasm_module_layout( info, &mem_size, &mem_align, &bytes, &size );
+    else
+    {
+        /* the shared module: no data or code here (.wasmref names them) */
+        mem_size = 16;
+        mem_align = 4;
+        bytes = NULL;
+        size = 0;
+    }
     pe.section_align = 0x1000;
     pe.file_align    = 0x200;
     init_output_buffer();
@@ -1345,6 +1353,7 @@ static void output_wasm_skeleton( DLLSPEC *spec )
 
     /* .wasmdat: placed before the exports so data RVAs are known */
     data_rva = (current_rva() + (1u << mem_align) - 1) & ~((1u << mem_align) - 1);
+    if (info)
     {
         unsigned int len = mem_size ? mem_size : 16;
         zero = xmalloc( len );
@@ -1384,6 +1393,8 @@ static void output_wasm_skeleton( DLLSPEC *spec )
                 put_dword( pos );
                 pos += strlen( odp->link_name ) + 1;
             }
+            else if (odp->type == TYPE_EXTERN && !info)
+                put_dword( text_rva );  /* gex points it at the shared module's data */
             else if (odp->type == TYPE_EXTERN)
             {
                 if (wasm_module_data_export( info, get_link_name( odp ), &off )) put_dword( data_rva + off );
@@ -1413,9 +1424,37 @@ static void output_wasm_skeleton( DLLSPEC *spec )
                                  0x40000040 /* CNT_INITIALIZED_DATA|MEM_READ */ );
     }
 
-    /* .wasm: the module */
-    put_data( bytes, size );
-    flush_output_to_section( ".wasm", -1, 0x40000040 /* CNT_INITIALIZED_DATA|MEM_READ */ );
+    if (info)
+    {
+        /* .wasm: the module */
+        put_data( bytes, size );
+        flush_output_to_section( ".wasm", -1, 0x40000040 /* CNT_INITIALIZED_DATA|MEM_READ */ );
+    }
+    else
+    {
+        /* .wasmref: which module, this DLL's prefix in it, and its data
+         * exports (ordinal index, link name) for gex to point at the
+         * module's data:
+         *   "GEXWREF1" module\0 dll\0 u32 count { u32 index, name\0 }... */
+        unsigned int count = 0;
+        put_data( "GEXWREF1", 8 );
+        put_data( wasm_shared_module, strlen( wasm_shared_module ) + 1 );
+        put_data( spec->file_name, strlen( spec->file_name ) + 1 );
+        for (i = exports->base; i <= exports->limit; i++)
+        {
+            ORDDEF *odp = exports->ordinals[i];
+            if (odp && odp->type == TYPE_EXTERN && !(odp->flags & FLAG_FORWARD)) count++;
+        }
+        put_dword( count );
+        for (i = exports->base; i <= exports->limit; i++)
+        {
+            ORDDEF *odp = exports->ordinals[i];
+            if (!odp || odp->type != TYPE_EXTERN || (odp->flags & FLAG_FORWARD)) continue;
+            put_dword( i - exports->base );
+            put_data( get_link_name( odp ), strlen( get_link_name( odp )) + 1 );
+        }
+        flush_output_to_section( ".wasmref", -1, 0x40000040 /* CNT_INITIALIZED_DATA|MEM_READ */ );
+    }
 
     output_pe_file( spec, builtin_signature );
 }
@@ -1430,7 +1469,7 @@ void output_fake_module( DLLSPEC *spec )
                                                       0xc2, 0x04, 0x00 };            /* ret $4 */
     unsigned int i;
 
-    if (target.cpu == CPU_WASM32 && wasm_module_file && spec->type == SPEC_WIN32)
+    if (target.cpu == CPU_WASM32 && (wasm_module_file || wasm_shared_module) && spec->type == SPEC_WIN32)
     {
         output_wasm_skeleton( spec );
         return;

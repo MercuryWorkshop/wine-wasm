@@ -3994,6 +3994,7 @@ static void output_module( struct makefile *make, unsigned int arch )
     if (link_arch != arch) output_filenames_obj_dir( make, make->object_files[link_arch] );
     output_filenames_obj_dir( make, make->res_files[arch] );
     output_filenames( dep_libs );
+    if (host_wasm32 && !make->data_only) output_filename( "libs/gexrt/libgexrt.a" );
     output_filename( winebuild );
     output_filename( winegcc );
     output( "\n" );
