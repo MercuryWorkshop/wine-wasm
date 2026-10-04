@@ -154,7 +154,7 @@ extern struct cpu       cpu_i386, cpu_x86_64, cpu_arm, cpu_arm64;
 
 static struct cpu*      dbghelp_cpus[] = {&cpu_i386, &cpu_x86_64, &cpu_arm, &cpu_arm64, NULL};
 struct cpu*             dbghelp_current_cpu =
-#if defined(__i386__)
+#if defined(__i386__) || defined(__wasm32__)  /* wasm32 serves i386 programs */
     &cpu_i386
 #elif defined(__x86_64__)
     &cpu_x86_64
