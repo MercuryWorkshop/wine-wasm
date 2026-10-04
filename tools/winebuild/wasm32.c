@@ -582,8 +582,8 @@ static const char *output_adapter( const ORDDEF *odp, const char *sig )
     switch (ret)
     {
     case 's': output( "    return __gexw_ret(ctx, ret, %u, sr);\n", pop ); break;
-    case 'v': output( "    return __gexw_ret(ctx, ret, %u, 0);\n", pop ); break;
-    case 'i': output( "    return __gexw_ret(ctx, ret, %u, (unsigned int)r);\n", pop ); break;
+    case 'v': output( "    return __gexw_ret32(ctx, ret, %u, 0);\n", pop ); break;
+    case 'i': output( "    return __gexw_ret32(ctx, ret, %u, (unsigned int)r);\n", pop ); break;
     case 'I': output( "    return __gexw_ret(ctx, ret, %u, (unsigned long long)r);\n", pop ); break;
     case 'f':
     case 'd': output( "    return __gexw_ret_fp(ctx, ret, %u, r);\n", pop ); break;
@@ -637,6 +637,7 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
     output( "unsigned int __gexw_reg(int, unsigned int);\n" );
     output( "unsigned int __gexw_argptr(int, unsigned int);\n" );
     output( "int __gexw_ret(int, unsigned long long, unsigned int, unsigned long long);\n" );
+    output( "int __gexw_ret32(int, unsigned long long, unsigned int, unsigned int);\n" );
     output( "int __gexw_ret_fp(int, unsigned long long, unsigned int, double);\n" );
     output( "void __gexw_missing(int);\n" );
     output( "void __wine_spec_unimplemented_stub(const char *, const char *);\n\n" );

@@ -81,18 +81,19 @@ __attribute__((import_module("gex"), import_name("provider_missing"))) void gex_
 
 struct __gexw_frame { int ctx, depth; };
 
+/* An adapter's entry: the thread's guest context (the same value on every
+ * entry of a thread) and the call depth, for the exit stubs of any guest
+ * call the native code makes. Not restored on return: the context does not
+ * change, and a depth left higher by a nested entry only makes the depth
+ * guard (a stack-overflow check) trip a little earlier. */
 void __gexw_enter( struct __gexw_frame *f, int ctx, int depth )
 {
-    f->ctx = gexw_get_ctx();
-    f->depth = gexw_get_depth();
     gexw_set_ctx( ctx );
     gexw_set_depth( depth );
 }
 
 void __gexw_leave( struct __gexw_frame *f )
 {
-    gexw_set_ctx( f->ctx );
-    gexw_set_depth( f->depth );
 }
 
 /* The stack argument at byte offset `off` past the return address. */
@@ -109,6 +110,12 @@ int __gexw_ret( int ctx, uint64_t ret, uint32_t pop, uint64_t edx_eax )
 {
     gp_set( ctx, R_EDX, (uint32_t)(edx_eax >> 32) );
     return gp_return_eax( ctx, ret, pop, (uint32_t)edx_eax );
+}
+
+/* The same with a 32-bit (or no) result: EAX only. */
+int __gexw_ret32( int ctx, uint64_t ret, uint32_t pop, uint32_t eax )
+{
+    return gp_return_eax( ctx, ret, pop, eax );
 }
 
 /* The same with a float result in ST0. */
