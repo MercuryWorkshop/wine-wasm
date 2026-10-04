@@ -439,10 +439,6 @@ static unsigned int spec_words( const ORDDEF *odp )
     return words;
 }
 
-static const char *adapter_name( const ORDDEF *odp )
-{
-    return strmake( "gexp_%s", odp->name ? odp->name : odp->export_name );
-}
 
 /* One entry adapter. */
 static unsigned int spec_arg_size( enum arg_type t )
@@ -456,50 +452,99 @@ static unsigned int spec_arg_size( enum arg_type t )
     }
 }
 
-/* One entry adapter. The .spec's arguments are what the i386 caller
- * pushed; the wasm parameters are what the C function takes. They are
- * matched one by one:
- *   - a 4-byte argument is an i32 or f32 parameter;
- *   - an 8-byte one (int64, double) is an i64 or f64 parameter, or an i32:
- *     a struct passed by value (LARGE_INTEGER), which wasm32 passes by
- *     pointer, so the adapter passes the address of the guest's copy;
- *   - a 16-byte one is always such a pointer.
+/* The C identifier of an export's adapter; its symbol (an asm label) is
+ * gexp_<export name>, or gexp_#<ordinal> for an export with no name, which
+ * is what gex binds it by. */
+static unsigned int adapter_count;
+
+static const char *adapter_symbol( const ORDDEF *odp )
+{
+    const char *name = odp->name ? odp->name : odp->export_name;
+    if (name) return strmake( "gexp_%s", name );
+    return strmake( "gexp_#%d", odp->ordinal );
+}
+
+static const char *output_adapter_header( const ORDDEF *odp )
+{
+    const char *ident = strmake( "__gexw_adapter_%u", adapter_count++ );
+    output( "int %s(int ctx, int depth, unsigned int need, unsigned long long ret) __asm__(\"%s\");\n",
+            ident, adapter_symbol( odp ));
+    output( "int %s(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n", ident );
+    return ident;
+}
+
+static int spec_arg_matches( enum arg_type t, char p )
+{
+    switch (t)
+    {
+    case ARG_FLOAT:  return p == 'f';
+    case ARG_INT64:  return p == 'I';
+    case ARG_DOUBLE: return p == 'd';
+    case ARG_INT128: return 0;
+    default:         return p == 'i';
+    }
+}
+
+/* One entry adapter, or NULL when the .spec and the code do not agree.
+ *
+ * The .spec's arguments are what the i386 caller pushed; the wasm
+ * parameters are what the C function takes. They are matched in order:
+ * an argument whose kind matches the parameter is passed as is; otherwise
+ * the parameter is an i32 pointing at a struct passed by value (wasm32
+ * passes those by pointer), made of as many of the caller's arguments as
+ * the counts leave (LARGE_INTEGER is one int64, a D2D1_POINT_2F two
+ * floats), so the adapter passes the address of the guest's copy.
  * A small struct returned by value is a hidden first pointer parameter on
  * wasm32 (and a void result); i386 returns it in EDX:EAX. */
-static void output_adapter( const ORDDEF *odp, const char *sig )
+static const char *output_adapter( const ORDDEF *odp, const char *sig )
 {
     const char *link = get_link_name( odp );
     const char *params = strchr( sig, ':' ) + 1;
     char ret = sig[0];
-    unsigned int nparams = strlen( params ), nargs = odp->u.func.nb_args;
-    unsigned int words = spec_words( odp ), k, off = 0, regs = 0, pop;
+    unsigned int nargs = odp->u.func.nb_args, nparams;
+    unsigned int words = spec_words( odp ), i, j, off = 0, regs = 0, pop;
+    unsigned int first[MAX_ARGUMENTS + 1], count[MAX_ARGUMENTS + 1];
     int sret = 0;
-    const char *p;
+    const char *p, *ident;
 
-    if (nparams == nargs + 1 && ret == 'v' && params[0] == 'i')
+    if (strlen( params ) == nargs + 1 && ret == 'v' && params[0] == 'i' &&
+        (!nargs || !spec_arg_matches( odp->u.func.args[0], 'i' ) || nargs + 1 == strlen( params )))
     {
+        /* hidden struct-return pointer, unless the counts say otherwise */
         sret = 1;
         params++;
-        nparams--;
     }
-    if (nparams != nargs)
-        fatal_error( "%s: the .spec gives %u arguments, the code takes %u\n",
-                     odp->name ? odp->name : link, nargs, nparams );
-    for (k = 0; k < nargs; k++)
+    nparams = strlen( params );
+    if (nparams > MAX_ARGUMENTS) return NULL;
+
+    /* match each parameter with the run of caller arguments it takes */
+    for (i = j = 0; j < nparams; j++)
     {
-        unsigned int sz = spec_arg_size( odp->u.func.args[k] );
-        char t = params[k];
-        if ((sz == 4 && t != 'i' && t != 'f') || (sz == 8 && t == 'f') || (sz == 16 && t != 'i'))
-            fatal_error( "%s: argument %u is %u bytes in the .spec but '%c' in the code\n",
-                         odp->name ? odp->name : link, k + 1, sz, t );
+        unsigned int left_args, left_params = nparams - j - 1;
+        if (i >= nargs) return NULL;
+        first[j] = i;
+        left_args = nargs - i - 1;
+        if (spec_arg_matches( odp->u.func.args[i], params[j] ) && left_args >= left_params)
+        {
+            count[j] = 1;
+            i++;
+            continue;
+        }
+        if (params[j] != 'i') return NULL;
+        /* a struct by value: as many arguments as leave one per remaining parameter */
+        if (nargs - i < left_params + 1) return NULL;
+        count[j] = nargs - i - left_params;
+        i += count[j];
     }
+    if (i != nargs) return NULL;
 
     /* thiscall: `this` in ECX; fastcall: the first two words in ECX, EDX */
     if (odp->flags & FLAG_THISCALL) regs = 1;
     else if (odp->flags & FLAG_FASTCALL) regs = words < 2 ? words : 2;
     pop = (odp->type == TYPE_STDCALL) ? 4 * (words - regs) : 0;
 
-    output( "int %s(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n", adapter_name( odp ));
+    output( "%s %s();\n", c_type( sret ? 'v' : ret ), link );
+    ident = output_adapter_header( odp );
     output( "    struct __gexw_frame f;\n" );
     output( "    __gexw_enter(&f, ctx, depth);\n" );
     if (sret) output( "    unsigned long long sr __attribute__((aligned(8))) = 0;\n" );
@@ -511,24 +556,24 @@ static void output_adapter( const ORDDEF *odp, const char *sig )
     if (!*params && !sret) output( "void" );
     output( "))%s)(", link );
     if (sret) output( "&sr%s", *params ? ", " : "" );
-    for (p = params, k = 0; *p; p++, k++)
+    for (j = 0; j < nparams; j++)
     {
-        unsigned int sz = spec_arg_size( odp->u.func.args[k] );
-        if (k) output( ", " );
-        if (k < regs) output( "(int)__gexw_reg(ctx, %u)", k == 0 ? 1 : 2 );  /* ECX, EDX */
+        unsigned int bytes = 0, k;
+        for (k = first[j]; k < first[j] + count[j]; k++) bytes += spec_arg_size( odp->u.func.args[k] );
+        if (j) output( ", " );
+        if (j < regs) output( "(int)__gexw_reg(ctx, %u)", j == 0 ? 1 : 2 );  /* ECX, EDX */
         else
         {
-            switch (*p)
+            if (count[j] > 1 || !spec_arg_matches( odp->u.func.args[first[j]], params[j] ))
+                output( "(int)__gexw_argptr(ctx, %u)", off );  /* a struct by value */
+            else switch (params[j])
             {
-            case 'i':
-                if (sz == 4) output( "(int)__gexw_arg32(ctx, %u)", off );
-                else output( "(int)__gexw_argptr(ctx, %u)", off );  /* a struct by value */
-                break;
+            case 'i': output( "(int)__gexw_arg32(ctx, %u)", off ); break;
             case 'f': output( "__gexw_argf32(ctx, %u)", off ); break;
             case 'I': output( "(long long)__gexw_arg64(ctx, %u)", off ); break;
             case 'd': output( "__gexw_argf64(ctx, %u)", off ); break;
             }
-            off += sz;
+            off += bytes;
         }
     }
     output( ");\n" );
@@ -544,15 +589,17 @@ static void output_adapter( const ORDDEF *odp, const char *sig )
     case 'd': output( "    return __gexw_ret_fp(ctx, ret, %u, r);\n", pop ); break;
     }
     output( "}\n\n" );
+    return ident;
 }
 
 /* An unimplemented export: raise what Wine raises. */
-static void output_stub_adapter( DLLSPEC *spec, const ORDDEF *odp )
+static const char *output_stub_adapter( DLLSPEC *spec, const ORDDEF *odp )
 {
-    output( "int %s(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n", adapter_name( odp ));
+    const char *ident = output_adapter_header( odp );
     output( "    __wine_spec_unimplemented_stub(\"%s\", \"%s\");\n", spec->file_name,
-            odp->name ? odp->name : odp->export_name ? odp->export_name : "?" );
+            odp->name ? odp->name : odp->export_name ? odp->export_name : strmake( "#%d", odp->ordinal ));
     output( "    return 0;\n}\n\n" );
+    return ident;
 }
 
 /*******************************************************************
@@ -597,7 +644,7 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
     for (i = 0; i < exports->nb_entry_points; i++)
     {
         ORDDEF *odp = exports->entry_points[i];
-        const char *sig;
+        const char *sig, *ident = NULL;
 
         if (odp->flags & FLAG_FORWARD) continue;  /* the skeleton forwards it */
         switch (odp->type)
@@ -606,36 +653,31 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
             strarray_add( &data_syms, get_link_name( odp ));
             continue;
         case TYPE_STUB:
-            output_stub_adapter( spec, odp );
+            ident = output_stub_adapter( spec, odp );
             break;
         case TYPE_VARARGS:
             /* i386 varargs (4-byte stack slots) are not wasm32's va_list
              * (8-aligned doubles): left out until they have an adapter */
-            warning( "%s: varargs export %s has no wasm32 adapter yet\n", spec->file_name,
-                     odp->name ? odp->name : get_link_name( odp ));
             continue;
         case TYPE_STDCALL:
         case TYPE_CDECL:
-            if (odp->flags & FLAG_SYSCALL)
-            {
-                /* ntdll's system calls: a direct call into the Unix side on
-                 * wasm32 (W2); no adapter until then */
-                continue;
-            }
+            /* ntdll's system calls: a direct call into the Unix side on
+             * wasm32 (W2); no adapter until then */
+            if (odp->flags & FLAG_SYSCALL) continue;
             if (!(sig = find_func_sig( get_link_name( odp ))))
             {
                 warning( "%s: %s is not defined in the objects; using the .spec's signature\n",
                          spec->file_name, get_link_name( odp ));
                 sig = spec_sig( odp );
-                output( "%s %s();\n", c_type( sig[0] ), get_link_name( odp ));
             }
-            else output( "%s %s();\n", c_type( sig[0] ), get_link_name( odp ));
-            output_adapter( odp, sig );
+            if (!(ident = output_adapter( odp, sig )))
+                warning( "%s: %s: the .spec's arguments do not fit the code's (%s); no adapter\n",
+                         spec->file_name, odp->name ? odp->name : get_link_name( odp ), sig );
             break;
         default:
             continue;
         }
-        strarray_add( &names, adapter_name( odp ));
+        if (ident) strarray_add( &names, ident );
     }
 
     /* the entry point: DllMain(hinst, reason, reserved), stdcall */

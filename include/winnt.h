@@ -54,6 +54,9 @@ extern "C" {
 #ifndef DECLSPEC_IMPORT
 # if defined(__MINGW32__) || defined(__CYGWIN__)
 #  define DECLSPEC_IMPORT __attribute__((dllimport))
+# elif defined(__wasm32__)
+/* wasm32: another DLL's function is an import of this DLL's module */
+#  define DECLSPEC_IMPORT __attribute__((visibility ("default")))
 # elif defined(__GNUC__)
 #  define DECLSPEC_IMPORT __attribute__((visibility ("hidden")))
 # elif __has_declspec_attribute(dllimport)
@@ -8071,6 +8074,8 @@ static FORCEINLINE DECLSPEC_NORETURN void __fastfail(unsigned int code)
 #elif defined(__arm__)
     register ULONG_PTR val __asm__("r0") = code;
     for (;;) __asm__ __volatile__( "udf #0xfb" :: "r" (val) : "memory" );
+#else
+    for (;;) __builtin_trap();
 #endif
 }
 
