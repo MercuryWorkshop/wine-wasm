@@ -1631,7 +1631,7 @@
 @ cdecl _vscprintf(str ptr)
 @ cdecl _vscwprintf(wstr ptr)
 @ cdecl -norelay _vsnprintf(ptr long str ptr)
-@ cdecl _vsnprintf_s(ptr long str ptr)
+@ cdecl _vsnprintf_s(ptr long long str ptr)
 @ cdecl _vsnwprintf(ptr long wstr ptr)
 @ cdecl _vsnwprintf_s(ptr long long wstr ptr)
 @ cdecl _vswprintf(ptr wstr ptr)

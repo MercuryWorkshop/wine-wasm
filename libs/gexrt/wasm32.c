@@ -616,6 +616,21 @@ double __gexw_guest_call_fp( uint32_t target, const uint32_t *words, uint32_t n 
     return __gexw_x87_pop();
 }
 
+/* The guest's FP control and status words: 0 the x87 control word, 1 its
+ * status word, 2 MXCSR. `set`: write `v`; the value (old, or read) back. */
+unsigned int __gexw_guest_fpu( unsigned int which, unsigned int set, unsigned int v )
+{
+    int ctx = cur_ctx();
+    unsigned int off = which == 0 ? GEX_CTX_X87_CW : which == 1 ? GEX_CTX_X87_SW : GEX_CTX_MXCSR;
+    unsigned int old = which == 2 ? GEX_C32( off ) : GEX_C16( off );
+    if (set)
+    {
+        if (which == 2) GEX_C32( off ) = v;
+        else GEX_C16( off ) = (uint16_t)v;
+    }
+    return old;
+}
+
 /* The guest's XMM registers (the SSE2 libm entry points' arguments). */
 double __gexw_guest_xmm_f64( unsigned n )
 {

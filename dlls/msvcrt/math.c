@@ -742,7 +742,7 @@ __int64 CDECL _abs64( __int64 n )
     return n >= 0 ? n : -n;
 }
 
-#if defined(__i386__) || defined(__x86_64__)
+#if (defined(__i386__) || defined(__wasm32__)) || defined(__x86_64__)
 
 static unsigned int get_mxcsr(void)
 {
@@ -751,7 +751,11 @@ static unsigned int get_mxcsr(void)
     extern NTSTATUS (*__os_arm64x_get_x64_information)(ULONG,void*,void*);
     __os_arm64x_get_x64_information( 0, &ret, NULL );
 #else
+    #ifdef __wasm32__
+    ret = __gexw_guest_fpu( 2, 0, 0 );
+    #else
     __asm__ __volatile__( "stmxcsr %0" : "=m" (ret) );
+    #endif
 #endif
     return ret;
 }
@@ -762,7 +766,11 @@ static void set_mxcsr( unsigned int val )
     extern NTSTATUS (*__os_arm64x_set_x64_information)(ULONG,ULONG_PTR,void*);
     __os_arm64x_set_x64_information( 0, val, NULL );
 #else
+    #ifdef __wasm32__
+    __gexw_guest_fpu( 2, 1, val );
+    #else
     __asm__ __volatile__( "ldmxcsr %0" : : "m" (val) );
+    #endif
 #endif
 }
 
@@ -858,7 +866,7 @@ static void _setfp_sse( unsigned int *cw, unsigned int cw_mask,
 static void _setfp( unsigned int *cw, unsigned int cw_mask,
         unsigned int *sw, unsigned int sw_mask )
 {
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
     unsigned long oldcw = 0, newcw = 0;
     unsigned long oldsw = 0, newsw = 0;
     unsigned int flags;
@@ -868,7 +876,11 @@ static void _setfp( unsigned int *cw, unsigned int cw_mask,
 
     if (sw)
     {
+        #ifdef __wasm32__
+        newsw = __gexw_guest_fpu( 1, 0, 0 );
+        #else
         __asm__ __volatile__( "fstsw %0" : "=m" (newsw) );
+        #endif
         oldsw = newsw;
 
         flags = 0;
@@ -893,7 +905,11 @@ static void _setfp( unsigned int *cw, unsigned int cw_mask,
 
     if (cw)
     {
+        #ifdef __wasm32__
+        newcw = __gexw_guest_fpu( 0, 0, 0 );
+        #else
         __asm__ __volatile__( "fstcw %0" : "=m" (newcw) );
+        #endif
         oldcw = newcw;
 
         flags = 0;
@@ -960,18 +976,34 @@ static void _setfp( unsigned int *cw, unsigned int cw_mask,
 
         assert(cw);
 
+        #ifdef __wasm32__
+        fenv.control_word = __gexw_guest_fpu( 0, 0, 0 ); fenv.status_word = __gexw_guest_fpu( 1, 0, 0 );
+        #else
         __asm__ __volatile__( "fnstenv %0" : "=m" (fenv) );
+        #endif
         fenv.control_word = newcw;
         fenv.status_word = newsw;
+        #ifdef __wasm32__
+        __gexw_guest_fpu( 0, 1, fenv.control_word ); __gexw_guest_fpu( 1, 1, fenv.status_word );
+        #else
         __asm__ __volatile__( "fldenv %0" : : "m" (fenv) : "st", "st(1)",
                 "st(2)", "st(3)", "st(4)", "st(5)", "st(6)", "st(7)" );
+        #endif
         return;
     }
 
     if (oldsw != newsw)
+        #ifdef __wasm32__
+        __gexw_guest_fpu( 1, 1, __gexw_guest_fpu( 1, 0, 0 ) & ~0x80ffu );
+        #else
         __asm__ __volatile__( "fnclex" );
+        #endif
     if (oldcw != newcw)
+        #ifdef __wasm32__
+        __gexw_guest_fpu( 0, 1, newcw );
+        #else
         __asm__ __volatile__( "fldcw %0" : : "m" (newcw) );
+        #endif
 #elif defined(__x86_64__)
     _setfp_sse(cw, cw_mask, sw, sw_mask);
 #elif defined(__aarch64__)
@@ -1130,7 +1162,7 @@ static void _setfp( unsigned int *cw, unsigned int cw_mask,
 /**********************************************************************
  *		_statusfp2 (MSVCR80.@)
  */
-#if defined(__i386__)
+#if (defined(__i386__) || defined(__wasm32__))
 void CDECL _statusfp2( unsigned int *x86_sw, unsigned int *sse2_sw )
 {
     if (x86_sw)
@@ -1148,7 +1180,7 @@ void CDECL _statusfp2( unsigned int *x86_sw, unsigned int *sse2_sw )
 unsigned int CDECL _statusfp(void)
 {
     unsigned int flags = 0;
-#if defined(__i386__)
+#if (defined(__i386__) || defined(__wasm32__))
     unsigned int x86_sw, sse2_sw;
 
     _statusfp2( &x86_sw, &sse2_sw );
@@ -1166,7 +1198,7 @@ unsigned int CDECL _statusfp(void)
 unsigned int CDECL _clearfp(void)
 {
     unsigned int flags = 0;
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
     _setfp(NULL, 0, &flags, _MCW_EM);
     if (sse2_supported)
     {
@@ -1226,7 +1258,7 @@ double CDECL _chgsign(double num)
  *
  * Not exported by native msvcrt, added in msvcr80.
  */
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
 int CDECL __control87_2( unsigned int newval, unsigned int mask,
                          unsigned int *x86_cw, unsigned int *sse2_cw )
 {
@@ -1255,7 +1287,7 @@ int CDECL __control87_2( unsigned int newval, unsigned int mask,
 unsigned int CDECL _control87(unsigned int newval, unsigned int mask)
 {
     unsigned int flags = 0;
-#if defined(__i386__) && (_MSVCR_VER == 0 || _MSVCR_VER >= 80)
+#if (defined(__i386__) || defined(__wasm32__)) && (_MSVCR_VER == 0 || _MSVCR_VER >= 80)
     unsigned int sse2_cw;
 
     __control87_2( newval, mask, &flags, &sse2_cw );
@@ -1307,7 +1339,7 @@ int CDECL _controlfp_s(unsigned int *cur, unsigned int newval, unsigned int mask
     return 0;
 }
 
-#if _MSVCR_VER >= 140 && (defined(__i386__) || defined(__x86_64__))
+#if _MSVCR_VER >= 140 && ((defined(__i386__) || defined(__wasm32__)) || defined(__x86_64__))
 enum fenv_masks
 {
     FENV_X_INVALID = 0x00100010,
@@ -1338,7 +1370,7 @@ static __msvcrt_ulong fenv_encode(unsigned int x, unsigned int y)
 {
     __msvcrt_ulong ret = 0;
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
     if (x & _EM_INVALID) ret |= FENV_X_INVALID;
     if (x & _EM_DENORMAL) ret |= FENV_X_DENORMAL;
     if (x & _EM_ZERODIVIDE) ret |= FENV_X_ZERODIVIDE;
@@ -1428,7 +1460,7 @@ static BOOL fenv_decode(__msvcrt_ulong enc, unsigned int *x, unsigned int *y)
  */
 int CDECL fegetenv(fenv_t *env)
 {
-#if _MSVCR_VER>=140 && defined(__i386__)
+#if _MSVCR_VER>=140 && (defined(__i386__) || defined(__wasm32__))
     unsigned int x87, sse;
     __control87_2(0, 0, &x87, &sse);
     env->_Fe_ctl = fenv_encode(x87, sse);
@@ -1510,7 +1542,7 @@ int CDECL feclearexcept(int flags)
  */
 int CDECL fegetexceptflag(fexcept_t *status, int excepts)
 {
-#if _MSVCR_VER>=140 && defined(__i386__)
+#if _MSVCR_VER>=140 && (defined(__i386__) || defined(__wasm32__))
     unsigned int x87, sse;
     _statusfp2(&x87, &sse);
     *status = fenv_encode(x87 & excepts, sse & excepts);
@@ -1577,9 +1609,13 @@ int CDECL _finite(double num)
  */
 void CDECL _fpreset(void)
 {
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
     const unsigned int x86_cw = 0x27f;
+    #ifdef __wasm32__
+    __gexw_guest_fpu( 1, 1, 0 ); __gexw_guest_fpu( 0, 1, x86_cw );
+    #else
     __asm__ __volatile__( "fninit; fldcw %0" : : "m" (x86_cw) );
+    #endif
     if (sse2_supported)
     {
         unsigned int cw = _MCW_EM, sw = 0;
@@ -2136,13 +2172,6 @@ imaxdiv_t CDECL imaxdiv(intmax_t num, intmax_t denom)
 #define GET_XMM1_F(f) ((f) = __gexw_guest_xmm_f32( 1 ))
 #define SET_XMM0_F(f) __gexw_guest_set_xmm_f32( 0, (f) )
 #define SQRT_XMM0(d)  __gexw_guest_set_xmm_f64( 0, sqrt( d ) )
-/* (the guest's control words are not modelled here yet: round to nearest) */
-static inline int __control87_2( unsigned int newval, unsigned int mask, unsigned int *x87, unsigned int *sse2 )
-{
-    if (x87) *x87 = 0;
-    if (sse2) *sse2 = 0;
-    return 1;
-}
 #endif
 
 /*********************************************************************

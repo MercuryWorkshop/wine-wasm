@@ -502,7 +502,8 @@ static const char *output_adapter( const ORDDEF *odp, const char *sig )
     unsigned int nargs = odp->u.func.nb_args, nparams;
     unsigned int words = spec_words( odp ), i, j, off = 0, regs = 0, pop;
     unsigned int first[MAX_ARGUMENTS + 1], count[MAX_ARGUMENTS + 1];
-    int sret = 0;
+    int sret = 0, va_param = -1, va_wide = 0;
+    unsigned int va_off = 0, va_fmt_off = 0;
     const char *p, *ident;
 
     if (strlen( params ) == nargs + 1 && ret == 'v' && params[0] == 'i' &&
@@ -541,9 +542,39 @@ static const char *output_adapter( const ORDDEF *odp, const char *sig )
     else if (odp->flags & FLAG_FASTCALL) regs = words < 2 ? words : 2;
     pop = (odp->type == TYPE_STDCALL) ? 4 * (words - regs) : 0;
 
+    /* a printf taking a va_list (vsnprintf): the guest's va_list is its
+     * argument words, laid out again from the format as for varargs */
+    {
+        const char *name = odp->name ? odp->name : link;
+        unsigned int k, o = 0, fo = 0;
+        va_param = -1;
+        if (strstr( name, "printf" ) && nparams == nargs && nargs >= 2 &&
+            odp->u.func.args[nargs - 1] == ARG_PTR)
+        {
+            for (k = 0; k + 1 < nargs; k++)
+            {
+                if (odp->u.func.args[k] == ARG_STR || odp->u.func.args[k] == ARG_WSTR)
+                {
+                    va_param = nargs - 1;
+                    fo = o;
+                    va_wide = odp->u.func.args[k] == ARG_WSTR;
+                }
+                o += spec_arg_size( odp->u.func.args[k] );
+            }
+            va_off = o;
+            va_fmt_off = fo;
+        }
+    }
     output( "%s %s();\n", c_type( sret ? 'v' : ret ), link );
     ident = output_adapter_header( odp );
     if (sret) output( "    unsigned long long sr __attribute__((aligned(8))) = 0;\n" );
+    if (va_param >= 0)
+    {
+        output( "    unsigned int va = __gexw_arg32(ctx, %u);\n", va_off );
+        output( "    const void *fmt = (const void *)__gexw_arg32(ctx, %u);\n", va_fmt_off );
+        output( "    void *vabuf = __builtin_alloca(__gexw_va_printf_size(va, fmt, %d));\n", va_wide );
+        output( "    __gexw_va_printf_copy(va, fmt, %d, vabuf);\n", va_wide );
+    }
     output( "    " );
     if (ret != 'v') output( "%s r = ", c_type( ret ));
     output( "((%s (*)(", c_type( ret ));
@@ -560,7 +591,9 @@ static const char *output_adapter( const ORDDEF *odp, const char *sig )
         if (j < regs) output( "(int)__gexw_reg(ctx, %u)", j == 0 ? 1 : 2 );  /* ECX, EDX */
         else
         {
-            if (count[j] > 1 || !spec_arg_matches( odp->u.func.args[first[j]], params[j] ))
+            if ((int)j == va_param)
+                output( "(int)vabuf" );
+            else if (count[j] > 1 || !spec_arg_matches( odp->u.func.args[first[j]], params[j] ))
                 output( "(int)__gexw_argptr(ctx, %u)", off );  /* a struct by value */
             else switch (params[j])
             {
@@ -663,6 +696,34 @@ static const char *output_varargs_adapter( const ORDDEF *odp, const char *sig )
     return ident;
 }
 
+/* The wasm signature of an export the objects neither define nor call
+ * (user32's AttachThreadInput is win32u's NtUserAttachThreadInput): from
+ * the .spec, every argument a word but int64, float and double; NULL when
+ * that is a guess too far (a 128-bit argument). The link then checks it
+ * against the definition. */
+static const char *spec_sig( const ORDDEF *odp )
+{
+    char buf[MAX_ARGUMENTS + 4];
+    unsigned int i, n = 0;
+
+    if (strchr( get_link_name( odp ), '.' )) return NULL;
+    buf[n++] = (odp->flags & FLAG_RET64) ? 'I' : 'i';
+    buf[n++] = ':';
+    for (i = 0; i < odp->u.func.nb_args; i++)
+    {
+        switch (odp->u.func.args[i])
+        {
+        case ARG_INT64:  buf[n++] = 'I'; break;
+        case ARG_FLOAT:  buf[n++] = 'f'; break;
+        case ARG_DOUBLE: buf[n++] = 'd'; break;
+        case ARG_INT128: return NULL;
+        default:         buf[n++] = 'i'; break;
+        }
+    }
+    buf[n] = 0;
+    return xstrdup( buf );
+}
+
 /* An unimplemented export: raise what Wine raises. */
 static const char *output_stub_adapter( DLLSPEC *spec, const ORDDEF *odp )
 {
@@ -754,9 +815,13 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
                 break;
             }
             /* re-exported from a DLL it imports (-import): the owner's
-             * adapter serves it (gex binds the same slot) */
-            if (odp->flags & FLAG_IMPORT) continue;
-            if (!(sig = find_func_sig( get_link_name( odp ))))
+             * adapter serves it (gex binds the same slot), unless it is
+             * there under another name (user32's GetKeyState is win32u's
+             * NtUserGetKeyState): then an adapter of its own */
+            if ((odp->flags & FLAG_IMPORT) && (!odp->name || !strcmp( odp->name, get_link_name( odp ))))
+                continue;
+            if (!(sig = find_func_sig( get_link_name( odp ))) &&
+                !(sig = spec_sig( odp )))
             {
                 /* not in the objects (an i386 export written in assembly
                  * there, for one): no adapter, gex binds gexp__missing */

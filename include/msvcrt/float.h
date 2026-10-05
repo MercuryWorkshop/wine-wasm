@@ -128,7 +128,7 @@ extern "C" {
 #define _FPE_STACKUNDERFLOW     0x8b
 #define _FPE_EXPLICITGEN        0x8c
 
-#if defined(__i386__)
+#if defined(__i386__) || defined(__wasm32__)
 #define _CW_DEFAULT (_RC_NEAR + _PC_53 + _EM_INVALID + _EM_ZERODIVIDE + _EM_OVERFLOW + _EM_UNDERFLOW + _EM_INEXACT + _EM_DENORMAL)
 #elif defined(__x86_64__)
 #define _CW_DEFAULT (_RC_NEAR + _PC_64 + _EM_INVALID + _EM_ZERODIVIDE + _EM_OVERFLOW + _EM_UNDERFLOW + _EM_INEXACT + _EM_DENORMAL)
@@ -141,7 +141,7 @@ _ACRTIMP int __cdecl __fpe_flt_rounds(void);
 _ACRTIMP unsigned int __cdecl _control87(unsigned int, unsigned int);
 _ACRTIMP unsigned int __cdecl _controlfp(unsigned int, unsigned int);
 _ACRTIMP errno_t __cdecl _controlfp_s(unsigned int *, unsigned int, unsigned int);
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
 _ACRTIMP int __cdecl __control87_2(unsigned int, unsigned int, unsigned int *, unsigned int *);
 #endif
 
