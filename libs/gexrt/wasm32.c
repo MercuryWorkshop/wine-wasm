@@ -36,6 +36,11 @@ __asm__(
     "gexw_depth_g:\n"
     "\t.globaltype gexw_retaddr_g, i32\n"
     "gexw_retaddr_g:\n"
+    /* the guest's stack pointer at the innermost entry: guest code that
+     * moves above it (a catch block continuing in an outer frame, a
+     * longjmp) has left every native frame since */
+    "\t.globaltype gexw_entry_esp_g, i32\n"
+    "gexw_entry_esp_g:\n"
     /* thrown by native code that has written a new guest state into the
      * context (NtContinue and the like): every native frame up to the
      * innermost entry from the guest is dropped, and that entry returns
@@ -89,6 +94,19 @@ __asm__(
     "\t.functype gexw_get_retaddr () -> (i32)\n"
     "\tglobal.get gexw_retaddr_g\n"
     "\tend_function\n"
+    "\t.globl gexw_get_entry_esp\n"
+    "\t.type gexw_get_entry_esp,@function\n"
+    "gexw_get_entry_esp:\n"
+    "\t.functype gexw_get_entry_esp () -> (i32)\n"
+    "\tglobal.get gexw_entry_esp_g\n"
+    "\tend_function\n"
+    "\t.globl gexw_set_entry_esp\n"
+    "\t.type gexw_set_entry_esp,@function\n"
+    "gexw_set_entry_esp:\n"
+    "\t.functype gexw_set_entry_esp (i32) -> ()\n"
+    "\tlocal.get 0\n"
+    "\tglobal.set gexw_entry_esp_g\n"
+    "\tend_function\n"
     "\t.globl gexw_get_sp\n"
     "\t.type gexw_get_sp,@function\n"
     "gexw_get_sp:\n"
@@ -109,11 +127,13 @@ __asm__(
      * one stack. The per-thread globals and the C stack pointer are put
      * back on the way out; a __gexw_unwind from inside ends the call
      * with 0 (the context holds the state to go on from). */
-    "\t.globl __gexw_entry\n"
-    "\t.type __gexw_entry,@function\n"
-    "__gexw_entry:\n"
-    "\t.functype __gexw_entry (i32, i32, i32, i64, i32) -> (i32)\n"
-    "\t.local i32, i32, i32, i32, i32, i32\n"
+    "\t.globl __gexw_entry_raw\n"
+    "\t.type __gexw_entry_raw,@function\n"
+    "__gexw_entry_raw:\n"
+    "\t.functype __gexw_entry_raw (i32, i32, i32, i64, i32) -> (i32)\n"
+    "\t.local i32, i32, i32, i32, i32, i32, i32\n"
+    "\tglobal.get gexw_entry_esp_g\n"
+    "\tlocal.set 11\n"
     "\tglobal.get __stack_pointer\n"
     "\tlocal.set 5\n"
     "\tglobal.get gexw_ctx_g\n"
@@ -126,6 +146,8 @@ __asm__(
     "\tlocal.get 0\n"
     "\ti32.load 32\n"
     "\tlocal.tee 9\n"
+    "\tglobal.set gexw_entry_esp_g\n"
+    "\tlocal.get 9\n"
     "\ti32.load 0\n"
     "\tglobal.set gexw_retaddr_g\n"
     "\tlocal.get 9\n"
@@ -155,6 +177,8 @@ __asm__(
     "\tglobal.set gexw_depth_g\n"
     "\tlocal.get 8\n"
     "\tglobal.set gexw_retaddr_g\n"
+    "\tlocal.get 11\n"
+    "\tglobal.set gexw_entry_esp_g\n"
     "\tlocal.get 10\n"
     "\treturn\n"
     "\tend_try_table\n"
@@ -167,6 +191,8 @@ __asm__(
     "\tglobal.set gexw_depth_g\n"
     "\tlocal.get 8\n"
     "\tglobal.set gexw_retaddr_g\n"
+    "\tlocal.get 11\n"
+    "\tglobal.set gexw_entry_esp_g\n"
     "\ti32.const 0\n"
     "\tend_function\n"
 );
@@ -178,6 +204,9 @@ int32_t gexw_get_depth(void);
 void gexw_set_depth(int32_t);
 uint32_t gexw_get_retaddr(void);
 uint32_t gexw_get_sp(void);
+uint32_t gexw_get_entry_esp(void);
+void gexw_set_entry_esp(uint32_t);
+int __gexw_entry_raw(int, int, unsigned int, unsigned long long, int (*)(int, int, unsigned int, unsigned long long));
 void __gexw_throw_unwind(void) __attribute__((noreturn));
 
 __attribute__((import_module("gex"), import_name("provider_ctx"))) int gex_provider_ctx(void);
@@ -249,16 +278,64 @@ void __gexw_missing( int ctx )
 /* Run the guest from the context until it reaches `stop` (a return
  * address of ours, or a syscall's), as gex's own dispatch loop does: an
  * F_body that returns 0 has written where to go on into the context. */
-static void run_until( int ctx, uint32_t stop )
+static void run_until( int ctx, uint32_t stop, uint32_t limit )
 {
     int depth = gexw_get_depth() + 1;
     for (;;)
     {
         uint32_t pc = (uint32_t)GEX_C64( GEX_CTX_PC );
         if (pc == stop) return;
+        /* The guest went on above our entry's stack pointer (a catch block
+         * continuing in an outer frame, a longjmp): every native frame
+         * since that entry is dead. Drop them; the entry returns 0 and the
+         * guest goes on from the context. */
+        if (limit && gp_reg( ctx, R_ESP ) >= limit) __gexw_throw_unwind();
         GEX_C64( GEX_CTX_LAST_TARGET ) = pc;
         if (GEX_FTAB( gex_ftab_idx( pc ))( ctx, depth, 0xffffffffu, stop )) return;
+        /* a trap through native frames inside it skipped their entries'
+         * restores */
+        gexw_set_entry_esp( limit );
     }
+}
+
+/* ---- entering native code ---- */
+
+#define GEX_NR_NATIVE_LEFT 0x7f000003u
+#define GEXW_JMP_EAX 0x3f0080u
+/* gex-kernel's NATIVE_SYSCALL mark on a system call's pc (see below) */
+#define GEX_NATIVE_SYSCALL 0x2000000000000000ull
+
+/* Every entry from the guest (winebuild's adapters, the entry thunks). Guest
+ * code entering from above the innermost entry's stack has left that
+ * entry's native frames (a catch block continuing in an outer frame) and is
+ * running nested inside them: gex abandons the innermost call-out, its
+ * native caller drops its frames (run_until), and the guest re-enters here
+ * from the context, one level flatter, until it is not nested. */
+int __gexw_entry( int ctx, int depth, unsigned int need, unsigned long long ret,
+                  int (*body)(int, int, unsigned int, unsigned long long) )
+{
+    uint32_t e = gexw_get_entry_esp();
+    /* (at or above: a live entry's nested callees run below its native
+     * frames, which are below its own stack pointer) */
+    if (e && gp_reg( ctx, R_ESP ) >= e)
+    {
+        uint32_t eax = gp_reg( ctx, R_EAX );
+        /* re-entered from the guest's side, `jmp eax` to this function's
+         * address (gex-kernel's tramp::JMP_EAX_32): no x86 convention passes
+         * an argument in EAX */
+        GEX_C64( GEX_CTX_PC ) = GEXW_JMP_EAX;
+        gp_set( ctx, R_EAX, GEX_NR_NATIVE_LEFT );
+        /* stale if no call-out was left (a trap skipped a restore): then
+         * the re-entry just goes on */
+        gexw_set_entry_esp( 0 );
+        /* this function's address, for EAX when the host leaves (ctx::BALLAST,
+         * which nothing reads) */
+        GEX_C64( 344u ) = GP_SELF_PC();
+        gex_syscall( ctx, (int64_t)(GEX_NATIVE_SYSCALL | GEXW_JMP_EAX) );
+        /* reached only when no call-out was left: as if nothing */
+        gp_set( ctx, R_EAX, eax );
+    }
+    return __gexw_entry_raw( ctx, depth, need, ret, body );
 }
 
 /* Call the guest function at `target` with `n` stack words: push them and a
@@ -268,7 +345,7 @@ static void run_until( int ctx, uint32_t stop )
 uint64_t __gexw_guest_call( uint32_t target, const uint32_t *words, uint32_t n )
 {
     int ctx = cur_ctx();
-    uint32_t sp0, sp, ra, i;
+    uint32_t sp0, sp, ra, i, limit;
 
     sp0 = gp_reg( ctx, R_ESP );
     /* below everything native code has live */
@@ -284,8 +361,12 @@ uint64_t __gexw_guest_call( uint32_t target, const uint32_t *words, uint32_t n )
     gp_set( ctx, R_ESP, sp );
     GEX_C64( GEX_CTX_PC ) = target;
     GEX_C64( GEX_CTX_LAST_TARGET ) = target;
+    limit = gexw_get_entry_esp();
     if (!GEX_FTAB( gex_ftab_idx( target ))( ctx, gexw_get_depth() + 1, 0xffffffffu, ra ))
-        run_until( ctx, ra );
+    {
+        gexw_set_entry_esp( limit );
+        run_until( ctx, ra, limit );
+    }
     gp_set( ctx, R_ESP, sp0 );
     return ((uint64_t)gp_reg( ctx, R_EDX ) << 32) | gp_reg( ctx, R_EAX );
 }
@@ -307,7 +388,6 @@ uint64_t __gexw_guest_call_regs( uint32_t target, uint32_t ecx, uint32_t edx, co
  * elsewhere (an APC delivered by an alertable wait, a user-mode callback's
  * end) writes that state into the context and returns normally, so the
  * native frames below it survive. */
-#define GEX_NATIVE_SYSCALL 0x2000000000000000ull
 
 static uint32_t syscall_enter( int ctx, uint32_t id, const uint32_t *words, uint32_t n, uint32_t *stop )
 {
@@ -334,7 +414,7 @@ uint32_t __gexw_syscall( uint32_t id, const uint32_t *words, uint32_t n )
     uint32_t esp0 = gp_reg( ctx, R_ESP ), pc0 = (uint32_t)GEX_C64( GEX_CTX_PC ), stop, ret;
 
     syscall_enter( ctx, id, words, n, &stop );
-    if ((uint32_t)GEX_C64( GEX_CTX_PC ) != stop) run_until( ctx, stop );
+    if ((uint32_t)GEX_C64( GEX_CTX_PC ) != stop) run_until( ctx, stop, gexw_get_entry_esp() );
     ret = gp_reg( ctx, R_EAX );
     gp_set( ctx, R_ESP, esp0 );
     GEX_C64( GEX_CTX_PC ) = pc0;
