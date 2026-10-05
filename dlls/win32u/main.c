@@ -2570,6 +2570,10 @@ HWND SYSCALL_API NtUserWindowFromPoint( LONG x, LONG y )
 #define SYSCALL_STUB(name) NTSTATUS SYSCALL_API name(void) { SYSCALL_FUNC( name ); }
 ALL_SYSCALL_STUBS
 
+#elif defined(__wasm32__)
+
+/* (the stubs are in syscall_wasm32.c, which sees no C declarations) */
+
 #else /*  __arm64ec__ */
 
 #ifdef _WIN64

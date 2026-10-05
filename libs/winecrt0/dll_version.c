@@ -36,6 +36,10 @@ static inline void *image_base(void)
 #ifdef __WINE_PE_BUILD
     extern IMAGE_DOS_HEADER __ImageBase;
     return (void *)&__ImageBase;
+#elif defined(__wasm32__)
+    /* (the DLL's skeleton, which gex maps: it writes the base here) */
+    extern void *__gexw_image_base;
+    return __gexw_image_base;
 #else
     extern IMAGE_NT_HEADERS __wine_spec_nt_header;
     return (void *)((__wine_spec_nt_header.OptionalHeader.ImageBase + 0xffff) & ~0xffff);

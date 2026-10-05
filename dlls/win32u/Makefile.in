@@ -50,6 +50,7 @@ SOURCES = \
 	scroll.c \
 	spy.c \
 	syscall.c \
+	syscall_wasm32.c \
 	sysparams.c \
 	systray.c \
 	vertical.c \

@@ -596,7 +596,7 @@ static const char *output_adapter( const ORDDEF *odp, const char *sig )
  * NULL when the code's signature is not the fixed arguments plus one. */
 static const char *output_varargs_adapter( const ORDDEF *odp, const char *sig )
 {
-    const char *link = get_link_name( odp ), *params = strchr( sig, ':' ) + 1, *ident;
+    const char *link = get_link_name( odp ), *params = strchr( sig, ':' ) + 1, *ident, *callee;
     const char *name = odp->name ? odp->name : link;
     char ret = sig[0];
     unsigned int nargs = odp->u.func.nb_args, j, off = 0, fmt_off = 0;
@@ -620,9 +620,12 @@ static const char *output_varargs_adapter( const ORDDEF *odp, const char *sig )
     }
     else for (j = 0; j < nargs; j++) off += spec_arg_size( odp->u.func.args[j] );
 
-    output( "%s %s(", c_type( ret ), link );
+    /* (declared under a name of its own: another adapter may have
+     * declared the link name already, without the wasm signature) */
+    output( "%s __gexw_va_%u(", c_type( ret ), adapter_count );
     for (j = 0; j <= nargs; j++) output( "%s%s", j ? ", " : "", c_type( params[j] ));
     output( ") __asm__(\"%s\");\n", link );
+    callee = strmake( "__gexw_va_%u", adapter_count );
     ident = output_adapter_header( odp );
     output( "    unsigned int va = __gexw_argptr(ctx, %u);\n", off );
     output( "    void *buf = (void *)va;\n" );
@@ -635,7 +638,7 @@ static const char *output_varargs_adapter( const ORDDEF *odp, const char *sig )
     }
     output( "    " );
     if (ret != 'v') output( "%s r = ", c_type( ret ));
-    output( "%s(", link );
+    output( "%s(", callee );
     for (j = 0, off = 0; j < nargs; j++)
     {
         switch (params[j])
@@ -823,6 +826,8 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
     /* every exported link name, for the one-module PE side (pesym.py) */
     if (!(rsp = fopen( strmake( "%s.exports", output_file_name ), "w" )))
         fatal_error( "cannot create %s.exports\n", output_file_name );
+    /* winecrt0's base of this DLL, which gex writes (wasmdll) */
+    fprintf( rsp, "__gexw_image_base data\n" );
     for (i = 0; i < exports->nb_entry_points; i++)
     {
         ORDDEF *odp = exports->entry_points[i];

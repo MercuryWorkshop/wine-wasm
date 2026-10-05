@@ -39,6 +39,10 @@ static inline void *image_base(void)
 #ifdef __WINE_PE_BUILD
     extern IMAGE_DOS_HEADER __ImageBase;
     return (void *)&__ImageBase;
+#elif defined(__wasm32__)
+    /* (the DLL's skeleton, which gex maps: it writes the base here) */
+    extern void *__gexw_image_base;
+    return __gexw_image_base;
 #else
     extern IMAGE_NT_HEADERS __wine_spec_nt_header;
     return (void *)((__wine_spec_nt_header.OptionalHeader.ImageBase + 0xffff) & ~0xffff);
@@ -69,6 +73,12 @@ static NTSTATUS WINAPI unix_call_init( unixlib_handle_t handle, unsigned int cod
 }
 
 unixlib_handle_t __wine_unixlib_handle = 0;
+
+#ifdef __wasm32__
+/* This DLL's base: its skeleton's, which gex writes when the skeleton maps
+ * (a data export of each DLL, winebuild's .exports). */
+void *__gexw_image_base = 0;
+#endif
 NTSTATUS (WINAPI *__wine_unix_call_dispatcher)( unixlib_handle_t, unsigned int, void * ) = unix_call_init;
 
 #ifdef __arm64ec__
