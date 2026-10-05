@@ -1833,6 +1833,36 @@ __ASM_STDCALL_FUNC(InterlockedDecrement, 4,
                   "decl %eax\n\t"
                   "ret $4")
 
+#elif defined(__wasm32__)
+
+/* (the i386 exports, on the guest's shared memory: wasm atomics; the
+ * names are macros for the compiler builtins in Wine's headers) */
+#undef InterlockedCompareExchange
+#undef InterlockedExchange
+#undef InterlockedExchangeAdd
+#undef InterlockedIncrement
+#undef InterlockedDecrement
+LONG WINAPI InterlockedCompareExchange( LONG volatile *dest, LONG xchg, LONG compare )
+{
+    return __sync_val_compare_and_swap( dest, compare, xchg );
+}
+LONG WINAPI InterlockedExchange( LONG volatile *dest, LONG val )
+{
+    return __atomic_exchange_n( dest, val, __ATOMIC_SEQ_CST );
+}
+LONG WINAPI InterlockedExchangeAdd( LONG volatile *dest, LONG incr )
+{
+    return __atomic_fetch_add( dest, incr, __ATOMIC_SEQ_CST );
+}
+LONG WINAPI InterlockedIncrement( LONG volatile *dest )
+{
+    return __atomic_add_fetch( dest, 1, __ATOMIC_SEQ_CST );
+}
+LONG WINAPI InterlockedDecrement( LONG volatile *dest )
+{
+    return __atomic_sub_fetch( dest, 1, __ATOMIC_SEQ_CST );
+}
+
 #endif  /* __i386__ */
 
 

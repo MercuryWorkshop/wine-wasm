@@ -516,7 +516,7 @@ NTSTATUS WINAPI RtlInt64ToUnicodeString(
 }
 
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
 
 /* those builtin functions use stdcall calling convention, but compilers reference them without stdcall declarations */
 #ifdef __WINE_PE_BUILD
@@ -833,12 +833,14 @@ LONGLONG __stdcall __regs__allshl( LONGLONG a, unsigned char b )
 /******************************************************************************
  *        _allshl   (NTDLL.@)
  */
+#ifdef __i386__
 __ASM_GLOBAL_FUNC( _allshl,
                    "xchgl (%esp),%ecx\n\t"
                    "pushl %edx\n\t"
                    "pushl %eax\n\t"
                    "pushl %ecx\n\t"
                    "jmp " __ASM_STDCALL("__regs__allshl", 12) )
+#endif
 
 
 LONGLONG __stdcall __regs__allshr( LONGLONG a, unsigned char b )
@@ -865,12 +867,14 @@ LONGLONG __stdcall __regs__allshr( LONGLONG a, unsigned char b )
 /******************************************************************************
  *        _allshr   (NTDLL.@)
  */
+#ifdef __i386__
 __ASM_GLOBAL_FUNC( _allshr,
                    "xchgl (%esp),%ecx\n\t"
                    "pushl %edx\n\t"
                    "pushl %eax\n\t"
                    "pushl %ecx\n\t"
                    "jmp " __ASM_STDCALL("__regs__allshr", 12) )
+#endif
 
 
 ULONGLONG __stdcall __regs__aullshr( ULONGLONG a, unsigned char b )
@@ -897,12 +901,14 @@ ULONGLONG __stdcall __regs__aullshr( ULONGLONG a, unsigned char b )
 /******************************************************************************
  *        _allshr   (NTDLL.@)
  */
+#ifdef __i386__
 __ASM_GLOBAL_FUNC( _aullshr,
                    "xchgl (%esp),%ecx\n\t"
                    "pushl %edx\n\t"
                    "pushl %eax\n\t"
                    "pushl %ecx\n\t"
                    "jmp " __ASM_STDCALL("__regs__aullshr", 12) )
+#endif
 
 
 /******************************************************************************
@@ -918,6 +924,7 @@ __ASM_GLOBAL_FUNC( _aullshr,
  *  Returns the quotient of a and b in edx:eax.
  *  Returns the remainder of a and b in ebx:ecx.
  */
+#ifdef __i386__
 __ASM_GLOBAL_FUNC( _alldvrm,
                    "pushl %ebp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
@@ -941,6 +948,7 @@ __ASM_GLOBAL_FUNC( _alldvrm,
                    __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
                    __ASM_CFI(".cfi_same_value %ebp\n\t")
                    "ret $16" )
+#endif
 
 /******************************************************************************
  *        _aullrem   (NTDLL.@)
@@ -974,6 +982,7 @@ ULONGLONG WINAPI _aullrem( ULONGLONG a, ULONGLONG b )
  *  Returns the quotient of a and b in edx:eax.
  *  Returns the remainder of a and b in ebx:ecx.
  */
+#ifdef __i386__
 __ASM_GLOBAL_FUNC( _aulldvrm,
                    "pushl %ebp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
@@ -997,5 +1006,55 @@ __ASM_GLOBAL_FUNC( _aulldvrm,
                    __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
                    __ASM_CFI(".cfi_same_value %ebp\n\t")
                    "ret $16" )
+#endif
+
+#ifdef __wasm32__
+/* The register-convention helpers (i386: assembly above), as entries of
+ * their own on the guest's registers: the shifts take EDX:EAX and CL; the
+ * dvrm ones leave the remainder in EBX:ECX and pop their 16 bytes. */
+#include "wine/gex/runtime.h"
+int __gexw_ret_only( int ctx, unsigned long long ret, unsigned int pop );
+unsigned long long __gexw_arg64( int ctx, unsigned int off );
+
+static ULONGLONG get_edx_eax(void)
+{
+    return ((ULONGLONG)__gexw_guest_reg( GEXW_EDX ) << 32) | __gexw_guest_reg( GEXW_EAX );
+}
+
+static void set_pair( unsigned int hi, unsigned int lo, ULONGLONG v )
+{
+    __gexw_guest_set_reg( hi, (unsigned int)(v >> 32) );
+    __gexw_guest_set_reg( lo, (unsigned int)v );
+}
+
+#define SHIFT_ENTRY(name) \
+    int gexp_##name( int ctx, int depth, unsigned int need, unsigned long long ret ) __asm__("gexp_" #name); \
+    int gexp_##name( int ctx, int depth, unsigned int need, unsigned long long ret ) \
+    { \
+        set_pair( GEXW_EDX, GEXW_EAX, __regs_##name( get_edx_eax(), __gexw_guest_reg( GEXW_ECX ) & 0xff )); \
+        return __gexw_ret_only( ctx, ret, 0 ); \
+    }
+SHIFT_ENTRY(_allshl)
+SHIFT_ENTRY(_allshr)
+SHIFT_ENTRY(_aullshr)
+
+int gexp__alldvrm( int ctx, int depth, unsigned int need, unsigned long long ret ) __asm__("gexp__alldvrm");
+int gexp__alldvrm( int ctx, int depth, unsigned int need, unsigned long long ret )
+{
+    LONGLONG a = __gexw_arg64( ctx, 0 ), b = __gexw_arg64( ctx, 8 );
+    set_pair( GEXW_EBX, GEXW_ECX, _allrem( a, b ));
+    set_pair( GEXW_EDX, GEXW_EAX, _alldiv( a, b ));
+    return __gexw_ret_only( ctx, ret, 16 );
+}
+
+int gexp__aulldvrm( int ctx, int depth, unsigned int need, unsigned long long ret ) __asm__("gexp__aulldvrm");
+int gexp__aulldvrm( int ctx, int depth, unsigned int need, unsigned long long ret )
+{
+    ULONGLONG a = __gexw_arg64( ctx, 0 ), b = __gexw_arg64( ctx, 8 );
+    set_pair( GEXW_EBX, GEXW_ECX, _aullrem( a, b ));
+    set_pair( GEXW_EDX, GEXW_EAX, _aulldiv( a, b ));
+    return __gexw_ret_only( ctx, ret, 16 );
+}
+#endif  /* __wasm32__ */
 
 #endif  /* __i386__ */

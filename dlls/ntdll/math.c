@@ -37,13 +37,20 @@ int CDECL abs( int i )
     return i >= 0 ? i : -i;
 }
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
 
+#ifdef __wasm32__
+/* (the guest's x87 stack, gexrt) */
+#include "wine/gex/runtime.h"
+#define FPU_DOUBLE(var) double var = __gexw_x87_pop()
+#define FPU_DOUBLES(var1,var2) double var2 = __gexw_x87_pop(), var1 = __gexw_x87_pop()
+#else
 #define FPU_DOUBLE(var) double var; \
     __asm__ __volatile__( "fstpl %0;fwait" : "=m" (var) : )
 #define FPU_DOUBLES(var1,var2) double var1,var2; \
     __asm__ __volatile__( "fstpl %0;fwait" : "=m" (var2) : ); \
     __asm__ __volatile__( "fstpl %0;fwait" : "=m" (var1) : )
+#endif
 
 /*********************************************************************
  *		_CIcos (NTDLL.@)
@@ -96,6 +103,9 @@ double CDECL _CIsqrt(void)
 LONGLONG CDECL _ftol(void)
 {
     FPU_DOUBLE(x);
+#ifdef __wasm32__
+    if (!(x > -9223372036854775808.0 && x < 9223372036854775808.0)) return (LONGLONG)0x8000000000000000ull;
+#endif
     return (LONGLONG)x;
 }
 

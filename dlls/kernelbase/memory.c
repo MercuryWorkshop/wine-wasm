@@ -1780,7 +1780,7 @@ BOOL WINAPI GetXStateFeaturesMask( CONTEXT *context, DWORD64 *feature_mask )
     return TRUE;
 }
 
-#elif defined(__i386__)
+#elif defined(__i386__) || defined(__wasm32__)
 
 /***********************************************************************
  *             GetEnabledXStateFeatures   (kernelbase.@)

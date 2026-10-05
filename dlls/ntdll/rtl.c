@@ -898,7 +898,16 @@ DWORD WINAPI RtlComputeCrc32(DWORD dwInitial, const BYTE *pData, INT iLen)
  * RETURNS
  *  The value with its bytes swapped.
  */
-#ifdef __i386__
+#ifdef __wasm32__
+/* (fastcall, but the int64 is on the stack, popped) */
+int __gexw_ret( int ctx, unsigned long long ret, unsigned int pop, unsigned long long edx_eax );
+unsigned long long __gexw_arg64( int ctx, unsigned int off );
+int gexp_RtlUlonglongByteSwap( int ctx, int depth, unsigned int need, unsigned long long ret ) __asm__("gexp_RtlUlonglongByteSwap");
+int gexp_RtlUlonglongByteSwap( int ctx, int depth, unsigned int need, unsigned long long ret )
+{
+    return __gexw_ret( ctx, ret, 8, __builtin_bswap64( __gexw_arg64( ctx, 0 )));
+}
+#elif defined(__i386__)
 __ASM_FASTCALL_FUNC(RtlUlonglongByteSwap, 8,
                     "movl 4(%esp),%edx\n\t"
                     "bswap %edx\n\t"
@@ -915,7 +924,16 @@ __ASM_FASTCALL_FUNC(RtlUlonglongByteSwap, 8,
  * NOTES
  *  ix86 version takes argument in %ecx. Other systems use the inline version.
  */
-#ifdef __i386__
+#ifdef __wasm32__
+/* (fastcall, ECX; the C name is winternl.h's inline) */
+unsigned int __gexw_reg( int ctx, unsigned int r );
+int __gexw_ret32( int ctx, unsigned long long ret, unsigned int pop, unsigned int eax );
+int gexp_RtlUlongByteSwap( int ctx, int depth, unsigned int need, unsigned long long ret ) __asm__("gexp_RtlUlongByteSwap");
+int gexp_RtlUlongByteSwap( int ctx, int depth, unsigned int need, unsigned long long ret )
+{
+    return __gexw_ret32( ctx, ret, 0, __builtin_bswap32( __gexw_reg( ctx, 1 )));
+}
+#elif defined(__i386__)
 __ASM_FASTCALL_FUNC(RtlUlongByteSwap, 4,
                     "movl %ecx,%eax\n\t"
                     "bswap %eax\n\t"
@@ -930,7 +948,13 @@ __ASM_FASTCALL_FUNC(RtlUlongByteSwap, 4,
  * NOTES
  *  i386 version takes argument in %cx. Other systems use the inline version.
  */
-#ifdef __i386__
+#ifdef __wasm32__
+int gexp_RtlUshortByteSwap( int ctx, int depth, unsigned int need, unsigned long long ret ) __asm__("gexp_RtlUshortByteSwap");
+int gexp_RtlUshortByteSwap( int ctx, int depth, unsigned int need, unsigned long long ret )
+{
+    return __gexw_ret32( ctx, ret, 0, __builtin_bswap16( (unsigned short)__gexw_reg( ctx, 1 )));
+}
+#elif defined(__i386__)
 __ASM_FASTCALL_FUNC(RtlUshortByteSwap, 4,
                     "movb %ch,%al\n\t"
                     "movb %cl,%ah\n\t"
