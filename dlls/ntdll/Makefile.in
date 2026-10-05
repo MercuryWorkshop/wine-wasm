@@ -43,9 +43,11 @@ SOURCES = \
 	signal_arm64.c \
 	signal_arm64ec.c \
 	signal_i386.c \
+	signal_wasm32.c \
 	signal_x86_64.c \
 	string.c \
 	sync.c \
+	syscall_wasm32.c \
 	thread.c \
 	threadpool.c \
 	time.c \

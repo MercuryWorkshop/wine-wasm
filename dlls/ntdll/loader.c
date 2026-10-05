@@ -49,7 +49,7 @@ WINE_DECLARE_DEBUG_CHANNEL(imports);
 #define DEFAULT_SECURITY_COOKIE_32  0xbb40e64e
 #define DEFAULT_SECURITY_COOKIE_16  (DEFAULT_SECURITY_COOKIE_32 >> 16)
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
 static const WCHAR pe_dir[] = L"\\i386-windows";
 #elif defined __x86_64__
 static const WCHAR pe_dir[] = L"\\x86_64-windows";

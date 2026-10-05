@@ -19,7 +19,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef __i386__
+#if !defined(__i386__) && !defined(__wasm32__)
 
 #include <stdlib.h>
 #include <stdarg.h>
@@ -2387,4 +2387,4 @@ void WINAPI _local_unwind( void *frame, void *target_ip )
     RtlUnwind( frame, target_ip, NULL, NULL );
 }
 
-#endif  /* !__i386__ */
+#endif  /* !__i386__ && !__wasm32__ */

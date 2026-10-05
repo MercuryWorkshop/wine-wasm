@@ -593,7 +593,7 @@ struct actctx_loader
 
 static const xmlstr_t empty_xmlstr;
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
 static const WCHAR current_archW[] = L"x86";
 #elif defined __aarch64__ || defined __arm64ec__
 static const WCHAR current_archW[] = L"arm64";

@@ -304,7 +304,24 @@ NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
 }
 
 
-#if defined(__WINE_PE_BUILD) && !defined(__i386__)
+#ifdef __wasm32__
+/*******************************************************************
+ *		dispatch_exception_in_place
+ *
+ * wasm32: dispatch an exception raised by native code where it is
+ * (signal_wasm32.c); STATUS_SUCCESS when a handler continued it.
+ */
+NTSTATUS dispatch_exception_in_place( EXCEPTION_RECORD *rec, CONTEXT *context )
+{
+    TRACE( "code=%lx (%s) flags=%lx addr=%p\n",
+           rec->ExceptionCode, debugstr_exception_code(rec->ExceptionCode),
+           rec->ExceptionFlags, rec->ExceptionAddress );
+    if (call_vectored_handlers( rec, context ) == EXCEPTION_CONTINUE_EXECUTION) return STATUS_SUCCESS;
+    return call_seh_handlers( rec, context );
+}
+#endif
+
+#if defined(__WINE_PE_BUILD) && !defined(__i386__) && !defined(__wasm32__)
 
 /*******************************************************************
  *		user_callback_handler

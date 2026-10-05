@@ -37,7 +37,7 @@
 
 #define NTDLL_ACTCTX_STACK_FRAME_HEAP_ALLOCATED 0x8 /* RTL_ACTIVATION_CONTEXT_STACK_FRAME.Flags */
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
 static const USHORT current_machine = IMAGE_FILE_MACHINE_I386;
 #elif defined(__x86_64__)
 static const USHORT current_machine = IMAGE_FILE_MACHINE_AMD64;
@@ -54,6 +54,9 @@ static const UINT_PTR page_size = 0x1000;
 /* exceptions */
 extern NTSTATUS call_seh_handlers( EXCEPTION_RECORD *rec, CONTEXT *context );
 extern NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context );
+#ifdef __wasm32__
+extern NTSTATUS dispatch_exception_in_place( EXCEPTION_RECORD *rec, CONTEXT *context );
+#endif
 extern NTSTATUS WINAPI dispatch_user_callback( void *args, ULONG len, ULONG id );
 extern EXCEPTION_DISPOSITION WINAPI user_callback_handler( EXCEPTION_RECORD *record, void *frame,
                                                            CONTEXT *context, void *dispatch );
@@ -124,7 +127,7 @@ extern void heap_thread_detach(void);
 
 /* register context */
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
 # define TRACE_CONTEXT(c) do { \
     TRACE( "eip=%08lx esp=%08lx ebp=%08lx eflags=%08lx\n", (c)->Eip, (c)->Esp, (c)->Ebp, (c)->EFlags );\
     TRACE( "eax=%08lx ebx=%08lx ecx=%08lx edx=%08lx\n", (c)->Eax, (c)->Ebx, (c)->Ecx, (c)->Edx ); \
