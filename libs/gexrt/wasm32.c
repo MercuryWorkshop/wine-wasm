@@ -361,7 +361,10 @@ uint64_t __gexw_guest_call( uint32_t target, const uint32_t *words, uint32_t n )
     gp_set( ctx, R_ESP, sp );
     GEX_C64( GEX_CTX_PC ) = target;
     GEX_C64( GEX_CTX_LAST_TARGET ) = target;
-    limit = gexw_get_entry_esp();
+    /* the guest's stack pointer while native code runs is the innermost
+     * entry's (native code moves it only around its guest calls, and puts
+     * it back): what the guest leaves the native frames by going above */
+    limit = sp0;
     if (!GEX_FTAB( gex_ftab_idx( target ))( ctx, gexw_get_depth() + 1, 0xffffffffu, ra ))
     {
         gexw_set_entry_esp( limit );
@@ -414,7 +417,7 @@ uint32_t __gexw_syscall( uint32_t id, const uint32_t *words, uint32_t n )
     uint32_t esp0 = gp_reg( ctx, R_ESP ), pc0 = (uint32_t)GEX_C64( GEX_CTX_PC ), stop, ret;
 
     syscall_enter( ctx, id, words, n, &stop );
-    if ((uint32_t)GEX_C64( GEX_CTX_PC ) != stop) run_until( ctx, stop, gexw_get_entry_esp() );
+    if ((uint32_t)GEX_C64( GEX_CTX_PC ) != stop) run_until( ctx, stop, esp0 );
     ret = gp_reg( ctx, R_EAX );
     gp_set( ctx, R_ESP, esp0 );
     GEX_C64( GEX_CTX_PC ) = pc0;
