@@ -33,19 +33,34 @@ struct __gexw_jmp_buf
     void *func_invocation_id;
     uint32_t label;
     struct { void *env; int val; } arg;
+    /* the guest state native code keeps across a call into the guest
+     * (gexrt's wasm32.c): a longjmp out of guest frames puts it back */
+    uint32_t esp, depth;
 };
+
+int32_t gexw_get_ctx(void);
+int32_t gexw_get_depth(void);
+void gexw_set_depth(int32_t);
 
 void __wasm_setjmp( void *env, uint32_t label, void *func_invocation_id )
 {
     struct __gexw_jmp_buf *jb = env;
+    int ctx = gexw_get_ctx();
     jb->func_invocation_id = func_invocation_id;
     jb->label = label;
+    jb->esp = ctx ? *(uint32_t *)(uintptr_t)(ctx + 32) : 0;
+    jb->depth = gexw_get_depth();
 }
 
 uint32_t __wasm_setjmp_test( void *env, void *func_invocation_id )
 {
     struct __gexw_jmp_buf *jb = env;
-    return jb->func_invocation_id == func_invocation_id ? jb->label : 0;
+    int ctx;
+    if (jb->func_invocation_id != func_invocation_id) return 0;
+    /* this function's own setjmp: back to the guest state it saved */
+    if ((ctx = gexw_get_ctx()) && jb->esp) *(uint64_t *)(uintptr_t)(ctx + 32) = jb->esp;
+    gexw_set_depth( jb->depth );
+    return jb->label;
 }
 
 void __wasm_longjmp( void *env, int val )

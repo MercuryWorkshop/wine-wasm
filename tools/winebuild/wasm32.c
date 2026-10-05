@@ -455,12 +455,19 @@ static const char *adapter_symbol( const ORDDEF *odp )
     return strmake( "gexp_#%d", odp->ordinal );
 }
 
+/* An adapter is a body, which reads the arguments, calls the function and
+ * returns to the guest, and the F_body gex binds, which runs the body
+ * through gexrt's __gexw_entry (the C stack moved onto the guest's, the
+ * per-thread state, and the catch for a guest state loaded underneath). */
 static const char *output_adapter_header( const ORDDEF *odp )
 {
     const char *ident = strmake( "__gexw_adapter_%u", adapter_count++ );
+    output( "static int %s_body(int ctx, int depth, unsigned int need, unsigned long long ret);\n", ident );
     output( "int %s(int ctx, int depth, unsigned int need, unsigned long long ret) __asm__(\"%s\");\n",
             ident, adapter_symbol( odp ));
     output( "int %s(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n", ident );
+    output( "    return __gexw_entry(ctx, depth, need, ret, %s_body);\n}\n", ident );
+    output( "static int %s_body(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n", ident );
     return ident;
 }
 
@@ -536,8 +543,6 @@ static const char *output_adapter( const ORDDEF *odp, const char *sig )
 
     output( "%s %s();\n", c_type( sret ? 'v' : ret ), link );
     ident = output_adapter_header( odp );
-    output( "    struct __gexw_frame f;\n" );
-    output( "    __gexw_enter(&f, ctx, depth);\n" );
     if (sret) output( "    unsigned long long sr __attribute__((aligned(8))) = 0;\n" );
     output( "    " );
     if (ret != 'v') output( "%s r = ", c_type( ret ));
@@ -568,7 +573,6 @@ static const char *output_adapter( const ORDDEF *odp, const char *sig )
         }
     }
     output( ");\n" );
-    output( "    __gexw_leave(&f);\n" );
     if (sret) ret = 's';
     switch (ret)
     {
@@ -618,9 +622,7 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
 
     output( "/* File generated automatically from %s by winebuild (wasm32); do not edit! */\n\n",
             spec_file_name ? spec_file_name : spec->file_name );
-    output( "struct __gexw_frame { int ctx, depth; };\n" );
-    output( "void __gexw_enter(struct __gexw_frame *, int, int);\n" );
-    output( "void __gexw_leave(struct __gexw_frame *);\n" );
+    output( "int __gexw_entry(int, int, unsigned int, unsigned long long, int (*)(int, int, unsigned int, unsigned long long));\n" );
     output( "unsigned int __gexw_arg32(int, unsigned int);\n" );
     output( "unsigned long long __gexw_arg64(int, unsigned int);\n" );
     output( "float __gexw_argf32(int, unsigned int);\n" );
@@ -653,9 +655,9 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
             continue;
         case TYPE_STDCALL:
         case TYPE_CDECL:
-            /* ntdll's system calls: a direct call into the Unix side on
-             * wasm32 (W2); no adapter until then */
-            if (odp->flags & FLAG_SYSCALL) continue;
+            /* written by hand in the objects (ntdll's KiUser*Dispatcher,
+             * entered with no return address) */
+            if (find_func_sig( adapter_symbol( odp ))) continue;
             /* re-exported from a DLL it imports (-import): the owner's
              * adapter serves it (gex binds the same slot) */
             if (odp->flags & FLAG_IMPORT) continue;
@@ -678,18 +680,21 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
     }
 
     /* the entry point: DllMain(hinst, reason, reserved), stdcall */
-    output( "int gexp__entry(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
     if (spec->init_func && find_func_sig( spec->init_func ))
     {
-        output( "    int %s(int, int, int);\n", spec->init_func );
-        output( "    struct __gexw_frame f;\n" );
-        output( "    __gexw_enter(&f, ctx, depth);\n" );
+        output( "int %s(int, int, int);\n", spec->init_func );
+        output( "static int gexp__entry_body(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
         output( "    int r = %s((int)__gexw_arg32(ctx, 0), (int)__gexw_arg32(ctx, 4), (int)__gexw_arg32(ctx, 8));\n",
                 spec->init_func );
-        output( "    __gexw_leave(&f);\n" );
-        output( "    return __gexw_ret(ctx, ret, 12, (unsigned int)r);\n}\n\n" );
+        output( "    return __gexw_ret32(ctx, ret, 12, (unsigned int)r);\n}\n\n" );
+        output( "int gexp__entry(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
+        output( "    return __gexw_entry(ctx, depth, need, ret, gexp__entry_body);\n}\n\n" );
     }
-    else output( "    return __gexw_ret(ctx, ret, 12, 1);\n}\n\n" );
+    else
+    {
+        output( "int gexp__entry(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
+        output( "    return __gexw_ret32(ctx, ret, 12, 1);\n}\n\n" );
+    }
     output( "int gexp__missing(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
     output( "    __gexw_missing(ctx);\n    return 0;\n}\n\n" );
     strarray_add( &names, "gexp__entry" );
@@ -729,7 +734,13 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
     for (i = 0; i < exports->nb_entry_points; i++)
     {
         ORDDEF *odp = exports->entry_points[i];
-        if (odp->flags & (FLAG_FORWARD | FLAG_IMPORT)) continue;  /* defined elsewhere */
+        if (odp->flags & FLAG_FORWARD)
+        {
+            /* another DLL's export: what callers of this name reach */
+            if (odp->name) fprintf( rsp, "%s forward %s\n", odp->name, odp->link_name );
+            continue;
+        }
+        if (odp->flags & FLAG_IMPORT) continue;  /* defined elsewhere */
         if (odp->type == TYPE_STUB || odp->type == TYPE_VARIABLE) continue;
         fprintf( rsp, "%s %s\n", get_link_name( odp ), odp->type == TYPE_EXTERN ? "data" : "func" );
     }
