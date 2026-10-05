@@ -240,6 +240,17 @@ void CDECL chkesp_fail(void)
   DebugBreak();
 }
 
+#elif defined(__wasm32__)
+
+/* (an entry of its own: EAX, ECX and EDX are the caller's to keep; the
+ * guest's flags, which say whether to trap, are not read: it returns) */
+int __gexw_ret_only( int ctx, unsigned long long ret, unsigned int pop );
+int gexp__chkesp( int ctx, int depth, unsigned int need, unsigned long long ret ) __asm__("gexp__chkesp");
+int gexp__chkesp( int ctx, int depth, unsigned int need, unsigned long long ret )
+{
+    return __gexw_ret_only( ctx, ret, 0 );
+}
+
 #endif  /* __i386__ */
 
 static inline void swap(char *l, char *r, size_t size)

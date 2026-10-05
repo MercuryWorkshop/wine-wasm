@@ -34,6 +34,13 @@ unsigned long long __gexw_guest_call_regs( unsigned int target, unsigned int ecx
 unsigned int __gexw_guest_call_ebp( unsigned int target, unsigned int ebp, const unsigned int *words,
                                     unsigned int n );
 
+/* The guest's x87 ST0, popped; its XMM registers' low lanes. */
+double __gexw_x87_pop( void );
+double __gexw_guest_xmm_f64( unsigned int n );
+void __gexw_guest_set_xmm_f64( unsigned int n, double v );
+float __gexw_guest_xmm_f32( unsigned int n );
+void __gexw_guest_set_xmm_f32( unsigned int n, float v );
+
 static inline int __gexw_is_native( const void *f )
 {
     return (unsigned int)(unsigned long)f < GEXW_ICALL_FLOOR;

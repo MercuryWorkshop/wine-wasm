@@ -257,6 +257,13 @@ int __gexw_ret32( int ctx, uint64_t ret, uint32_t pop, uint32_t eax )
     return gp_return_eax( ctx, ret, pop, eax );
 }
 
+/* Return to the guest with every register as it is (an entry that must
+ * keep EAX, ECX and EDX: msvcrt's _chkesp). */
+int __gexw_ret_only( int ctx, uint64_t ret, uint32_t pop )
+{
+    return gp_return( ctx, ret, pop );
+}
+
 /* The same with a float result in ST0. */
 int __gexw_ret_fp( int ctx, uint64_t ret, uint32_t pop, double v )
 {
@@ -578,15 +585,15 @@ uint32_t __gexw_syscall_resume( uint32_t id, const uint32_t *words, uint32_t n )
     return ret;
 }
 
-/* The same for a float or double result: ST0, popped. */
-double __gexw_guest_call_fp( uint32_t target, const uint32_t *words, uint32_t n )
+/* Pop the guest's ST0 as a double (the i386 ABI's floating-point result,
+ * and the _CI* functions' arguments). */
+double __gexw_x87_pop( void )
 {
     int ctx = cur_ctx();
     uint32_t top, se;
     uint64_t sig, sign;
     int32_t e, de;
 
-    (void)__gexw_guest_call( target, words, n );
     top = GEX_C32( GEX_CTX_X87_TOP ) & 7u;
     sig = GEX_C64( GEX_CTX_X87 + 16u * top );
     se = GEX_C16( GEX_CTX_X87 + 16u * top + 8u );
@@ -600,6 +607,40 @@ double __gexw_guest_call_fp( uint32_t target, const uint32_t *words, uint32_t n 
     if (de >= 0x7ff) return gex_f64( sign | 0x7ff0000000000000ull );
     if (de <= 0) return gex_f64( 12 - de >= 64 ? sign : sign | (sig >> (12 - de)) );
     return gex_f64( sign | ((uint64_t)de << 52) | ((sig << 1) >> 12) );
+}
+
+/* The same for a float or double result: ST0, popped. */
+double __gexw_guest_call_fp( uint32_t target, const uint32_t *words, uint32_t n )
+{
+    (void)__gexw_guest_call( target, words, n );
+    return __gexw_x87_pop();
+}
+
+/* The guest's XMM registers (the SSE2 libm entry points' arguments). */
+double __gexw_guest_xmm_f64( unsigned n )
+{
+    int ctx = cur_ctx();
+    return gp_xmm_f64( ctx, n );
+}
+
+void __gexw_guest_set_xmm_f64( unsigned n, double v )
+{
+    int ctx = cur_ctx();
+    gp_set_xmm_f64( ctx, n, v );
+}
+
+float __gexw_guest_xmm_f32( unsigned n )
+{
+    int ctx = cur_ctx();
+    return gex_f32( (uint32_t)GEX_C64( GEX_CTX_VN( n )) );
+}
+
+void __gexw_guest_set_xmm_f32( unsigned n, float v )
+{
+    int ctx = cur_ctx();
+    uint32_t b;
+    __builtin_memcpy( &b, &v, 4 );
+    GEX_C64( GEX_CTX_VN( n )) = (GEX_C64( GEX_CTX_VN( n )) & ~0xffffffffull) | b;
 }
 
 /* The ICALL pass's entry thunks: { function, thunk } pairs of table

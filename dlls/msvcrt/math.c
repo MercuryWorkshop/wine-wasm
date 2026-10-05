@@ -50,6 +50,9 @@
 
 #include "wine/asm.h"
 #include "wine/debug.h"
+#ifdef __wasm32__
+#include "wine/gex/runtime.h"
+#endif
 
 WINE_DEFAULT_DEBUG_CHANNEL(msvcrt);
 
@@ -555,6 +558,19 @@ double CDECL MSVCRT_tanh( double x )
             __ASM_CFI(".cfi_same_value %ebp\n\t") \
             "ret")
 
+#elif defined(__wasm32__)
+
+/* (the guest's x87 stack: ST0, or ST1 and ST0 for two arguments; the
+ * result goes back in ST0 by the adapter) */
+#define CREATE_FPU_FUNC1(name, call) \
+    double CDECL name(void) { double x = __gexw_x87_pop(); return call( x ); }
+#define CREATE_FPU_FUNC2(name, call) \
+    double CDECL name(void) { double y = __gexw_x87_pop(), x = __gexw_x87_pop(); return call( x, y ); }
+
+#endif
+
+#if defined(__i386__) || defined(__wasm32__)
+
 CREATE_FPU_FUNC1(_CIacos, acos)
 CREATE_FPU_FUNC1(_CIasin, asin)
 CREATE_FPU_FUNC1(_CIatan, atan)
@@ -572,6 +588,16 @@ CREATE_FPU_FUNC1(_CIsqrt, sqrt)
 CREATE_FPU_FUNC1(_CItan, tan)
 CREATE_FPU_FUNC1(_CItanh, tanh)
 
+#ifdef __wasm32__
+/* ST0, truncated, as an int64 in EDX:EAX (x87's "integer indefinite" when
+ * it does not fit) */
+LONGLONG CDECL _ftol(void)
+{
+    double x = __gexw_x87_pop();
+    if (!(x > -9223372036854775808.0 && x < 9223372036854775808.0)) return (LONGLONG)0x8000000000000000ull;
+    return (LONGLONG)x;
+}
+#else
 __ASM_GLOBAL_FUNC(_ftol,
         "pushl   %ebp\n\t"
         __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
@@ -592,6 +618,7 @@ __ASM_GLOBAL_FUNC(_ftol,
         __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
         __ASM_CFI(".cfi_same_value %ebp\n\t")
         "ret")
+#endif
 
 #endif /* __i386__ */
 
@@ -2089,7 +2116,34 @@ imaxdiv_t CDECL imaxdiv(intmax_t num, intmax_t denom)
 }
 #endif
 
+#if defined(__i386__) || defined(__wasm32__)
+
+/* The SSE2 entry points take and give their arguments in XMM registers:
+ * the CPU's on i386, the guest's on wasm32 (gexrt). */
 #ifdef __i386__
+#define GET_XMM0_D(d) __asm__ __volatile__( "movq %%xmm0,%0" : "=m" (d) )
+#define GET_XMM1_D(d) __asm__ __volatile__( "movq %%xmm1,%0" : "=m" (d) )
+#define SET_XMM0_D(d) __asm__ __volatile__( "movq %0,%%xmm0" : : "m" (d) )
+#define GET_XMM0_F(f) __asm__ __volatile__( "movd %%xmm0,%0" : "=g" (f) )
+#define GET_XMM1_F(f) __asm__ __volatile__( "movd %%xmm1,%0" : "=g" (f) )
+#define SET_XMM0_F(f) __asm__ __volatile__( "movd %0,%%xmm0" : : "g" (f) )
+#define SQRT_XMM0(d)  __asm__ __volatile__( "sqrtsd %xmm0, %xmm0" )
+#else
+#define GET_XMM0_D(d) ((d) = __gexw_guest_xmm_f64( 0 ))
+#define GET_XMM1_D(d) ((d) = __gexw_guest_xmm_f64( 1 ))
+#define SET_XMM0_D(d) __gexw_guest_set_xmm_f64( 0, (d) )
+#define GET_XMM0_F(f) ((f) = __gexw_guest_xmm_f32( 0 ))
+#define GET_XMM1_F(f) ((f) = __gexw_guest_xmm_f32( 1 ))
+#define SET_XMM0_F(f) __gexw_guest_set_xmm_f32( 0, (f) )
+#define SQRT_XMM0(d)  __gexw_guest_set_xmm_f64( 0, sqrt( d ) )
+/* (the guest's control words are not modelled here yet: round to nearest) */
+static inline int __control87_2( unsigned int newval, unsigned int mask, unsigned int *x87, unsigned int *sse2 )
+{
+    if (x87) *x87 = 0;
+    if (sse2) *sse2 = 0;
+    return 1;
+}
+#endif
 
 /*********************************************************************
  *		_adjust_fdiv (MSVCRT.@)
@@ -2326,9 +2380,9 @@ void _safe_fprem1(void)
 void __cdecl __libm_sse2_acos(void)
 {
     double d;
-    __asm__ __volatile__( "movq %%xmm0,%0" : "=m" (d) );
+    GET_XMM0_D(d);
     d = acos( d );
-    __asm__ __volatile__( "movq %0,%%xmm0" : : "m" (d) );
+    SET_XMM0_D(d);
 }
 
 /***********************************************************************
@@ -2337,9 +2391,9 @@ void __cdecl __libm_sse2_acos(void)
 void __cdecl __libm_sse2_acosf(void)
 {
     float f;
-    __asm__ __volatile__( "movd %%xmm0,%0" : "=g" (f) );
+    GET_XMM0_F(f);
     f = acosf( f );
-    __asm__ __volatile__( "movd %0,%%xmm0" : : "g" (f) );
+    SET_XMM0_F(f);
 }
 
 /***********************************************************************
@@ -2348,9 +2402,9 @@ void __cdecl __libm_sse2_acosf(void)
 void __cdecl __libm_sse2_asin(void)
 {
     double d;
-    __asm__ __volatile__( "movq %%xmm0,%0" : "=m" (d) );
+    GET_XMM0_D(d);
     d = asin( d );
-    __asm__ __volatile__( "movq %0,%%xmm0" : : "m" (d) );
+    SET_XMM0_D(d);
 }
 
 /***********************************************************************
@@ -2359,9 +2413,9 @@ void __cdecl __libm_sse2_asin(void)
 void __cdecl __libm_sse2_asinf(void)
 {
     float f;
-    __asm__ __volatile__( "movd %%xmm0,%0" : "=g" (f) );
+    GET_XMM0_F(f);
     f = asinf( f );
-    __asm__ __volatile__( "movd %0,%%xmm0" : : "g" (f) );
+    SET_XMM0_F(f);
 }
 
 /***********************************************************************
@@ -2370,9 +2424,9 @@ void __cdecl __libm_sse2_asinf(void)
 void __cdecl __libm_sse2_atan(void)
 {
     double d;
-    __asm__ __volatile__( "movq %%xmm0,%0" : "=m" (d) );
+    GET_XMM0_D(d);
     d = atan( d );
-    __asm__ __volatile__( "movq %0,%%xmm0" : : "m" (d) );
+    SET_XMM0_D(d);
 }
 
 /***********************************************************************
@@ -2381,9 +2435,9 @@ void __cdecl __libm_sse2_atan(void)
 void __cdecl __libm_sse2_atan2(void)
 {
     double d1, d2;
-    __asm__ __volatile__( "movq %%xmm0,%0; movq %%xmm1,%1 " : "=m" (d1), "=m" (d2) );
+    GET_XMM0_D(d1); GET_XMM1_D(d2);
     d1 = atan2( d1, d2 );
-    __asm__ __volatile__( "movq %0,%%xmm0" : : "m" (d1) );
+    SET_XMM0_D(d1);
 }
 
 /***********************************************************************
@@ -2392,9 +2446,9 @@ void __cdecl __libm_sse2_atan2(void)
 void __cdecl __libm_sse2_atanf(void)
 {
     float f;
-    __asm__ __volatile__( "movd %%xmm0,%0" : "=g" (f) );
+    GET_XMM0_F(f);
     f = atanf( f );
-    __asm__ __volatile__( "movd %0,%%xmm0" : : "g" (f) );
+    SET_XMM0_F(f);
 }
 
 /***********************************************************************
@@ -2403,9 +2457,9 @@ void __cdecl __libm_sse2_atanf(void)
 void __cdecl __libm_sse2_cos(void)
 {
     double d;
-    __asm__ __volatile__( "movq %%xmm0,%0" : "=m" (d) );
+    GET_XMM0_D(d);
     d = cos( d );
-    __asm__ __volatile__( "movq %0,%%xmm0" : : "m" (d) );
+    SET_XMM0_D(d);
 }
 
 /***********************************************************************
@@ -2414,9 +2468,9 @@ void __cdecl __libm_sse2_cos(void)
 void __cdecl __libm_sse2_cosf(void)
 {
     float f;
-    __asm__ __volatile__( "movd %%xmm0,%0" : "=g" (f) );
+    GET_XMM0_F(f);
     f = cosf( f );
-    __asm__ __volatile__( "movd %0,%%xmm0" : : "g" (f) );
+    SET_XMM0_F(f);
 }
 
 /***********************************************************************
@@ -2425,9 +2479,9 @@ void __cdecl __libm_sse2_cosf(void)
 void __cdecl __libm_sse2_exp(void)
 {
     double d;
-    __asm__ __volatile__( "movq %%xmm0,%0" : "=m" (d) );
+    GET_XMM0_D(d);
     d = exp( d );
-    __asm__ __volatile__( "movq %0,%%xmm0" : : "m" (d) );
+    SET_XMM0_D(d);
 }
 
 /***********************************************************************
@@ -2436,9 +2490,9 @@ void __cdecl __libm_sse2_exp(void)
 void __cdecl __libm_sse2_expf(void)
 {
     float f;
-    __asm__ __volatile__( "movd %%xmm0,%0" : "=g" (f) );
+    GET_XMM0_F(f);
     f = expf( f );
-    __asm__ __volatile__( "movd %0,%%xmm0" : : "g" (f) );
+    SET_XMM0_F(f);
 }
 
 /***********************************************************************
@@ -2447,9 +2501,9 @@ void __cdecl __libm_sse2_expf(void)
 void __cdecl __libm_sse2_log(void)
 {
     double d;
-    __asm__ __volatile__( "movq %%xmm0,%0" : "=m" (d) );
+    GET_XMM0_D(d);
     d = log( d );
-    __asm__ __volatile__( "movq %0,%%xmm0" : : "m" (d) );
+    SET_XMM0_D(d);
 }
 
 /***********************************************************************
@@ -2458,9 +2512,9 @@ void __cdecl __libm_sse2_log(void)
 void __cdecl __libm_sse2_log10(void)
 {
     double d;
-    __asm__ __volatile__( "movq %%xmm0,%0" : "=m" (d) );
+    GET_XMM0_D(d);
     d = log10( d );
-    __asm__ __volatile__( "movq %0,%%xmm0" : : "m" (d) );
+    SET_XMM0_D(d);
 }
 
 /***********************************************************************
@@ -2469,9 +2523,9 @@ void __cdecl __libm_sse2_log10(void)
 void __cdecl __libm_sse2_log10f(void)
 {
     float f;
-    __asm__ __volatile__( "movd %%xmm0,%0" : "=g" (f) );
+    GET_XMM0_F(f);
     f = log10f( f );
-    __asm__ __volatile__( "movd %0,%%xmm0" : : "g" (f) );
+    SET_XMM0_F(f);
 }
 
 /***********************************************************************
@@ -2480,9 +2534,9 @@ void __cdecl __libm_sse2_log10f(void)
 void __cdecl __libm_sse2_logf(void)
 {
     float f;
-    __asm__ __volatile__( "movd %%xmm0,%0" : "=g" (f) );
+    GET_XMM0_F(f);
     f = logf( f );
-    __asm__ __volatile__( "movd %0,%%xmm0" : : "g" (f) );
+    SET_XMM0_F(f);
 }
 
 /***********************************************************************
@@ -2491,9 +2545,9 @@ void __cdecl __libm_sse2_logf(void)
 void __cdecl __libm_sse2_pow(void)
 {
     double d1, d2;
-    __asm__ __volatile__( "movq %%xmm0,%0; movq %%xmm1,%1 " : "=m" (d1), "=m" (d2) );
+    GET_XMM0_D(d1); GET_XMM1_D(d2);
     d1 = pow( d1, d2 );
-    __asm__ __volatile__( "movq %0,%%xmm0" : : "m" (d1) );
+    SET_XMM0_D(d1);
 }
 
 /***********************************************************************
@@ -2502,9 +2556,9 @@ void __cdecl __libm_sse2_pow(void)
 void __cdecl __libm_sse2_powf(void)
 {
     float f1, f2;
-    __asm__ __volatile__( "movd %%xmm0,%0; movd %%xmm1,%1" : "=g" (f1), "=g" (f2) );
+    GET_XMM0_F(f1); GET_XMM1_F(f2);
     f1 = powf( f1, f2 );
-    __asm__ __volatile__( "movd %0,%%xmm0" : : "g" (f1) );
+    SET_XMM0_F(f1);
 }
 
 /***********************************************************************
@@ -2513,9 +2567,9 @@ void __cdecl __libm_sse2_powf(void)
 void __cdecl __libm_sse2_sin(void)
 {
     double d;
-    __asm__ __volatile__( "movq %%xmm0,%0" : "=m" (d) );
+    GET_XMM0_D(d);
     d = sin( d );
-    __asm__ __volatile__( "movq %0,%%xmm0" : : "m" (d) );
+    SET_XMM0_D(d);
 }
 
 /***********************************************************************
@@ -2524,9 +2578,9 @@ void __cdecl __libm_sse2_sin(void)
 void __cdecl __libm_sse2_sinf(void)
 {
     float f;
-    __asm__ __volatile__( "movd %%xmm0,%0" : "=g" (f) );
+    GET_XMM0_F(f);
     f = sinf( f );
-    __asm__ __volatile__( "movd %0,%%xmm0" : : "g" (f) );
+    SET_XMM0_F(f);
 }
 
 /***********************************************************************
@@ -2535,9 +2589,9 @@ void __cdecl __libm_sse2_sinf(void)
 void __cdecl __libm_sse2_tan(void)
 {
     double d;
-    __asm__ __volatile__( "movq %%xmm0,%0" : "=m" (d) );
+    GET_XMM0_D(d);
     d = tan( d );
-    __asm__ __volatile__( "movq %0,%%xmm0" : : "m" (d) );
+    SET_XMM0_D(d);
 }
 
 /***********************************************************************
@@ -2546,9 +2600,9 @@ void __cdecl __libm_sse2_tan(void)
 void __cdecl __libm_sse2_tanf(void)
 {
     float f;
-    __asm__ __volatile__( "movd %%xmm0,%0" : "=g" (f) );
+    GET_XMM0_F(f);
     f = tanf( f );
-    __asm__ __volatile__( "movd %0,%%xmm0" : : "g" (f) );
+    SET_XMM0_F(f);
 }
 
 /***********************************************************************
@@ -2559,21 +2613,21 @@ void __cdecl __libm_sse2_sqrt_precise(void)
     unsigned int cw;
     double d;
 
-    __asm__ __volatile__( "movq %%xmm0,%0" : "=m" (d) );
+    GET_XMM0_D(d);
     __control87_2(0, 0, NULL, &cw);
     if (cw & _MCW_RC)
     {
         d = sqrt(d);
-        __asm__ __volatile__( "movq %0,%%xmm0" : : "m" (d) );
+        SET_XMM0_D(d);
         return;
     }
 
     if (!sqrt_validate(&d, FALSE))
     {
-        __asm__ __volatile__( "movq %0,%%xmm0" : : "m" (d) );
+        SET_XMM0_D(d);
         return;
     }
-    __asm__ __volatile__( "sqrtsd %xmm0, %xmm0" );
+    SQRT_XMM0(d);
 }
 #endif  /* __i386__ */
 
