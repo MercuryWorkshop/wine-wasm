@@ -529,6 +529,15 @@ static const char *output_adapter( const ORDDEF *odp, const char *sig )
             i++;
             continue;
         }
+        /* a 64-bit parameter the .spec spells as two words (ntdll's
+         * NtWow64ReadVirtualMemory64: long long for each ULONG64) */
+        if (params[j] == 'I' && i + 1 < nargs && left_args >= left_params + 1 &&
+            spec_arg_matches( odp->u.func.args[i], 'i' ) && spec_arg_matches( odp->u.func.args[i + 1], 'i' ))
+        {
+            count[j] = 2;
+            i += 2;
+            continue;
+        }
         if (params[j] != 'i') return NULL;
         /* a struct by value: as many arguments as leave one per remaining parameter */
         if (nargs - i < left_params + 1) return NULL;
@@ -593,6 +602,8 @@ static const char *output_adapter( const ORDDEF *odp, const char *sig )
         {
             if ((int)j == va_param)
                 output( "(int)vabuf" );
+            else if (params[j] == 'I' && count[j] == 2)
+                output( "(long long)__gexw_arg64(ctx, %u)", off );
             else if (count[j] > 1 || !spec_arg_matches( odp->u.func.args[first[j]], params[j] ))
                 output( "(int)__gexw_argptr(ctx, %u)", off );  /* a struct by value */
             else switch (params[j])
