@@ -70,13 +70,7 @@ typedef void  (CALLBACK *LDRENUMPROC)(LDR_DATA_TABLE_ENTRY *, void *, BOOLEAN *)
 
 static void __fastcall default_thread_init_func( DWORD unknown, LPTHREAD_START_ROUTINE entry, void *arg );
 void (FASTCALL *pBaseThreadInitThunk)(DWORD,LPTHREAD_START_ROUTINE,void *) = default_thread_init_func;
-#ifdef __wasm32__
-/* gex-kernel's NT layer serves the unix calls (signal_wasm32.c) */
-extern NTSTATUS WINAPI __wine_unix_call_wasm32( unixlib_handle_t, unsigned int, void * );
-NTSTATUS (WINAPI *__wine_unix_call_dispatcher)( unixlib_handle_t, unsigned int, void * ) = __wine_unix_call_wasm32;
-#else
 NTSTATUS (WINAPI *__wine_unix_call_dispatcher)( unixlib_handle_t, unsigned int, void * ) = NULL;
-#endif
 
 static DWORD (WINAPI *pCtrlRoutine)(void *);
 

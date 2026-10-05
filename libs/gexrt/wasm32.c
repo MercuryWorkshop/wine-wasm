@@ -242,6 +242,10 @@ void __gexw_missing( int ctx )
 
 /* ---- running guest code from native code ---- */
 
+/* The return address of a guest call from native code: the last word of
+ * gex-kernel's NT trampoline page (int3 filler). */
+#define GEXW_RETURN_PAD 0x3ffff1u
+
 /* Run the guest from the context until it reaches `stop` (a return
  * address of ours, or a syscall's), as gex's own dispatch loop does: an
  * F_body that returns 0 has written where to go on into the context. */
@@ -269,7 +273,12 @@ uint64_t __gexw_guest_call( uint32_t target, const uint32_t *words, uint32_t n )
     sp0 = gp_reg( ctx, R_ESP );
     /* below everything native code has live */
     sp = ((gexw_get_sp() - 64) & ~15u) - 4 * n - 4;
-    ra = target ^ 1u;  /* in the callee's page, so tier-1's call-out can watch it */
+    /* An address no code has, in a page with a dispatch table (gex-kernel's
+     * NT trampolines, which run before any of this), so tier-1's call-out
+     * can watch it. Not in the callee's page: a watched slot there could
+     * be one the callee's own code needs (its table's indices are the
+     * page's addresses). */
+    ra = GEXW_RETURN_PAD;
     GW( sp ) = ra;
     for (i = 0; i < n; i++) GW( sp + 4 + 4 * i ) = words[i];
     gp_set( ctx, R_ESP, sp );

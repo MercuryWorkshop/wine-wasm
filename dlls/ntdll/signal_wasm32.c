@@ -106,8 +106,8 @@ static inline int guest_ctx(void)
 }
 
 /* Below it, a function pointer is a table index: native code (the ICALL
- * check's test). */
-#define GEX_NATIVE_FLOOR 0x400000
+ * check's test). gex-kernel's NT trampolines are at it. */
+#define GEX_NATIVE_FLOOR 0x3f0000
 
 static inline ULONG guest_word( ULONG addr ) { return *(ULONG *)(ULONG_PTR)addr; }
 
@@ -155,22 +155,6 @@ NTSTATUS WINAPI NtWow64WriteVirtualMemory64( HANDLE process, ULONG64 addr, const
     UINT w[7] = { HandleToULong( process ), (UINT)addr, (UINT)(addr >> 32), PtrToUlong( buffer ),
                   (UINT)size, (UINT)(size >> 32), PtrToUlong( bytes_written ) };
     return __gexw_syscall( __id_NtWow64WriteVirtualMemory64, w, 7 );
-}
-
-
-/*******************************************************************
- *         __wine_unix_call_wasm32
- *
- * __wine_unix_call_dispatcher: gex-kernel's private UNIX_CALL system call,
- * (handle, code, args) as its i386 trampoline passes them. (The
- * trampoline itself is guest code below the ICALL check's floor.)
- */
-#define GEX_NR_UNIX_CALL 0x7f000001
-
-NTSTATUS WINAPI __wine_unix_call_wasm32( unixlib_handle_t handle, unsigned int code, void *args )
-{
-    UINT w[4] = { (UINT)handle, (UINT)(handle >> 32), code, PtrToUlong( args ) };
-    return __gexw_syscall( GEX_NR_UNIX_CALL, w, 4 );
 }
 
 
