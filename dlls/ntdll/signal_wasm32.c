@@ -105,6 +105,10 @@ static inline int guest_ctx(void)
     return ctx ? ctx : gex_provider_ctx();
 }
 
+/* Below it, a function pointer is a table index: native code (the ICALL
+ * check's test). */
+#define GEX_NATIVE_FLOOR 0x400000
+
 static inline ULONG guest_word( ULONG addr ) { return *(ULONG *)(ULONG_PTR)addr; }
 
 
@@ -151,6 +155,22 @@ NTSTATUS WINAPI NtWow64WriteVirtualMemory64( HANDLE process, ULONG64 addr, const
     UINT w[7] = { HandleToULong( process ), (UINT)addr, (UINT)(addr >> 32), PtrToUlong( buffer ),
                   (UINT)size, (UINT)(size >> 32), PtrToUlong( bytes_written ) };
     return __gexw_syscall( __id_NtWow64WriteVirtualMemory64, w, 7 );
+}
+
+
+/*******************************************************************
+ *         __wine_unix_call_wasm32
+ *
+ * __wine_unix_call_dispatcher: gex-kernel's private UNIX_CALL system call,
+ * (handle, code, args) as its i386 trampoline passes them. (The
+ * trampoline itself is guest code below the ICALL check's floor.)
+ */
+#define GEX_NR_UNIX_CALL 0x7f000001
+
+NTSTATUS WINAPI __wine_unix_call_wasm32( unixlib_handle_t handle, unsigned int code, void *args )
+{
+    UINT w[4] = { (UINT)handle, (UINT)(handle >> 32), code, PtrToUlong( args ) };
+    return __gexw_syscall( GEX_NR_UNIX_CALL, w, 4 );
 }
 
 
@@ -532,9 +552,16 @@ void call_thread_func( PRTL_THREAD_START_ROUTINE entry, void *arg )
 {
     __TRY
     {
-        /* BaseThreadInitThunk is a fastcall: (0, entry) in ECX and EDX */
-        UINT w[1] = { PtrToUlong( arg ) };
-        __gexw_guest_call_regs( PtrToUlong( pBaseThreadInitThunk ), 0, PtrToUlong( entry ), w, 1 );
+        /* kernel32's BaseThreadInitThunk is reached at its guest address,
+         * a fastcall: (0, entry) in ECX and EDX; ntdll's own default is
+         * native code (a function table index) */
+        if (PtrToUlong( pBaseThreadInitThunk ) < GEX_NATIVE_FLOOR)
+            pBaseThreadInitThunk( 0, (LPTHREAD_START_ROUTINE)entry, arg );
+        else
+        {
+            UINT w[1] = { PtrToUlong( arg ) };
+            __gexw_guest_call_regs( PtrToUlong( pBaseThreadInitThunk ), 0, PtrToUlong( entry ), w, 1 );
+        }
     }
     __EXCEPT(call_unhandled_exception_filter)
     {
@@ -581,8 +608,14 @@ static void DECLSPEC_NORETURN signal_start_thread( CONTEXT *ctx )
 /******************************************************************
  *		LdrInitializeThunk (NTDLL.@)
  */
+void *wasm32_ntdll_address;
+
 void WINAPI LdrInitializeThunk( CONTEXT *context, ULONG_PTR unk2, ULONG_PTR unk3, ULONG_PTR unk4 )
 {
+    /* the guest address it was entered at, inside ntdll's image (its own
+     * functions' addresses are function table indices) */
+    if (!wasm32_ntdll_address)
+        wasm32_ntdll_address = ULongToPtr( (ULONG)*(ULONGLONG *)(ULONG_PTR)(guest_ctx() + 352) );
     loader_init( context, (void **)&context->Eax );
     TRACE_(relay)( "\1Starting thread proc %p (arg=%p)\n", (void *)context->Eax, (void *)context->Ebx );
     signal_start_thread( context );

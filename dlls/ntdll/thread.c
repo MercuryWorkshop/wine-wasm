@@ -59,11 +59,77 @@ static inline struct debug_info *get_info(void)
 #endif
 }
 
+#ifdef __wasm32__
+/* wasm32 under gex: no Unix side fills the options below the PEB, so
+ * WINEDEBUG is parsed here (the Unix side's syntax: [class]+|-channel,
+ * "all" for every channel; Wine's default, err and fixme, otherwise). */
+static struct __wine_debug_channel wasm_debug_options[64];
+
+static int __cdecl cmp_options( const void *a, const void *b )
+{
+    return strcmp( ((const struct __wine_debug_channel *)a)->name,
+                   ((const struct __wine_debug_channel *)b)->name );
+}
+
+static void parse_winedebug( struct __wine_debug_channel *opts )
+{
+    static const char * const classes[] = { "fixme", "err", "warn", "trace" };
+    unsigned char default_flags = (1 << __WINE_DBCL_ERR) | (1 << __WINE_DBCL_FIXME);
+    UNICODE_STRING name = RTL_CONSTANT_STRING( L"WINEDEBUG" ), value;
+    WCHAR buf[256];
+    char str[256], *p, *next;
+    int n = 0, i;
+
+    value.Buffer = buf;
+    value.MaximumLength = sizeof(buf) - sizeof(WCHAR);
+    if (!RtlQueryEnvironmentVariable_U( NULL, &name, &value ))
+    {
+        for (i = 0; i < value.Length / sizeof(WCHAR) && i < sizeof(str) - 1; i++) str[i] = buf[i];
+        str[i] = 0;
+        for (p = str; p && *p; p = next)
+        {
+            unsigned char set = 0, clear = 0;
+            char *opt, *sep;
+            if ((next = strchr( p, ',' ))) *next++ = 0;
+            if (!(sep = strpbrk( p, "+-" ))) continue;
+            if (sep == p) set = clear = 0xf;
+            else
+            {
+                for (i = 0; i < ARRAY_SIZE(classes); i++)
+                    if (!strncmp( p, classes[i], sep - p ) && !classes[i][sep - p]) set = clear = 1 << i;
+                if (!set) continue;
+            }
+            if (*sep == '-') set = 0; else clear = 0;
+            opt = sep + 1;
+            if (!strcmp( opt, "all" )) default_flags = (default_flags & ~clear) | set;
+            else if (n < ARRAY_SIZE(wasm_debug_options) - 1 && strlen( opt ) < sizeof(opts->name))
+            {
+                strcpy( opts[n].name, opt );
+                opts[n].flags = (default_flags & ~clear) | set;
+                n++;
+            }
+        }
+    }
+    qsort( opts, n, sizeof(*opts), cmp_options );
+    opts[n].name[0] = 0;
+    opts[n].flags = default_flags;
+    nb_debug_options = n;
+}
+#endif
+
 static void init_options(void)
 {
     unsigned int offset = page_size * (sizeof(void *) / 4);
 
     debug_options = (struct __wine_debug_channel *)((char *)NtCurrentTeb()->Peb + offset);
+#ifdef __wasm32__
+    if (!debug_options[0].name[0] && !debug_options[0].flags)
+    {
+        debug_options = wasm_debug_options;
+        parse_winedebug( debug_options );
+        return;
+    }
+#endif
     while (debug_options[nb_debug_options].name[0]) nb_debug_options++;
 }
 

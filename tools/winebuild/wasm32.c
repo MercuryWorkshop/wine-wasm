@@ -657,7 +657,14 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
         case TYPE_CDECL:
             /* written by hand in the objects (ntdll's KiUser*Dispatcher,
              * entered with no return address) */
-            if (find_func_sig( adapter_symbol( odp ))) continue;
+            if (find_func_sig( adapter_symbol( odp )))
+            {
+                /* in the element segment like the others */
+                ident = strmake( "__gexw_adapter_%u", adapter_count++ );
+                output( "int %s(int, int, unsigned int, unsigned long long) __asm__(\"%s\");\n",
+                        ident, adapter_symbol( odp ));
+                break;
+            }
             /* re-exported from a DLL it imports (-import): the owner's
              * adapter serves it (gex binds the same slot) */
             if (odp->flags & FLAG_IMPORT) continue;
