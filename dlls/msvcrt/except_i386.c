@@ -498,35 +498,6 @@ DWORD CDECL __CxxFrameHandler( PEXCEPTION_RECORD rec, EXCEPTION_REGISTRATION_REC
 #endif
 
 
-#ifdef __wasm32__
-
-/* A thiscall call into the guest's (or our own) C++ code: `this` in ECX. */
-void call_copy_ctor( void *func, void *this, void *src, int has_vbase )
-{
-    unsigned int words[2] = { (unsigned int)(ULONG_PTR)src, 1 };
-
-    if (__gexw_is_native( func ))
-    {
-        if (has_vbase) ((void (*)(void *, void *, BOOL))func)( this, src, 1 );
-        else ((void (*)(void *, void *))func)( this, src );
-        return;
-    }
-    __gexw_guest_call_regs( (unsigned int)(ULONG_PTR)func, (unsigned int)(ULONG_PTR)this, 0,
-                            words, has_vbase ? 2 : 1 );
-}
-
-void call_dtor( void *func, void *this )
-{
-    if (__gexw_is_native( func ))
-    {
-        ((void (*)(void *))func)( this );
-        return;
-    }
-    __gexw_guest_call_regs( (unsigned int)(ULONG_PTR)func, (unsigned int)(ULONG_PTR)this, 0, NULL, 0 );
-}
-
-#endif  /* __wasm32__ */
-
 /*********************************************************************
  *		__CxxLongjmpUnwind (MSVCRT.@)
  *

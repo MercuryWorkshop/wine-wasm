@@ -218,7 +218,7 @@ _ACRTIMP float __cdecl frexpf(float, int*);
 static inline float frexpf(float x, int *y) { return frexp(x, y); }
 #endif
 
-#if (!defined(__i386__) && !defined(__x86_64__) && (_MSVCR_VER == 0 || _MSVCR_VER >= 110)) || defined(_NO_CRT_MATH_INLINE)
+#if (!defined(__i386__) && !defined(__wasm32__) && !defined(__x86_64__) && (_MSVCR_VER == 0 || _MSVCR_VER >= 110)) || defined(_NO_CRT_MATH_INLINE)
 _ACRTIMP float __cdecl fabsf(float);
 #else
 static inline float fabsf(float x) { return fabs(x); }

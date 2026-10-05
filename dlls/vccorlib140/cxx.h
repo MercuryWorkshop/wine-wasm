@@ -46,16 +46,18 @@
 
 #ifdef __wasm32__
 
-/* A vtable as C (its entries are function-table indices; their entry thunks
- * are thiscall, from __thiscall's annotation), with the RTTI locator before
- * it: `name_vtable` is an alias 4 bytes into the array. */
-#define VTABLE_ADD_FUNC(name) (const void *)(name),
+/* A vtable: its entries are function-table indices (the functions' entry
+ * thunks are thiscall, from __thiscall's annotation), with the RTTI locator
+ * before it. Assembly, so a vtable may come before its functions' C
+ * declarations, as on the other architectures; `.type` makes each
+ * reference a function's (a table index). */
+#define VTABLE_ADD_FUNC(name) "\t.type " THISCALL_NAME(name) ",@function\n\t.int32 " THISCALL_NAME(name) "\n"
 #define __ASM_VTABLE(name,funcs) \
-    extern const rtti_object_locator name ## _rtti; \
-    const void *const name ## _vtable_full[] __attribute__((used)) = { &name ## _rtti, funcs }; \
-    __asm__( ".globl " #name "_vtable\n\t.hidden " #name "_vtable\n\t" \
-             ".set " #name "_vtable, " #name "_vtable_full+4\n\t" \
-             ".size " #name "_vtable, 4" )
+    __asm__( ".section .data." #name "_vtable,\"\",@\n\t.p2align 2\n" \
+             "\t.int32 " __ASM_NAME(#name "_rtti") "\n" \
+             "\t.globl " __ASM_NAME(#name "_vtable") "\n\t.hidden " __ASM_NAME(#name "_vtable") "\n" \
+             __ASM_NAME(#name "_vtable") ":\n" funcs \
+             "\t.size " __ASM_NAME(#name "_vtable") ", 4\n\t.text" )
 
 #elif defined(_WIN64)
 
