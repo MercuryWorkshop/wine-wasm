@@ -1123,6 +1123,7 @@ SOURCES = \
 	wine/exception.h \
 	wine/gex/gex_abi.h \
 	wine/gex/provider.h \
+	wine/gex/runtime.h \
 	wine/gex/syscall.h \
 	wine/fil_data.idl \
 	wine/gdi_driver.h \

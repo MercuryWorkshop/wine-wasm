@@ -122,6 +122,8 @@
  * stdcall: the ICALL pass reads this annotation (ignored on types). */
 #  define __stdcall __attribute__((annotate("gex.stdcall")))
 #  define __cdecl
+#  define __fastcall __attribute__((annotate("gex.fastcall")))
+#  define __thiscall __attribute__((annotate("gex.thiscall")))
 # else
 #  define __stdcall
 #  define __cdecl

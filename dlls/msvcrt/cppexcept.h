@@ -198,7 +198,9 @@ static inline void *get_this_pointer( const this_ptr_offsets *off, void *object 
     return object;
 }
 
-#ifdef __ASM_USE_THISCALL_WRAPPER
+#if defined(__ASM_USE_THISCALL_WRAPPER) || defined(__wasm32__)
+/* (wasm32: the guest's constructors and destructors are thiscall i386 code;
+ * except_wasm32.c) */
 extern void call_copy_ctor( void *func, void *this, void *src, int has_vbase );
 extern void call_dtor( void *func, void *this );
 #else
@@ -298,7 +300,7 @@ extern void *find_catch_handler( void *object, uintptr_t frame, uintptr_t exc_ba
                                  cxx_exception_type *exc_type, uintptr_t image_base );
 extern int handle_fpieee_flt( __msvcrt_ulong exception_code, EXCEPTION_POINTERS *ep,
                               int (__cdecl *handler)(_FPIEEE_RECORD*) );
-#ifndef __i386__
+#if !defined(__i386__) && !defined(__wasm32__)
 extern void *call_catch_handler( EXCEPTION_RECORD *rec );
 extern void *call_unwind_handler( void *func, uintptr_t frame, DISPATCHER_CONTEXT *dispatch );
 extern ULONG_PTR get_exception_pc( DISPATCHER_CONTEXT *dispatch );

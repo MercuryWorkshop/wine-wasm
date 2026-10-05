@@ -432,7 +432,7 @@
 @ cdecl _lock(long)
 @ cdecl _locking(long long long)
 @ cdecl _logb(double) logb
-@ cdecl -arch=i386 _longjmpex(ptr long) longjmp
+@ cdecl -arch=i386 _longjmpex(ptr long) MSVCRT_longjmp
 @ cdecl _lrotl(long long) MSVCRT__lrotl
 @ cdecl _lrotr(long long) MSVCRT__lrotr
 @ cdecl _lsearch(ptr ptr ptr long ptr)
@@ -804,7 +804,8 @@
 @ cdecl -arch=win64 localtime(ptr) _localtime64
 @ cdecl log(double)
 @ cdecl log10(double)
-@ cdecl longjmp(ptr long)
+@ cdecl -arch=!wasm32 longjmp(ptr long)
+@ cdecl -arch=wasm32 longjmp(ptr long) MSVCRT_longjmp
 @ cdecl malloc(long)
 @ cdecl mblen(ptr long)
 @ cdecl mbstowcs(ptr str long)

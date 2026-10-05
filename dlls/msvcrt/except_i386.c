@@ -25,7 +25,11 @@
  * www.thecodeproject.com.
  */
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
+/* (wasm32: native Wine for i386 programs. The handlers below work on the
+ * guest's i386 frames; what i386 does in assembly -- calling a filter or a
+ * catch block with the frame's EBP, continuing after a catch, setjmp's
+ * registers -- goes through gexrt: wine/gex/runtime.h.) */
 
 #include <stdarg.h>
 #include <fpieee.h>
@@ -42,6 +46,9 @@
 #include "wine/debug.h"
 
 #include "cppexcept.h"
+#ifdef __wasm32__
+#include "wine/gex/runtime.h"
+#endif
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
 
@@ -110,6 +117,7 @@ DWORD CDECL cxx_frame_handler( PEXCEPTION_RECORD rec, cxx_exception_frame* frame
                                const cxx_function_descr *descr,
                                catch_func_nested_frame* nested_frame );
 
+#ifdef __i386__
 /* continue execution to the specified address after exception is caught */
 extern void DECLSPEC_NORETURN continue_after_catch( cxx_exception_frame* frame, void *addr );
 
@@ -157,6 +165,37 @@ __ASM_GLOBAL_FUNC( call_handler,
                    "popl %ebx\n\t"
                    "popl %ebp\n\t"
                    "ret" );
+
+#else  /* __wasm32__ */
+
+/* continue execution to the specified address after exception is caught:
+ * the stack pointer the frame saved below itself, EBP at the frame's */
+static void DECLSPEC_NORETURN continue_after_catch( cxx_exception_frame* frame, void *addr )
+{
+    __gexw_guest_set_reg( GEXW_ESP, ((DWORD *)frame)[-1] );
+    __gexw_guest_set_reg( GEXW_EBP, (DWORD)(ULONG_PTR)&frame->ebp );
+    __gexw_guest_jump( (DWORD)(ULONG_PTR)addr );
+}
+
+/* the __except block (it never returns; it reloads ESP from its frame) */
+static void DECLSPEC_NORETURN call_finally_block( void *code_block, void *base_ptr )
+{
+    __gexw_guest_set_reg( GEXW_EBP, (DWORD)(ULONG_PTR)base_ptr );
+    __gexw_guest_jump( (DWORD)(ULONG_PTR)code_block );
+}
+
+static int call_filter( int (*func)(PEXCEPTION_POINTERS), void *arg, void *ebp )
+{
+    unsigned int word = (unsigned int)(ULONG_PTR)arg;
+    return __gexw_guest_call_ebp( (unsigned int)(ULONG_PTR)func, (unsigned int)(ULONG_PTR)ebp, &word, 1 );
+}
+
+static void *call_handler( void * (*func)(void), void *ebp )
+{
+    return (void *)(ULONG_PTR)__gexw_guest_call_ebp( (unsigned int)(ULONG_PTR)func, (unsigned int)(ULONG_PTR)ebp, NULL, 0 );
+}
+
+#endif  /* __i386__ */
 
 /* unwind the local function up to a given trylevel */
 static void cxx_local_unwind( cxx_exception_frame* frame, const cxx_function_descr *descr, int last_level)
@@ -428,6 +467,7 @@ DWORD CDECL cxx_frame_handler( PEXCEPTION_RECORD rec, cxx_exception_frame* frame
 /*********************************************************************
  *		__CxxFrameHandler (MSVCRT.@)
  */
+#ifdef __i386__
 extern DWORD CDECL __CxxFrameHandler( PEXCEPTION_RECORD rec, EXCEPTION_REGISTRATION_RECORD* frame,
                                       PCONTEXT context, EXCEPTION_REGISTRATION_RECORD** dispatch );
 __ASM_GLOBAL_FUNC( __CxxFrameHandler,
@@ -447,7 +487,45 @@ __ASM_GLOBAL_FUNC( __CxxFrameHandler,
                    "add $24,%esp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset -24\n\t")
                    "ret" )
+#else
+/* entered with the function's descriptor in EAX */
+DWORD CDECL __CxxFrameHandler( PEXCEPTION_RECORD rec, EXCEPTION_REGISTRATION_RECORD* frame,
+                               PCONTEXT context, EXCEPTION_REGISTRATION_RECORD** dispatch )
+{
+    return cxx_frame_handler( rec, (cxx_exception_frame *)frame, context, dispatch,
+                              (const cxx_function_descr *)(ULONG_PTR)__gexw_guest_reg( GEXW_EAX ), NULL );
+}
+#endif
 
+
+#ifdef __wasm32__
+
+/* A thiscall call into the guest's (or our own) C++ code: `this` in ECX. */
+void call_copy_ctor( void *func, void *this, void *src, int has_vbase )
+{
+    unsigned int words[2] = { (unsigned int)(ULONG_PTR)src, 1 };
+
+    if (__gexw_is_native( func ))
+    {
+        if (has_vbase) ((void (*)(void *, void *, BOOL))func)( this, src, 1 );
+        else ((void (*)(void *, void *))func)( this, src );
+        return;
+    }
+    __gexw_guest_call_regs( (unsigned int)(ULONG_PTR)func, (unsigned int)(ULONG_PTR)this, 0,
+                            words, has_vbase ? 2 : 1 );
+}
+
+void call_dtor( void *func, void *this )
+{
+    if (__gexw_is_native( func ))
+    {
+        ((void (*)(void *))func)( this );
+        return;
+    }
+    __gexw_guest_call_regs( (unsigned int)(ULONG_PTR)func, (unsigned int)(ULONG_PTR)this, 0, NULL, 0 );
+}
+
+#endif  /* __wasm32__ */
 
 /*********************************************************************
  *		__CxxLongjmpUnwind (MSVCRT.@)
@@ -468,6 +546,7 @@ void __stdcall __CxxLongjmpUnwind( const _JUMP_BUFFER *buf )
  */
 
 /* Provided for VC++ binary compatibility only */
+#ifdef __i386__
 __ASM_GLOBAL_FUNC(_EH_prolog,
                   __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")  /* skip ret addr */
                   "pushl $-1\n\t"
@@ -483,6 +562,24 @@ __ASM_GLOBAL_FUNC(_EH_prolog,
                   "pushl %eax\n\t"
                   __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
                   "ret")
+#else
+/* EAX the handler: builds the frame on the caller's stack and returns
+ * (to the guest, with the stack and EBP changed) */
+void CDECL _EH_prolog(void)
+{
+    DWORD sp = __gexw_guest_reg( GEXW_ESP ), ret = *(DWORD *)(ULONG_PTR)sp;
+    DWORD *f = (DWORD *)(ULONG_PTR)(sp - 12);
+
+    f[0] = (DWORD)(ULONG_PTR)NtCurrentTeb()->Tib.ExceptionList;
+    f[1] = __gexw_guest_reg( GEXW_EAX );
+    f[2] = ~0u;
+    f[3] = __gexw_guest_reg( GEXW_EBP );
+    NtCurrentTeb()->Tib.ExceptionList = (EXCEPTION_REGISTRATION_RECORD *)f;
+    __gexw_guest_set_reg( GEXW_EBP, sp );
+    __gexw_guest_set_reg( GEXW_ESP, sp - 12 );
+    __gexw_guest_jump( ret );
+}
+#endif
 
 static const SCOPETABLE_V4 *get_scopetable_v4( MSVCRT_EXCEPTION_FRAME *frame, ULONG_PTR cookie )
 {
@@ -607,7 +704,9 @@ int CDECL _except_handler3(PEXCEPTION_RECORD rec,
         rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress,
         frame->handler, context, dispatcher);
 
+#ifdef __i386__
   __asm__ __volatile__ ("cld");
+#endif
 
   if (rec->ExceptionFlags & (EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND))
   {
@@ -744,6 +843,20 @@ typedef void (__stdcall *MSVCRT_unwind_function)(const _JUMP_BUFFER *);
 
 /* define an entrypoint for setjmp/setjmp3 that stores the registers in the jmp buf */
 /* and then jumps to the C backend function */
+#ifdef __wasm32__
+/* the guest caller's registers, as the i386 entry points store them (ESP
+ * at the call, pointing at the return address) */
+static void store_setjmp_regs( _JUMP_BUFFER *jmp )
+{
+    jmp->Ebp = __gexw_guest_reg( GEXW_EBP );
+    jmp->Ebx = __gexw_guest_reg( GEXW_EBX );
+    jmp->Edi = __gexw_guest_reg( GEXW_EDI );
+    jmp->Esi = __gexw_guest_reg( GEXW_ESI );
+    jmp->Esp = __gexw_guest_reg( GEXW_ESP );
+    jmp->Eip = *(DWORD *)(ULONG_PTR)jmp->Esp;
+}
+#define DEFINE_SETJMP_ENTRYPOINT(name) /* (below, in C) */
+#else
 #define DEFINE_SETJMP_ENTRYPOINT(name) \
     __ASM_GLOBAL_FUNC( name, \
                        "movl 4(%esp),%ecx\n\t"   /* jmp_buf */      \
@@ -755,12 +868,21 @@ typedef void (__stdcall *MSVCRT_unwind_function)(const _JUMP_BUFFER *);
                        "movl 0(%esp),%eax\n\t"                      \
                        "movl %eax,20(%ecx)\n\t"  /* jmp_buf.Eip */  \
                        "jmp " __ASM_NAME("__regs_") # name )
+#endif
 
 /*******************************************************************
  *		_setjmp (MSVCRT.@)
  */
 #undef _setjmp
 DEFINE_SETJMP_ENTRYPOINT( _setjmp )
+#ifdef __wasm32__
+int CDECL __regs__setjmp(_JUMP_BUFFER *jmp);
+int CDECL _setjmp(_JUMP_BUFFER *jmp)
+{
+    store_setjmp_regs( jmp );
+    return __regs__setjmp( jmp );
+}
+#endif
 int CDECL __regs__setjmp(_JUMP_BUFFER *jmp)
 {
     jmp->Registration = (unsigned long)NtCurrentTeb()->Tib.ExceptionList;
@@ -778,6 +900,30 @@ int CDECL __regs__setjmp(_JUMP_BUFFER *jmp)
  *		_setjmp3 (MSVCRT.@)
  */
 DEFINE_SETJMP_ENTRYPOINT( _setjmp3 )
+#ifdef __wasm32__
+/* (varargs from the guest: the words after nb_args on its stack) */
+int CDECL _setjmp3(_JUMP_BUFFER *jmp, int nb_args)
+{
+    DWORD *args = (DWORD *)(ULONG_PTR)(__gexw_guest_reg( GEXW_ESP ) + 12);
+    int i;
+
+    store_setjmp_regs( jmp );
+    jmp->Cookie = MSVCRT_JMP_MAGIC;
+    jmp->UnwindFunc = 0;
+    jmp->Registration = (unsigned long)NtCurrentTeb()->Tib.ExceptionList;
+    if (jmp->Registration == ~0UL)
+        jmp->TryLevel = TRYLEVEL_END;
+    else
+    {
+        if (nb_args > 0) jmp->UnwindFunc = args[0];
+        if (nb_args > 1) jmp->TryLevel = args[1];
+        else jmp->TryLevel = ((MSVCRT_EXCEPTION_FRAME*)jmp->Registration)->trylevel;
+        for (i = 0; i < 6 && i < nb_args - 2; i++)
+            jmp->UnwindData[i] = args[2 + i];
+    }
+    return 0;
+}
+#else
 int WINAPIV __regs__setjmp3(_JUMP_BUFFER *jmp, int nb_args, ...)
 {
     jmp->Cookie = MSVCRT_JMP_MAGIC;
@@ -805,10 +951,15 @@ int WINAPIV __regs__setjmp3(_JUMP_BUFFER *jmp, int nb_args, ...)
           jmp, jmp->Ebx, jmp->Esi, jmp->Edi, jmp->Ebp, jmp->Esp, jmp->Eip, jmp->Registration );
     return 0;
 }
+#endif
 
 /*********************************************************************
  *		longjmp (MSVCRT.@)
  */
+#ifdef __wasm32__
+/* (`longjmp` is the wasm SjLj runtime's: this is the guest's, msvcrt.spec) */
+#define longjmp MSVCRT_longjmp
+#endif
 void __cdecl longjmp(_JUMP_BUFFER *jmp, int retval)
 {
     unsigned long cur_frame = 0;
@@ -841,8 +992,25 @@ void __cdecl longjmp(_JUMP_BUFFER *jmp, int retval)
     if (!retval)
         retval = 1;
 
+#ifdef __wasm32__
+    /* back in the guest as from setjmp's return */
+    __gexw_guest_set_reg( GEXW_EBP, jmp->Ebp );
+    __gexw_guest_set_reg( GEXW_EBX, jmp->Ebx );
+    __gexw_guest_set_reg( GEXW_EDI, jmp->Edi );
+    __gexw_guest_set_reg( GEXW_ESI, jmp->Esi );
+    __gexw_guest_set_reg( GEXW_ESP, jmp->Esp + 4 );
+    __gexw_guest_set_reg( GEXW_EAX, retval );
+    __gexw_guest_jump( jmp->Eip );
+#else
     __wine_longjmp( (__wine_jmp_buf *)jmp, retval );
+#endif
 }
+#ifdef __wasm32__
+#undef longjmp
+#else
+/* _longjmpex's link name (msvcrt.spec; the guest's longjmp on wasm32) */
+__ASM_GLOBAL_FUNC( MSVCRT_longjmp, "jmp " __ASM_NAME("longjmp") )
+#endif
 
 /*********************************************************************
  *		_seh_longjmp_unwind (MSVCRT.@)

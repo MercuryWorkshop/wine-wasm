@@ -291,6 +291,8 @@ __ASM_GLOBAL_FUNC( asm_sqrtf, "vsqrt s0,s0; bx lr" )
 #elif defined __x86_64__
 float CDECL asm_sqrtf(float);
 __ASM_GLOBAL_FUNC( asm_sqrtf, "sqrtss %xmm0, %xmm0; ret" )
+#elif defined __wasm32__
+static float CDECL asm_sqrtf(float x) { return __builtin_sqrtf( x ); }
 #endif
 #endif
 
@@ -439,6 +441,8 @@ __ASM_GLOBAL_FUNC( asm_sqrt, "vsqrt d0,d0; bx lr" )
 #elif defined __x86_64__
 double CDECL asm_sqrt(double);
 __ASM_GLOBAL_FUNC( asm_sqrt, "sqrtsd %xmm0, %xmm0; ret" )
+#elif defined __wasm32__
+static double CDECL asm_sqrt(double x) { return __builtin_sqrt( x ); }
 #elif defined __i386__
 double CDECL asm_sqrt(double);
 __ASM_GLOBAL_FUNC( asm_sqrt,

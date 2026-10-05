@@ -77,12 +77,23 @@ extern "C" {
 #  endif
 #  define __cdecl __stdcall
 #  define __ms_va_list __builtin_ms_va_list
+# elif defined(__wasm32__)
+/* wasm32 has no calling conventions: the i386 one a native function has
+ * towards the guest (its entry thunk, tools/wine-wasm/icall) is carried as
+ * an annotation (ignored on types). */
+#  define __stdcall __attribute__((annotate("gex.stdcall")))
+#  define __cdecl
 # else
 #  define __stdcall
 #  define __cdecl
 # endif
-# define __fastcall __stdcall
-# define __thiscall __stdcall
+# ifdef __wasm32__
+#  define __fastcall __attribute__((annotate("gex.fastcall")))
+#  define __thiscall __attribute__((annotate("gex.thiscall")))
+# else
+#  define __fastcall __stdcall
+#  define __thiscall __stdcall
+# endif
 #endif  /* WINE_UNIX_LIB */
 
 #endif  /* _MSC_VER || __MINGW32__ */

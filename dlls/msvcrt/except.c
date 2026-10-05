@@ -42,7 +42,7 @@
 #include "cppexcept.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
-#ifndef __i386__
+#if !defined(__i386__) && !defined(__wasm32__)
 WINE_DECLARE_DEBUG_CHANNEL(unwind);
 #endif
 
@@ -135,7 +135,7 @@ void *find_catch_handler( void *object, uintptr_t frame, uintptr_t exc_base,
     return NULL;
 }
 
-#ifndef __i386__  /* i386 implementation is in except_i386.c */
+#if !defined(__i386__) && !defined(__wasm32__)  /* i386 implementation is in except_i386.c */
 
 typedef struct
 {
@@ -1080,7 +1080,7 @@ int* CDECL __processing_throw(void)
 
 #endif /* _MSVCR_VER>=140 */
 
-#ifndef __i386__
+#if !defined(__i386__) && !defined(__wasm32__)
 #define DUMP_SCOPE_TABLE(base,table) do { \
     for (unsigned int i = 0; i < table->Count; i++) \
         TRACE_(unwind)( "  %u: %p-%p handler %p target %p\n", i, \

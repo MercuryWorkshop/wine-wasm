@@ -587,6 +587,79 @@ static const char *output_adapter( const ORDDEF *odp, const char *sig )
     return ident;
 }
 
+/* A varargs export (cdecl). On wasm32 a variadic function takes its fixed
+ * arguments and then a pointer to a buffer holding the rest at their
+ * natural alignments; i386 leaves them in 4-byte stack slots after the
+ * fixed ones. Words read the same either way, so the guest's stack is
+ * passed as the buffer, except for a printf (by name), whose format can
+ * name 8-byte arguments: gexrt lays those out again (__gexw_va_printf_*).
+ * NULL when the code's signature is not the fixed arguments plus one. */
+static const char *output_varargs_adapter( const ORDDEF *odp, const char *sig )
+{
+    const char *link = get_link_name( odp ), *params = strchr( sig, ':' ) + 1, *ident;
+    const char *name = odp->name ? odp->name : link;
+    char ret = sig[0];
+    unsigned int nargs = odp->u.func.nb_args, j, off = 0, fmt_off = 0;
+    int fmt = -1, wide = 0;
+
+    if (strlen( params ) != nargs + 1 || params[nargs] != 'i') return NULL;
+    for (j = 0; j < nargs; j++)
+        if (!spec_arg_matches( odp->u.func.args[j], params[j] )) return NULL;
+    if (strstr( name, "printf" ) || strstr( name, "PRINTF" ))
+    {
+        for (j = 0; j < nargs; j++)
+        {
+            if (odp->u.func.args[j] == ARG_STR || odp->u.func.args[j] == ARG_WSTR)
+            {
+                fmt = j;
+                fmt_off = off;
+                wide = odp->u.func.args[j] == ARG_WSTR;
+            }
+            off += spec_arg_size( odp->u.func.args[j] );
+        }
+    }
+    else for (j = 0; j < nargs; j++) off += spec_arg_size( odp->u.func.args[j] );
+
+    output( "%s %s(", c_type( ret ), link );
+    for (j = 0; j <= nargs; j++) output( "%s%s", j ? ", " : "", c_type( params[j] ));
+    output( ") __asm__(\"%s\");\n", link );
+    ident = output_adapter_header( odp );
+    output( "    unsigned int va = __gexw_argptr(ctx, %u);\n", off );
+    output( "    void *buf = (void *)va;\n" );
+    if (fmt >= 0)
+    {
+        output( "    const void *fmt = (const void *)__gexw_arg32(ctx, %u);\n", fmt_off );
+        output( "    unsigned int n = __gexw_va_printf_size(va, fmt, %d);\n", wide );
+        output( "    buf = __builtin_alloca(n);\n" );
+        output( "    __gexw_va_printf_copy(va, fmt, %d, buf);\n", wide );
+    }
+    output( "    " );
+    if (ret != 'v') output( "%s r = ", c_type( ret ));
+    output( "%s(", link );
+    for (j = 0, off = 0; j < nargs; j++)
+    {
+        switch (params[j])
+        {
+        case 'i': output( "(int)__gexw_arg32(ctx, %u), ", off ); break;
+        case 'f': output( "__gexw_argf32(ctx, %u), ", off ); break;
+        case 'I': output( "(long long)__gexw_arg64(ctx, %u), ", off ); break;
+        case 'd': output( "__gexw_argf64(ctx, %u), ", off ); break;
+        }
+        off += spec_arg_size( odp->u.func.args[j] );
+    }
+    output( "(int)buf);\n" );
+    switch (ret)
+    {
+    case 'v': output( "    return __gexw_ret32(ctx, ret, 0, 0);\n" ); break;
+    case 'i': output( "    return __gexw_ret32(ctx, ret, 0, (unsigned int)r);\n" ); break;
+    case 'I': output( "    return __gexw_ret(ctx, ret, 0, (unsigned long long)r);\n" ); break;
+    case 'f':
+    case 'd': output( "    return __gexw_ret_fp(ctx, ret, 0, r);\n" ); break;
+    }
+    output( "}\n\n" );
+    return ident;
+}
+
 /* An unimplemented export: raise what Wine raises. */
 static const char *output_stub_adapter( DLLSPEC *spec, const ORDDEF *odp )
 {
@@ -629,6 +702,8 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
     output( "double __gexw_argf64(int, unsigned int);\n" );
     output( "unsigned int __gexw_reg(int, unsigned int);\n" );
     output( "unsigned int __gexw_argptr(int, unsigned int);\n" );
+    output( "unsigned int __gexw_va_printf_size(unsigned int, const void *, int);\n" );
+    output( "void __gexw_va_printf_copy(unsigned int, const void *, int, void *);\n" );
     output( "int __gexw_ret(int, unsigned long long, unsigned int, unsigned long long);\n" );
     output( "int __gexw_ret32(int, unsigned long long, unsigned int, unsigned int);\n" );
     output( "int __gexw_ret_fp(int, unsigned long long, unsigned int, double);\n" );
@@ -650,15 +725,25 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
             ident = output_stub_adapter( spec, odp );
             break;
         case TYPE_VARARGS:
-            /* i386 varargs (4-byte stack slots) are not wasm32's va_list
-             * (8-aligned doubles): left out until they have an adapter */
-            continue;
+            if (odp->flags & FLAG_IMPORT) continue;
+            if (find_func_sig( adapter_symbol( odp ))) goto handwritten;
+            if (!(sig = find_func_sig( get_link_name( odp ))))
+            {
+                warning( "%s: %s is not defined in the objects; no adapter\n",
+                         spec->file_name, get_link_name( odp ));
+                continue;
+            }
+            if (!(ident = output_varargs_adapter( odp, sig )))
+                warning( "%s: varargs %s: the .spec's arguments do not fit the code's (%s); no adapter\n",
+                         spec->file_name, odp->name ? odp->name : get_link_name( odp ), sig );
+            break;
         case TYPE_STDCALL:
         case TYPE_CDECL:
             /* written by hand in the objects (ntdll's KiUser*Dispatcher,
              * entered with no return address) */
             if (find_func_sig( adapter_symbol( odp )))
             {
+            handwritten:
                 /* in the element segment like the others */
                 ident = strmake( "__gexw_adapter_%u", adapter_count++ );
                 output( "int %s(int, int, unsigned int, unsigned long long) __asm__(\"%s\");\n",
@@ -750,6 +835,16 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
         if (odp->flags & FLAG_IMPORT) continue;  /* defined elsewhere */
         if (odp->type == TYPE_STUB || odp->type == TYPE_VARIABLE) continue;
         fprintf( rsp, "%s %s\n", get_link_name( odp ), odp->type == TYPE_EXTERN ? "data" : "func" );
+        /* exported under another name than its code's (kernelbase's
+         * FreeEnvironmentStringsA is FreeEnvironmentStringsW): callers of
+         * that name reach it as a forward to this DLL */
+        if (odp->name && odp->type != TYPE_EXTERN && strcmp( odp->name, get_link_name( odp )))
+        {
+            char *base = xstrdup( spec->file_name ), *dot = strrchr( base, '.' );
+            if (dot) *dot = 0;
+            fprintf( rsp, "%s forward %s.%s\n", odp->name, base, get_link_name( odp ));
+            free( base );
+        }
     }
     fclose( rsp );
 }

@@ -24,7 +24,9 @@
 
 #pragma pack(push,8)
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
+/* (wasm32: the buffer of the i386 programs native Wine serves, also big
+ * enough for clang's wasm SjLj lowering) */
 
 typedef struct __JUMP_BUFFER
 {
@@ -131,12 +133,6 @@ typedef struct _JUMP_BUFFER
 
 #define _JBLEN  24
 #define _JBTYPE unsigned __int64
-
-#elif defined(__wasm32__)
-
-/* native code under gex: clang's wasm SjLj lowering's buffer */
-#define _JBLEN 16
-#define _JBTYPE int
 
 #else
 

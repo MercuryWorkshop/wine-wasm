@@ -30,6 +30,9 @@
 #define R_EDX 2
 #define R_EBX 3
 #define R_ESP 4
+#define R_EBP 5
+#define R_ESI 6
+#define R_EDI 7
 GEX_INLINE uint32_t gp_reg(int ctx, unsigned r) { return (uint32_t)GEX_C64(GEX_CTX_XN(r)); }
 GEX_INLINE void gp_set(int ctx, unsigned r, uint32_t v) { GEX_C64(GEX_CTX_XN(r)) = v; }
 /* A 32-bit guest word (guest VA == linear-memory offset). */

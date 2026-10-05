@@ -383,6 +383,144 @@ uint64_t __gexw_guest_call_regs( uint32_t target, uint32_t ecx, uint32_t edx, co
     return __gexw_guest_call( target, words, n );
 }
 
+/* ---- guest state for the i386 C runtime (msvcrt's except_i386.c on wasm32) ---- */
+
+/* The guest's register `r` (R_EAX..R_EDI) as it is now: at an entry, the
+ * caller's. */
+uint32_t __gexw_guest_reg( unsigned r )
+{
+    int ctx = cur_ctx();
+    return gp_reg( ctx, r );
+}
+
+void __gexw_guest_set_reg( unsigned r, uint32_t v )
+{
+    int ctx = cur_ctx();
+    gp_set( ctx, r, v );
+}
+
+/* Leave native code for the guest at `eip`, with the registers as they are
+ * in the context (an i386 catch block's continuation, longjmp): every
+ * native frame since the innermost entry goes (__gexw_unwind), that entry
+ * returns 0, and the guest goes on from the context; outer native frames
+ * the guest has left go too (run_until, NATIVE_LEFT). */
+void __gexw_guest_jump( uint32_t eip )
+{
+    int ctx = cur_ctx();
+    GEX_C64( GEX_CTX_PC ) = eip;
+    __gexw_throw_unwind();
+}
+
+/* Call guest code that addresses its caller's frame through EBP (a catch
+ * block, a filter or a __finally of MSVC's i386 code) with EBP = `ebp`; the
+ * callee-saved registers are put back after, as the i386 helpers' pushes
+ * and pops do. EAX comes back. */
+uint32_t __gexw_guest_call_ebp( uint32_t target, uint32_t ebp, const uint32_t *words, uint32_t n )
+{
+    int ctx = cur_ctx();
+    uint32_t sbp = gp_reg( ctx, R_EBP ), sbx = gp_reg( ctx, R_EBX ), ssi = gp_reg( ctx, R_ESI ),
+             sdi = gp_reg( ctx, R_EDI ), r;
+    gp_set( ctx, R_EBP, ebp );
+    r = (uint32_t)__gexw_guest_call( target, words, n );
+    gp_set( ctx, R_EBP, sbp );
+    gp_set( ctx, R_EBX, sbx );
+    gp_set( ctx, R_ESI, ssi );
+    gp_set( ctx, R_EDI, sdi );
+    return r;
+}
+
+/* CALL_VTBL_FUNC (msvcrt's cxx.h) on an object that may be the guest's: a
+ * native entry as is (called as C, `this` first); a guest one through
+ * gex-kernel's tramp::VTBL_WRAPPERS_32 entry for the offset, x86 that
+ * moves the `this` the caller pushed into ECX and jumps through the vtable
+ * (i386 Wine's vtbl_wrapper_N). */
+#define GEXW_VTBL_WRAPPERS 0x3f0100u
+void *__gexw_vtbl_target( void *this, unsigned int off )
+{
+    void *entry = (*(void ***)this)[off / 4];
+    if ((uint32_t)(uintptr_t)entry < 0x3f0000u || off / 4 >= 64) return entry;
+    return (void *)(uintptr_t)(GEXW_VTBL_WRAPPERS + 16u * (off / 4));
+}
+
+/* ---- varargs from the guest (winebuild's varargs adapters) ---- */
+
+/* i386 passes every variadic argument in 4-byte stack slots (8 bytes for a
+ * double or an int64, 4-aligned); wasm32's va_list is a buffer with each
+ * argument at its natural alignment. They differ only for the 8-byte ones,
+ * which a printf format names: walk it, and lay the guest's arguments out
+ * as wasm32 does (`out` null: just the size). */
+static uint32_t va_printf( uint32_t va, const void *fmt, int wide, char *out )
+{
+    const unsigned char *f8 = fmt;
+    const unsigned short *f16 = fmt;
+    uint32_t in = 0, o = 0, i = 0;
+#define FCH(k) (wide ? (unsigned int)f16[k] : (unsigned int)f8[k])
+#define TAKE(n) do { \
+        if ((n) == 8) o = (o + 7) & ~7u; \
+        if (out) __builtin_memcpy( out + o, (const void *)(uintptr_t)(va + in), (n) ); \
+        o += (n); in += (n); } while (0)
+    if (!fmt) return 0;
+    for (;;)
+    {
+        unsigned int c = FCH(i++), size = 4;
+        if (!c) break;
+        if (c != '%') continue;
+        if (FCH(i) == '%') { i++; continue; }
+        /* positional (%n$): left alone, read in order */
+        while ((c = FCH(i)) && (c == '-' || c == '+' || c == ' ' || c == '#' || c == '0' || c == '\'' ||
+                                (c >= '1' && c <= '9') || c == '$'))
+            i++;
+        if (FCH(i) == '*') { TAKE(4); i++; }
+        while ((c = FCH(i)) >= '0' && c <= '9') i++;
+        if (FCH(i) == '.')
+        {
+            i++;
+            if (FCH(i) == '*') { TAKE(4); i++; }
+            while ((c = FCH(i)) >= '0' && c <= '9') i++;
+        }
+        for (;;)
+        {
+            c = FCH(i);
+            if (c == 'I' && FCH(i + 1) == '6' && FCH(i + 2) == '4') { size = 8; i += 3; }
+            else if (c == 'I' && FCH(i + 1) == '3' && FCH(i + 2) == '2') { size = 4; i += 3; }
+            else if (c == 'l' && FCH(i + 1) == 'l') { size = 8; i += 2; }
+            else if (c == 'j' || c == 'q') { size = 8; i++; }
+            else if (c == 'h' || c == 'l' || c == 'L' || c == 'w' || c == 'z' || c == 't' || c == 'I' || c == 'T') i++;
+            else break;
+        }
+        c = FCH(i);
+        if (!c) break;
+        i++;
+        switch (c)
+        {
+        case 'e': case 'E': case 'f': case 'F': case 'g': case 'G': case 'a': case 'A':
+            TAKE(8);  /* a double (a float is promoted; MSVC's long double is one) */
+            break;
+        case 'd': case 'i': case 'o': case 'u': case 'x': case 'X':
+            TAKE(size);
+            break;
+        default:  /* c C s S Z p n: a word */
+            TAKE(4);
+            break;
+        }
+    }
+#undef TAKE
+#undef FCH
+    return o + 64;  /* (and room for what the format does not name) */
+}
+
+uint32_t __gexw_va_printf_size( uint32_t va, const void *fmt, int wide )
+{
+    return va_printf( va, fmt, wide, 0 );
+}
+
+void __gexw_va_printf_copy( uint32_t va, const void *fmt, int wide, void *out )
+{
+    uint32_t n = va_printf( va, fmt, wide, out );
+    /* (slack past what the format names: zeros) */
+    __builtin_memset( (char *)out + n - 64, 0, 64 );
+}
+
 /* ---- NT system calls from native code ---- */
 
 /* gex-kernel's NT layer reads an i386 system call's arguments above two

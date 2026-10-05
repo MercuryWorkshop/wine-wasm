@@ -30,7 +30,9 @@
 #define TYPE_FLAG_REFERENCE  8
 #define TYPE_FLAG_WINRT     16
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
+/* (wasm32: native Wine for i386 programs, whose exception and RTTI data
+ * are i386's, absolute) */
 #undef CXX_USE_RVA
 #else
 #define CXX_USE_RVA 1
@@ -42,7 +44,20 @@
 #define RTTI_USE_RVA 1
 #endif
 
-#ifdef _WIN64
+#ifdef __wasm32__
+
+/* A vtable as C (its entries are function-table indices; their entry thunks
+ * are thiscall, from __thiscall's annotation), with the RTTI locator before
+ * it: `name_vtable` is an alias 4 bytes into the array. */
+#define VTABLE_ADD_FUNC(name) (const void *)(name),
+#define __ASM_VTABLE(name,funcs) \
+    extern const rtti_object_locator name ## _rtti; \
+    const void *const name ## _vtable_full[] __attribute__((used)) = { &name ## _rtti, funcs }; \
+    __asm__( ".globl " #name "_vtable\n\t.hidden " #name "_vtable\n\t" \
+             ".set " #name "_vtable, " #name "_vtable_full+4\n\t" \
+             ".size " #name "_vtable, 4" )
+
+#elif defined(_WIN64)
 
 #define VTABLE_ADD_FUNC(name) "\t.quad " THISCALL_NAME(name) "\n"
 
@@ -264,7 +279,15 @@ static void init_ ## type ## _cxx_base(char *base) \
 
 #endif  /* CXX_USE_RVA */
 
-#ifdef __ASM_USE_THISCALL_WRAPPER
+#ifdef __wasm32__
+
+/* A virtual call on an object that may be the guest's: a native entry is
+ * called as C (`this` first); a guest one through a small x86 thunk that
+ * moves `this` into ECX (vtbl_wrapper_N, as i386 Wine does it). */
+extern void *__gexw_vtbl_target( void *this, unsigned int off );
+#define CALL_VTBL_FUNC(this, off, ret, type, args) ((ret (WINAPI*)type)__gexw_vtbl_target(this, off))args
+
+#elif defined(__ASM_USE_THISCALL_WRAPPER)
 
 #define CALL_VTBL_FUNC(this, off, ret, type, args) ((ret (WINAPI*)type)&vtbl_wrapper_##off)args
 
