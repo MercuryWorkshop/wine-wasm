@@ -381,4 +381,14 @@ double __gexw_guest_call_fp( uint32_t target, const uint32_t *words, uint32_t n 
     return gex_f64( sign | ((uint64_t)de << 52) | ((sig << 1) >> 12) );
 }
 
+/* The ICALL pass's entry thunks: { function, thunk } pairs of table
+ * indices in the data section gexw_entries (one run per DLL object). gex
+ * reads these bounds (exported by pelink) once the module's data is
+ * relocated, and binds each thunk at its function's index as a guest
+ * address: i386 code that calls a native function pointer runs it. */
+extern const char __start_gexw_entries[], __stop_gexw_entries[];
+/* a null pair, so the section (and its bounds) exist in every module */
+static const void *const gexw_entries_anchor[2] __attribute__((used, section("gexw_entries")));
+const void *const __gexw_entries[2] __attribute__((used)) = { __start_gexw_entries, __stop_gexw_entries };
+
 #endif /* __wasm32__ */

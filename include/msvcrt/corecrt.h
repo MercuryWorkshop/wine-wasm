@@ -116,6 +116,12 @@
 #   define __stdcall __attribute__((ms_abi))
 #  endif
 #  define __cdecl __stdcall
+# elif defined(__wasm32__)
+/* wasm32 has no calling conventions, but a native function whose address
+ * reaches i386 code needs an entry thunk that pops its arguments if it is
+ * stdcall: the ICALL pass reads this annotation (ignored on types). */
+#  define __stdcall __attribute__((annotate("gex.stdcall")))
+#  define __cdecl
 # else
 #  define __stdcall
 #  define __cdecl
