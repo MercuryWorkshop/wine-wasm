@@ -120,6 +120,23 @@ static NTSTATUS map_shared_session_block( SIZE_T offset, SIZE_T size, struct ses
 
     if (!(block = calloc( 1, sizeof(*block) ))) return STATUS_NO_MEMORY;
 
+#ifdef __wasm32__
+    {
+        /* the process's own wineserver holds the session: read it there */
+        extern const void *wineserver_session_data( UINT64 offset, UINT64 *size );
+        UINT64 avail;
+
+        if ((block->data = wineserver_session_data( off.QuadPart, &avail )))
+        {
+            block->offset = off.QuadPart;
+            block->size = avail;
+            list_add_tail( &session_blocks, &block->entry );
+            *ret = block;
+            return STATUS_SUCCESS;
+        }
+    }
+#endif
+
     InitializeObjectAttributes( &attr, &name, 0, NULL, NULL );
     if ((status = NtOpenSection( &handle, SECTION_MAP_READ, &attr )))
         WARN( "Failed to open shared session section, status %#x\n", status );
@@ -857,6 +874,43 @@ HWND get_desktop_window(void)
         ps_attr.Attributes[0].ValuePtr     = (WCHAR *)appnameW;
         ps_attr.Attributes[0].ReturnLength = NULL;
 
+#ifdef __wasm32__
+        {
+            /* gex: explorer's desktop runs as a thread of this process
+             * (programs/explorer/desktop.c gexp_desktop_thread); a process
+             * of its own could not see the session's shared memory */
+            extern int gex_wine_pe_slot( const char *name, int len ) __attribute__((import_module("gex"), import_name("wine_pe_slot")));
+            static const char entry[] = "explorer.exe!gexp_desktop_thread";
+            int start = gex_wine_pe_slot( entry, sizeof(entry) - 1 );
+            LARGE_INTEGER delay = { .QuadPart = -10 * 10000 };
+            int i;
+
+            static LONG started;  /* (one desktop thread: other callers wait for it) */
+
+            if (InterlockedCompareExchange( &started, 1, 0 )) status = STATUS_SUCCESS, thread = 0;
+            else status = start ? NtCreateThreadEx( &thread, THREAD_ALL_ACCESS, NULL, GetCurrentProcess(),
+                                                    (PRTL_THREAD_START_ROUTINE)(ULONG_PTR)start, NULL, 0, 0, 0, 0, NULL )
+                                : STATUS_DLL_NOT_FOUND;
+            if (!status)
+            {
+                if (thread) NtClose( thread );
+                for (i = 0; i < 1000 && !thread_info->top_window; i++)
+                {
+                    SERVER_START_REQ( get_desktop_window )
+                    {
+                        req->force = 0;
+                        if (!wine_server_call( req ))
+                            thread_info->top_window = wine_server_ptr_handle( reply->top_window );
+                    }
+                    SERVER_END_REQ;
+                    if (!thread_info->top_window) NtDelayExecution( FALSE, &delay );
+                }
+                thread_info->top_window = 0;
+            }
+            else ERR_(win)( "failed to start the desktop thread %x\n", status );
+        }
+        if (0)
+#endif
         if (NtCurrentTeb64() && !NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR])
         {
             NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR] = TRUE;
@@ -869,7 +923,11 @@ HWND get_desktop_window(void)
             status = NtCreateUserProcess( &process, &thread, PROCESS_ALL_ACCESS, THREAD_ALL_ACCESS,
                                           NULL, NULL, 0, THREAD_CREATE_FLAGS_CREATE_SUSPENDED, &params,
                                           &create_info, &ps_attr );
+#ifdef __wasm32__
+        if (0)
+#else
         if (!status)
+#endif
         {
             NtResumeThread( thread, NULL );
             TRACE_(win)( "started explorer\n" );
@@ -877,7 +935,9 @@ HWND get_desktop_window(void)
             NtClose( thread );
             NtClose( process );
         }
+#ifndef __wasm32__
         else ERR_(win)( "failed to start explorer %x\n", status );
+#endif
 
         SERVER_START_REQ( get_desktop_window )
         {

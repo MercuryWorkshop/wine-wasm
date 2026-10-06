@@ -1290,6 +1290,7 @@ void manage_desktop( WCHAR *arg )
         initialize_display_settings( width, height );
         initialize_appbar();
 
+#ifndef __wasm32__  /* (in the application's process: no shell, which would load DLLs under its loader lock) */
         initialize_systray( using_root, enable_shell, show_systray, no_tray_items );
         if (!using_root && enable_launchers) initialize_launchers( hwnd );
 
@@ -1298,6 +1299,7 @@ void manage_desktop( WCHAR *arg )
         {
             pShellDDEInit( TRUE );
         }
+#endif
     }
 
     /* if we have a command line, execute it */
@@ -1316,8 +1318,10 @@ void manage_desktop( WCHAR *arg )
         }
     }
 
+#ifndef __wasm32__
     desktopshellbrowserwindow_init();
     shellwindows_init();
+#endif
 
     /* Ideally we would set the window of an IShellView here, but we never
        actually create one, so the desktop window itself will have to do. */
@@ -1333,8 +1337,27 @@ void manage_desktop( WCHAR *arg )
 
     if (pShellDDEInit) pShellDDEInit( FALSE );
 
+#ifdef __wasm32__
+    TRACE( "desktop thread exiting (hwnd %p)\n", hwnd );
+    return;  /* a thread of the application: the process is not ours to end */
+#endif
     ExitProcess( 0 );
 }
+
+#ifdef __wasm32__
+/* wasm32 (gex): the desktop as a thread of the application process, which
+ * win32u.so starts by this function's slot in Wine's PE module: a second
+ * Windows process cannot see the session's shared memory (docs/wine-native.md
+ * §3.5). (gexp_: pelink keeps the name.) */
+DWORD WINAPI gexp_desktop_thread( void *arg )
+{
+    static WCHAR none[] = L"";
+    manage_desktop( none );
+    return 0;
+}
+/* (its address taken, so the link keeps it: the ICALL pass's entry thunk) */
+DWORD (WINAPI *const gexw_desktop_thread_ref)( void * ) __attribute__((used)) = gexp_desktop_thread;
+#endif
 
 /* IShellWindows implementation */
 static HRESULT WINAPI shellwindows_QueryInterface(IShellWindows *iface, REFIID riid, void **ppvObject)
