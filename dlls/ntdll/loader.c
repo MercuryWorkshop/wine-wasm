@@ -1494,6 +1494,31 @@ static NTSTATUS fixup_imports( WINE_MODREF *wm, LPCWSTR load_path )
 
     if (alloc_tls_slot( &wm->ldr )) wm->ldr.TlsIndex = -1;
 
+#ifdef __wasm32__
+    {
+        /* a native module's skeleton has no import table: the DLLs it
+         * imports come from the module (tools/wine-wasm/pelink.py), loaded
+         * and initialised before it as an import table's would be */
+        extern const char *__gexw_module_imports( const WCHAR *name );
+        const char *dep = RtlImageDirectoryEntryToData( wm->ldr.DllBase, TRUE, IMAGE_DIRECTORY_ENTRY_IMPORT, &size )
+                          ? NULL : __gexw_module_imports( wm->ldr.BaseDllName.Buffer );
+
+        for (; dep && *dep; dep += strlen( dep ) + 1)
+        {
+            WCHAR name[64];
+            int i;
+
+            for (i = 0; dep[i] && i < ARRAY_SIZE(name) - 1; i++) name[i] = dep[i];
+            name[i] = 0;
+            dep_after = wm->ldr.DdagNode->Dependencies.Tail;
+            if (load_dll( load_path, name, 0, &imp, wm->system ))
+                WARN( "%s: %s not loaded\n", debugstr_w(wm->ldr.BaseDllName.Buffer), debugstr_w(name) );
+            else if (imp && imp != wm && imp->ldr.DdagNode != node_ntdll && imp->ldr.DdagNode != node_kernel32)
+                add_module_dependency_after( wm->ldr.DdagNode, imp->ldr.DdagNode, dep_after );
+        }
+    }
+#endif
+
     if (!(imports = RtlImageDirectoryEntryToData( wm->ldr.DllBase, TRUE,
                                                   IMAGE_DIRECTORY_ENTRY_IMPORT, &size )))
         return STATUS_SUCCESS;
