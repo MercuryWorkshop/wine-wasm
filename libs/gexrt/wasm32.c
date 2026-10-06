@@ -691,6 +691,11 @@ extern const char __start_gexw_entries[], __stop_gexw_entries[];
 /* a null pair, so the section (and its bounds) exist in every module */
 static const void *const gexw_entries_anchor[2] __attribute__((used, section("gexw_entries")));
 const void *const __gexw_entries[2] __attribute__((used)) = { __start_gexw_entries, __stop_gexw_entries };
+/* The pairs for functions an object hands out but defines elsewhere
+ * (gexw_entries_decl), which gex binds only where gexw_entries has none. */
+extern const char __start_gexw_entries_decl[], __stop_gexw_entries_decl[];
+static const void *const gexw_entries_decl_anchor[2] __attribute__((used, section("gexw_entries_decl")));
+const void *const __gexw_entries_decl[2] __attribute__((used)) = { __start_gexw_entries_decl, __stop_gexw_entries_decl };
 
 #endif /* __wasm32__ */
 
