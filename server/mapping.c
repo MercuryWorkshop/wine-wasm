@@ -1494,7 +1494,13 @@ struct object *create_user_data_mapping( struct object *root, struct unicode_str
                                     .attr = attr, .sd = sd, .init_data = &data };
 
     if (!(mapping = create_named_object( &params ))) return NULL;
+#ifdef __wasm32__
+    /* the server shares the client's memory (wasm32_inproc.h), and a wasm
+     * memory cannot map one page at two addresses: the client's address */
+    ptr = mmap( (void *)0x7ffe0000, mapping->size, PROT_WRITE, MAP_SHARED | MAP_FIXED, get_unix_fd( mapping->fd ), 0 );
+#else
     ptr = mmap( NULL, mapping->size, PROT_WRITE, MAP_SHARED, get_unix_fd( mapping->fd ), 0 );
+#endif
     if (ptr != MAP_FAILED) user_shared_data = ptr;
     return &mapping->obj;
 }

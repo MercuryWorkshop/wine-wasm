@@ -55,6 +55,11 @@
 # include <sys/resource.h>
 #endif
 #include <limits.h>
+#ifdef __wasm32__
+# include <pthread.h>
+# include <sched.h>
+# include <sys/syscall.h>
+#endif
 #ifdef HAVE_SYS_SYSCTL_H
 # include <sys/sysctl.h>
 #endif
@@ -542,6 +547,60 @@ static int exec_wineserver( pid_t *pid, char **argv )
  *
  * Start a new wine server.
  */
+#ifdef __wasm32__
+/* wasm32 (gex): wineserver is linked into the loader (server/wasm32_inproc.h)
+ * and runs as a thread of this process, sharing its memory: what it maps
+ * MAP_SHARED, the client sees. Its own working directory (it lives in the
+ * server directory), the same descriptors. */
+extern int wineserver_main( int argc, char *argv[] );
+static pthread_t wineserver_thread;
+static int wineserver_state;  /* 0 starting, 1 ready, 2 + exit status: ended */
+
+void wineserver_ready(void)
+{
+    __atomic_store_n( &wineserver_state, 1, __ATOMIC_SEQ_CST );
+}
+
+void wineserver_exit( int status )
+{
+    if (pthread_equal( pthread_self(), wineserver_thread ))
+    {
+        __atomic_store_n( &wineserver_state, 2 + (status & 0xff), __ATOMIC_SEQ_CST );
+        pthread_exit( NULL );
+    }
+    exit( status );
+}
+
+static void *wineserver_start( void *arg )
+{
+    static char name[] = "wineserver", fg[] = "-f", dbg[] = "-d";
+    char *argv[] = { name, fg, arg ? dbg : NULL, NULL };
+
+    syscall( SYS_unshare, CLONE_FS );
+    wineserver_exit( wineserver_main( arg ? 3 : 2, argv ));
+    return NULL;
+}
+
+void start_server( BOOL debug )
+{
+    static BOOL started;
+    pthread_attr_t attr;
+    int state;
+
+    if (started) return;
+    wineserver_state = 0;
+    pthread_attr_init( &attr );
+    pthread_attr_setstacksize( &attr, 1024 * 1024 );
+    if (pthread_create( &wineserver_thread, &attr, wineserver_start, debug ? (void *)1 : NULL ))
+        fatal_error( "could not start wineserver\n" );
+    pthread_attr_destroy( &attr );
+    while (!(state = __atomic_load_n( &wineserver_state, __ATOMIC_SEQ_CST ))) usleep( 1000 );
+    if (state == 1) { started = TRUE; return; }
+    pthread_join( wineserver_thread, NULL );
+    if (state == 2 + 2) return;  /* server lock held by someone else, will retry later */
+    exit( state - 2 ? state - 2 : 1 );
+}
+#else
 void start_server( BOOL debug )
 {
     static BOOL started;  /* we only try once */
@@ -563,6 +622,7 @@ void start_server( BOOL debug )
         started = TRUE;
     }
 }
+#endif
 
 
 #ifdef SO_DLLS_SUPPORTED

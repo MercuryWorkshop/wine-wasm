@@ -875,6 +875,12 @@ void open_master_socket(void)
     else  /* remain in the foreground */
     {
         acquire_lock();
+#ifdef __wasm32__
+        {
+            extern void wineserver_ready(void);
+            wineserver_ready();  /* the loader's start_server waits for this */
+        }
+#endif
     }
 
     /* init the process tracing mechanism */
