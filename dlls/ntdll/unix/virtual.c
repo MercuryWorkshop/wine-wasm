@@ -4158,7 +4158,13 @@ struct thread_data *virtual_alloc_thread_data(void)
     SIZE_T size = signal_stack_mask + 1 + kernel_stack_size;
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+#ifdef __wasm32__
+    /* gex keeps its dispatch directory at 0x100000-0x300000: bottom-up, this
+     * would take the 0x400000 an exe is linked at */
+    status = map_view( &view, NULL, size, MEM_TOP_DOWN, VPROT_READ | VPROT_WRITE | VPROT_COMMITTED, limit_4g, 0, 0 );
+#else
     status = map_view( &view, NULL, size, 0, VPROT_READ | VPROT_WRITE | VPROT_COMMITTED, limit_4g, 0, 0 );
+#endif
     if (!status)
     {
         data = view->base;
