@@ -823,7 +823,66 @@ void __wine_syscall_dispatcher(void)
 /***********************************************************************
  * Faults in the program's code (gex's fault hook)
  */
-static void __wine_gex_fault( int ctx, unsigned int code, unsigned int addr )
+/* As i386's: a general-protection fault at a privileged instruction. */
+static inline DWORD is_privileged_instr( CONTEXT *context )
+{
+    BYTE instr[16];
+    unsigned int i, len, prefix_count = 0;
+
+    len = virtual_uninterrupted_read_memory( (BYTE *)context->Eip, instr, sizeof(instr) );
+
+    for (i = 0; i < len; i++) switch (instr[i])
+    {
+    /* instruction prefixes */
+    case 0x2e:  /* %cs: */
+    case 0x36:  /* %ss: */
+    case 0x3e:  /* %ds: */
+    case 0x26:  /* %es: */
+    case 0x64:  /* %fs: */
+    case 0x65:  /* %gs: */
+    case 0x66:  /* opcode size */
+    case 0x67:  /* addr size */
+    case 0xf0:  /* lock */
+    case 0xf2:  /* repne */
+    case 0xf3:  /* repe */
+        if (++prefix_count >= 15) return EXCEPTION_ILLEGAL_INSTRUCTION;
+        continue;
+
+    case 0x0f: /* extended instruction */
+        if (i == len - 1) return 0;
+        switch(instr[i + 1])
+        {
+        case 0x20: /* mov crX, reg */
+        case 0x21: /* mov drX, reg */
+        case 0x22: /* mov reg, crX */
+        case 0x23: /* mov reg drX */
+            return EXCEPTION_PRIV_INSTRUCTION;
+        }
+        return 0;
+    case 0x6c: /* insb (%dx) */
+    case 0x6d: /* insl (%dx) */
+    case 0x6e: /* outsb (%dx) */
+    case 0x6f: /* outsl (%dx) */
+    case 0xcd: /* int $xx */
+    case 0xe4: /* inb al,XX */
+    case 0xe5: /* in (e)ax,XX */
+    case 0xe6: /* outb XX,al */
+    case 0xe7: /* out XX,(e)ax */
+    case 0xec: /* inb (%dx),%al */
+    case 0xed: /* inl (%dx),%eax */
+    case 0xee: /* outb %al,(%dx) */
+    case 0xef: /* outl %eax,(%dx) */
+    case 0xf4: /* hlt */
+    case 0xfa: /* cli */
+    case 0xfb: /* sti */
+        return EXCEPTION_PRIV_INSTRUCTION;
+    default:
+        return 0;
+    }
+    return 0;
+}
+
+static void __wine_gex_fault( int ctx, unsigned int code, unsigned int addr, unsigned int kind )
 {
     struct thread_data *data = get_thread_data();
     struct syscall_frame *frame = get_syscall_frame( data );
@@ -842,11 +901,18 @@ static void __wine_gex_fault( int ctx, unsigned int code, unsigned int addr )
     switch (code)
     {
     case EXCEPTION_ACCESS_VIOLATION:
+        /* a general-protection fault (gex says so with ~0) */
+        if (addr == ~0u && (rec.ExceptionCode = is_privileged_instr( &xcontext.c ))) break;
+        rec.ExceptionCode = code;
         rec.NumberParameters = 2;
-        rec.ExceptionInformation[0] = 0;  /* read or write: gex cannot say */
+        rec.ExceptionInformation[0] = kind;  /* 8: executing; else 0 (gex cannot tell a read from a write) */
         rec.ExceptionInformation[1] = addr;
         break;
     case EXCEPTION_BREAKPOINT:
+        /* gex resumes after the int3; the address is the int3's own, as
+         * i386's SIGTRAP handler has it (the context's Eip goes back one in
+         * call_user_exception_dispatcher) */
+        rec.ExceptionAddress = (void *)(ULONG_PTR)(pc - 1);
         rec.NumberParameters = 1;
         break;
     }
