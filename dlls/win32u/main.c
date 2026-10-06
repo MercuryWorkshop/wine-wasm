@@ -2600,6 +2600,12 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, void *reserved )
     {
     case DLL_PROCESS_ATTACH:
         LdrDisableThreadCalloutsForDll( inst );
+#ifdef __wasm32__
+        /* (one PE-side module: the dispatcher variable is ntdll's, already
+         * set; win32u.so is still to be loaded) */
+        __wine_init_unix_call();
+        break;
+#endif
         if (__wine_syscall_dispatcher) break;  /* already set through Wow64Transition */
         LdrGetDllHandle( NULL, 0, &ntdll_name, &ntdll );
         dispatcher_ptr = RtlFindExportedRoutineByName( ntdll, "__wine_syscall_dispatcher" );
