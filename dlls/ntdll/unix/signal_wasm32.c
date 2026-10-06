@@ -802,12 +802,13 @@ static void __wine_gex_syscall( int ctx )
     frame_to_ctx( ctx, frame );
 }
 
-/* Unix calls from the PE side need no dispatcher: a unixlib's function
- * table is in the same memory and function table as the PE side, which
- * calls it directly (__wine_unix_call in ntdll's PE side). Only named. */
-void __wine_unix_call_dispatcher(void)
+/* Unix calls from the PE side (__wine_unix_call, through PE ntdll's
+ * __wine_unix_call_dispatcher pointer, which load_ntdll_functions sets to
+ * this): a unixlib's function table is in the same memory and function
+ * table, so the call goes straight through. */
+NTSTATUS WINAPI __wine_unix_call_dispatcher( unixlib_handle_t handle, unsigned int code, void *args )
 {
-    abort();
+    return ((const unixlib_entry_t *)(UINT_PTR)handle)[code]( args );
 }
 
 /* What i386 assembles: in this port it is never jumped to, only named

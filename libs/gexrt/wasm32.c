@@ -537,6 +537,12 @@ void __gexw_va_printf_copy( uint32_t va, const void *fmt, int wide, void *out )
  * end) writes that state into the context and returns normally, so the
  * native frames below it survive. */
 
+__attribute__((import_module("gex"), import_name("unix_dispatcher"))) int gex_unix_dispatcher( int op, int idx );
+
+/* ntdll.so's system-call entry (a function-table index), or 0 for none;
+ * -1 until asked. Process-wide: the module's data is the process's. */
+static int unix_dispatcher = -1;
+
 static uint32_t syscall_enter( int ctx, uint32_t id, const uint32_t *words, uint32_t n, uint32_t *stop )
 {
     uint32_t sp = ((gexw_get_sp() - 64) & ~15u) - 4 * n - 8, i;
@@ -549,7 +555,11 @@ static uint32_t syscall_enter( int ctx, uint32_t id, const uint32_t *words, uint
     gp_set( ctx, R_ESP, sp );
     gp_set( ctx, R_EAX, id );
     GEX_C64( GEX_CTX_PC ) = *stop;
-    gex_syscall( ctx, (int64_t)(GEX_NATIVE_SYSCALL | *stop) );
+    /* Wine's own Unix side when the process has it (ntdll.so registered its
+     * dispatcher, W3), else gex's NT layer */
+    if (unix_dispatcher < 0) unix_dispatcher = gex_unix_dispatcher( 1, 0 );
+    if (unix_dispatcher > 0) ((void (*)(int))(uintptr_t)unix_dispatcher)( ctx );
+    else gex_syscall( ctx, (int64_t)(GEX_NATIVE_SYSCALL | *stop) );
     return sp;
 }
 

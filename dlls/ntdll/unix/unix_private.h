@@ -353,7 +353,12 @@ extern void DECLSPEC_NORETURN signal_start_thread( PRTL_THREAD_START_ROUTINE ent
 extern SYSTEM_SERVICE_TABLE KeServiceDescriptorTable[4];
 extern void __wine_syscall_dispatcher(void);
 extern void __wine_syscall_dispatcher_return(void);
+#ifdef __wasm32__
+/* a C function the PE side calls (its __wine_unix_call_dispatcher pointer) */
+extern NTSTATUS WINAPI __wine_unix_call_dispatcher( unixlib_handle_t handle, unsigned int code, void *args );
+#else
 extern void __wine_unix_call_dispatcher(void);
+#endif
 extern NTSTATUS signal_set_full_context( CONTEXT *context );
 extern NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size );
 extern NTSTATUS set_thread_wow64_context( HANDLE handle, const void *ctx, ULONG size );
