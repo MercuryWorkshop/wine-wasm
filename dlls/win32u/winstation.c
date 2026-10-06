@@ -905,6 +905,10 @@ HWND get_desktop_window(void)
                     SERVER_END_REQ;
                     if (!thread_info->top_window) NtDelayExecution( FALSE, &delay );
                 }
+                /* and until its thread is in its message loop (its set-up done,
+                 * as explorer's WaitForInputIdle would say) */
+                if (thread_info->top_window)
+                    send_message_timeout( thread_info->top_window, WM_NULL, 0, 0, SMTO_BLOCK, 10000, FALSE );
                 thread_info->top_window = 0;
             }
             else ERR_(win)( "failed to start the desktop thread %x\n", status );
