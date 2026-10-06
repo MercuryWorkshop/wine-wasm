@@ -345,6 +345,8 @@ int __gexw_entry( int ctx, int depth, unsigned int need, unsigned long long ret,
     return __gexw_entry_raw( ctx, depth, need, ret, body );
 }
 
+__attribute__((import_module("gex"), import_name("unix_dispatcher"))) int gex_unix_dispatcher( int op, int idx );
+
 /* Call the guest function at `target` with `n` stack words: push them and a
  * return address of our own below the native stack, run it through gex's
  * function table, and give back EDX:EAX. The guest stack pointer is put
@@ -353,6 +355,18 @@ uint64_t __gexw_guest_call( uint32_t target, const uint32_t *words, uint32_t n )
 {
     int ctx = cur_ctx();
     uint32_t sp0, sp, ra, i, limit;
+
+    /* The trampoline page's Unix-call entry (ntdll's
+     * __wine_unix_call_dispatcher under Wine's own Unix side): straight to
+     * the native dispatcher, not through the guest and back */
+    if (target == 0x3f0060 && n == 4)
+    {
+        static int native = -1;
+        if (native < 0) native = gex_unix_dispatcher( 5, 0 );
+        if (native > 0)
+            return (uint32_t)((int (*)(uint64_t, uint32_t, uint32_t))(uintptr_t)native)(
+                words[0] | ((uint64_t)words[1] << 32), words[2], words[3] );
+    }
 
     sp0 = gp_reg( ctx, R_ESP );
     /* below everything native code has live */

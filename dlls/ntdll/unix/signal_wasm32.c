@@ -1239,6 +1239,7 @@ void signal_init_process( TEB *teb )
     /* gex's side: system calls from the PE side, faults in the program */
     gex_unix_dispatcher( 0, (int)(ULONG_PTR)__wine_gex_syscall_switch );
     gex_unix_dispatcher( 2, (int)(ULONG_PTR)__wine_gex_unix_call );
+    gex_unix_dispatcher( 4, (int)(ULONG_PTR)__wine_unix_call_dispatcher );
     gex_fault_hook( (int)(ULONG_PTR)__wine_gex_fault );
     install_signal_handlers();
 }
