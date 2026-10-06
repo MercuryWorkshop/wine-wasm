@@ -56,6 +56,10 @@
 # include <libprocstat.h>
 #endif
 #include <unistd.h>
+#ifdef __wasm32__
+# include <sched.h>
+# include <sys/mman.h>
+#endif
 #ifdef HAVE_MACH_MACH_H
 # include <mach/mach.h>
 #endif
@@ -400,6 +404,144 @@ static BOOL is_unix_console_handle( HANDLE handle )
 /***********************************************************************
  *           spawn_process
  */
+#ifdef __wasm32__
+/* wasm32 (gex): fork() unwinds the whole wasm stack and rewinds it in both
+ * processes (asyncify), which cannot cross gex's frames and Wine's PE
+ * module under a system call. A child process here is a clone
+ * (CLONE_VFORK: a copy of the address space) running a function on a stack
+ * of its own, which ends in exec or _exit. */
+extern int clone( int (*func)(void *), void *stack, int flags, void *arg, ... );
+
+static pid_t fork_call( int (*func)(void *), void *arg )
+{
+    const size_t size = 256 * 1024;
+    char *stack = mmap( NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0 );
+    pid_t pid;
+
+    if (stack == MAP_FAILED) return -1;
+    pid = clone( func, stack + size, CLONE_VFORK | SIGCHLD, arg );
+    munmap( stack, size );
+    return pid;
+}
+
+struct spawn_args
+{
+    const RTL_USER_PROCESS_PARAMETERS *params;
+    int socketfd, unixdir, stdin_fd, stdout_fd, errfd, rdfd;
+    char *winedebug;
+    const struct pe_image_info *pe_info;
+    const char *unix_name;
+    char * const *argv;
+    int wait;
+};
+
+static int spawn_grandchild( void *arg )
+{
+    const struct spawn_args *a = arg;
+    const RTL_USER_PROCESS_PARAMETERS *params = a->params;
+    char **argv;
+
+    if ((peb->ProcessParameters && params->ProcessGroupId != peb->ProcessParameters->ProcessGroupId) ||
+        params->ConsoleHandle == CONSOLE_HANDLE_ALLOC ||
+        params->ConsoleHandle == CONSOLE_HANDLE_ALLOC_NO_WINDOW ||
+        params->ConsoleHandle == NULL)
+    {
+        setsid();
+        set_stdio_fd( -1, -1 );  /* close stdin and stdout */
+    }
+    else set_stdio_fd( a->stdin_fd, a->stdout_fd );
+
+    if (a->stdin_fd != -1 && a->stdin_fd != 0) close( a->stdin_fd );
+    if (a->stdout_fd != -1 && a->stdout_fd != 1) close( a->stdout_fd );
+
+    if (a->winedebug) putenv( a->winedebug );
+    if (a->unixdir != -1)
+    {
+        fchdir( a->unixdir );
+        close( a->unixdir );
+    }
+    argv = build_argv( &params->CommandLine, 2 );
+
+    exec_wineloader( argv, a->socketfd, a->pe_info );
+    _exit(1);
+}
+
+static int spawn_child( void *arg )
+{
+    _exit( fork_call( spawn_grandchild, arg ) == -1 );
+}
+
+static int exec_grandchild( void *arg )
+{
+    const struct spawn_args *a = arg;
+    const RTL_USER_PROCESS_PARAMETERS *params = a->params;
+    char **argv;
+    unsigned int status;
+
+    close( a->rdfd );
+    if ((peb->ProcessParameters && params->ProcessGroupId != peb->ProcessParameters->ProcessGroupId) ||
+        params->ConsoleHandle == CONSOLE_HANDLE_ALLOC ||
+        params->ConsoleHandle == CONSOLE_HANDLE_ALLOC_NO_WINDOW ||
+        params->ConsoleHandle == NULL)
+    {
+        setsid();
+        set_stdio_fd( -1, -1 );
+    }
+    else set_stdio_fd( a->stdin_fd, a->stdout_fd );
+
+    if (a->stdin_fd != -1 && a->stdin_fd != 0) close( a->stdin_fd );
+    if (a->stdout_fd != -1 && a->stdout_fd != 1) close( a->stdout_fd );
+    signal( SIGPIPE, SIG_DFL );
+    argv = build_argv( &params->CommandLine, 0 );
+    if (a->unixdir != -1)
+    {
+        fchdir( a->unixdir );
+        close( a->unixdir );
+    }
+    execv( a->unix_name, argv );
+    switch (errno)
+    {
+    case EPERM:
+    case EACCES: status = STATUS_ACCESS_DENIED; break;
+    case ENOENT: status = STATUS_OBJECT_NAME_NOT_FOUND; break;
+    case EMFILE:
+    case ENFILE: status = STATUS_TOO_MANY_OPENED_FILES; break;
+    case ENOEXEC:
+    case EINVAL: status = STATUS_INVALID_IMAGE_FORMAT; break;
+    default:     status = STATUS_NO_MEMORY; break;
+    }
+    write( a->errfd, &status, sizeof(status) );
+    _exit(1);
+}
+
+static int exec_child( void *arg )
+{
+    _exit( fork_call( exec_grandchild, arg ) == -1 );
+}
+
+static int spawnvp_grandchild( void *arg )
+{
+    const struct spawn_args *a = arg;
+    int err;
+
+    execvp( a->argv[0], a->argv );
+    err = errno_to_status( errno );
+    write( a->errfd, &err, sizeof(err) );
+    _exit(1);
+}
+
+static int spawnvp_child( void *arg )
+{
+    const struct spawn_args *a = arg;
+
+    close( a->rdfd );
+    signal( SIGPIPE, SIG_DFL );
+    if (!a->wait) _exit( fork_call( spawnvp_grandchild, arg ) == -1 );
+    spawnvp_grandchild( arg );
+    return 1;
+}
+#endif
+
 static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int socketfd,
                                int unixdir, char *winedebug, const struct pe_image_info *pe_info )
 {
@@ -416,7 +558,15 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
         isatty(1) && is_unix_console_handle( params->hStdOutput ))
         stdout_fd = 1;
 
+#ifdef __wasm32__
+    {
+        struct spawn_args a = { params, socketfd, unixdir, stdin_fd, stdout_fd, -1, -1, winedebug, pe_info };
+        pid = fork_call( spawn_child, &a );
+    }
+    if (0)
+#else
     if (!(pid = fork()))  /* child */
+#endif
     {
         if (!(pid = fork()))  /* grandchild */
         {
@@ -481,7 +631,15 @@ NTSTATUS WINAPI __wine_unix_spawnvp( char * const argv[], int wait )
         fcntl( fd[1], F_SETFD, FD_CLOEXEC );
     }
 
+#ifdef __wasm32__
+    {
+        struct spawn_args a = { .errfd = fd[1], .rdfd = fd[0], .argv = argv, .wait = wait };
+        pid = fork_call( spawnvp_child, &a );
+    }
+    if (0)
+#else
     if (!(pid = fork()))
+#endif
     {
         /* in child */
         close( fd[0] );
@@ -585,7 +743,15 @@ static NTSTATUS fork_and_exec( OBJECT_ATTRIBUTES *attr, const char *unix_name, i
         isatty(1) && is_unix_console_handle( params->hStdOutput ))
         stdout_fd = 1;
 
+#ifdef __wasm32__
+    {
+        struct spawn_args a = { params, -1, unixdir, stdin_fd, stdout_fd, fd[1], fd[0], NULL, NULL, unix_name };
+        pid = fork_call( exec_child, &a );
+    }
+    if (0)
+#else
     if (!(pid = fork()))  /* child */
+#endif
     {
         if (!(pid = fork()))  /* grandchild */
         {
