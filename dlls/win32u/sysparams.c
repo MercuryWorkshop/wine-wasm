@@ -5413,12 +5413,6 @@ static void get_text_metr_size( HDC hdc, LOGFONTW *lf, TEXTMETRICW *metric, UINT
         if (hfont) NtGdiDeleteObjectApp( hfont );
         return;
     }
-#ifdef __wasm32__
-    /* (no font yet on wasm32, whose build has no FreeType: no metrics, as
-     * when the font cannot be selected, not the stack's garbage) */
-    memset( metric, 0, sizeof(*metric) );
-    metric->tmHeight = -1;
-#endif
     ret = get_char_dimensions( hdc, metric, NULL );
     if (psz) *psz = ret ? ret : 10;
     NtGdiSelectFont( hdc, hfontsav );
