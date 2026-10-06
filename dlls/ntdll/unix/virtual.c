@@ -7002,9 +7002,16 @@ NTSTATUS WINAPI NtSetInformationVirtualMemory( HANDLE process,
 /**********************************************************************
  *           NtFlushInstructionCache  (NTDLL.@)
  */
+#ifdef __wasm32__
+__attribute__((import_module("gex"), import_name("code_changed"))) void gex_code_changed( int addr, int len );
+#endif
+
 NTSTATUS WINAPI NtFlushInstructionCache( HANDLE handle, const void *addr, SIZE_T size )
 {
-#if defined(__x86_64__) || defined(__i386__)
+#ifdef __wasm32__
+    /* gex translated the code: the range's translations are retired */
+    if (handle == GetCurrentProcess() && size) gex_code_changed( (int)(ULONG_PTR)addr, (int)size );
+#elif defined(__x86_64__) || defined(__i386__)
     /* no-op */
 #elif defined(HAVE___CLEAR_CACHE)
     if (handle == GetCurrentProcess())
