@@ -2211,6 +2211,11 @@ DECL_HANDLER(flush_key)
     struct key *key = get_hkey_obj( req->hkey, 0 );
     if (key)
     {
+#ifdef __wasm32__
+        /* in-process (wasm32_inproc.h): the process is about to take the
+         * server with it, so the registry is saved now */
+        flush_registry();
+#endif
         /* we don't need to do anything here with the current implementation */
         release_object( key );
     }

@@ -577,6 +577,23 @@ int wineserver_sigaction( int sig, const struct sigaction *act, struct sigaction
     return sigaction( sig, act, old );
 }
 
+/* Ask the server this process hosts, if any, to save the registry (its
+ * flush_key does, under wasm32): it ends with the process. */
+void wineserver_flush(void)
+{
+    static const WCHAR machineW[] = {'\\','R','e','g','i','s','t','r','y','\\','M','a','c','h','i','n','e',0};
+    UNICODE_STRING name;
+    OBJECT_ATTRIBUTES attr;
+    HANDLE key;
+
+    if (__atomic_load_n( &wineserver_state, __ATOMIC_SEQ_CST ) != 1) return;
+    init_unicode_string( &name, machineW );
+    InitializeObjectAttributes( &attr, &name, 0, 0, NULL );
+    if (NtOpenKey( &key, KEY_READ, &attr )) return;
+    NtFlushKey( key );
+    NtClose( key );
+}
+
 static void *wineserver_start( void *arg )
 {
     static char name[] = "wineserver", fg[] = "-f", dbg[] = "-d";

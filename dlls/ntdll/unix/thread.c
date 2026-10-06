@@ -1555,6 +1555,13 @@ static DECLSPEC_NORETURN void exit_thread( int status )
  */
 void exit_process( int status )
 {
+#ifdef __wasm32__
+    {
+        /* the process's own wineserver goes with it: its registry first */
+        extern void wineserver_flush(void);
+        wineserver_flush();
+    }
+#endif
     pthread_sigmask( SIG_BLOCK, &server_block_set, NULL );
     process_exit_wrapper( get_unix_exit_code( status ));
 }
