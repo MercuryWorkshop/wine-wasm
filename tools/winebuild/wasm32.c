@@ -923,7 +923,19 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
             if (odp->name) fprintf( rsp, "%s forward %s\n", odp->name, odp->link_name );
             continue;
         }
-        if (odp->flags & FLAG_IMPORT) continue;  /* defined elsewhere */
+        if (odp->flags & FLAG_IMPORT)
+        {
+            /* defined elsewhere; under another name there (user32's
+             * ClipCursor is win32u's NtUserClipCursor): a forward to it */
+            if (odp->name && strcmp( odp->name, get_link_name( odp )))
+            {
+                char *base = xstrdup( spec->file_name ), *dot = strrchr( base, '.' );
+                if (dot) *dot = 0;
+                fprintf( rsp, "%s forward %s.%s\n", odp->name, base, get_link_name( odp ));
+                free( base );
+            }
+            continue;
+        }
         if (odp->type == TYPE_STUB || odp->type == TYPE_VARIABLE) continue;
         fprintf( rsp, "%s %s\n", get_link_name( odp ), odp->type == TYPE_EXTERN ? "data" : "func" );
         /* exported under another name than its code's (kernelbase's
