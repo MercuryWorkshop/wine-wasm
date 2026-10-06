@@ -886,30 +886,28 @@ HWND get_desktop_window(void)
             int i;
 
             static LONG started;  /* (one desktop thread: other callers wait for it) */
+            static DWORD desktop_tid;  /* (which doesn't wait for itself) */
+            THREAD_BASIC_INFORMATION tbi;
 
+            if (GetCurrentThreadId() == desktop_tid) return 0;
             if (InterlockedCompareExchange( &started, 1, 0 )) status = STATUS_SUCCESS, thread = 0;
-            else status = start ? NtCreateThreadEx( &thread, THREAD_ALL_ACCESS, NULL, GetCurrentProcess(),
-                                                    (PRTL_THREAD_START_ROUTINE)(ULONG_PTR)start, NULL, 0, 0, 0, 0, NULL )
-                                : STATUS_DLL_NOT_FOUND;
+            else if (!(status = start ? NtCreateThreadEx( &thread, THREAD_ALL_ACCESS, NULL, GetCurrentProcess(),
+                                                          (PRTL_THREAD_START_ROUTINE)(ULONG_PTR)start, NULL,
+                                                          THREAD_CREATE_FLAGS_CREATE_SUSPENDED, 0, 0, 0, NULL )
+                                      : STATUS_DLL_NOT_FOUND))
+            {
+                if (!NtQueryInformationThread( thread, ThreadBasicInformation, &tbi, sizeof(tbi), NULL ))
+                    desktop_tid = HandleToULong( tbi.ClientId.UniqueThread );
+                NtResumeThread( thread, NULL );
+            }
             if (!status)
             {
                 if (thread) NtClose( thread );
-                for (i = 0; i < 1000 && !thread_info->top_window; i++)
-                {
-                    SERVER_START_REQ( get_desktop_window )
-                    {
-                        req->force = 0;
-                        if (!wine_server_call( req ))
-                            thread_info->top_window = wine_server_ptr_handle( reply->top_window );
-                    }
-                    SERVER_END_REQ;
-                    if (!thread_info->top_window) NtDelayExecution( FALSE, &delay );
-                }
-                /* and until its thread is in its message loop (its set-up done,
-                 * as explorer's WaitForInputIdle would say) */
-                if (thread_info->top_window)
-                    send_message_timeout( thread_info->top_window, WM_NULL, 0, 0, SMTO_BLOCK, 10000, FALSE );
-                thread_info->top_window = 0;
+                /* until its window is up and its thread in its message
+                 * loop, which it enters as it names the shell window (on
+                 * the default desktop: as explorer's WaitForInputIdle) */
+                for (i = 0; i < 1000 && !NtUserGetShellWindow(); i++)
+                    NtDelayExecution( FALSE, &delay );
             }
             else ERR_(win)( "failed to start the desktop thread %x\n", status );
         }
