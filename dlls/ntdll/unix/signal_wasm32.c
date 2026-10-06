@@ -784,7 +784,7 @@ static NTSTATUS call_table( const SYSTEM_SERVICE_TABLE *table, UINT id, const UI
 
 /* Native code may not be re-entered by a system call made from a callback
  * the call itself made (KeUserModeCallback): each nests a frame. */
-static void __wine_gex_syscall( int ctx )
+void __wine_gex_syscall_body( int ctx )
 {
     struct thread_data *data = get_thread_data();
     struct syscall_frame *frame = get_syscall_frame( data );
@@ -803,13 +803,56 @@ static void __wine_gex_syscall( int ctx )
     frame_to_ctx( ctx, frame );
 }
 
+/* The Unix side runs on the thread's own stack, below its syscall frame,
+ * as i386's runs on the kernel stack: called from the PE side, the C stack
+ * pointer is on the guest's stack, just above the arguments, and what Unix
+ * code writes below the guest's stack pointer (a callback's or an APC's
+ * frame) would land on its own frames. */
+unsigned int __wine_gex_syscall_sp(void)
+{
+    return ((UINT)(ULONG_PTR)get_syscall_frame( get_thread_data() ) - 256) & ~15u;
+}
+
+extern void __wine_gex_syscall_switch( int ctx );
+__asm__(
+    "\t.globaltype __stack_pointer, i32\n"
+    "\t.functype __wine_gex_syscall_sp () -> (i32)\n"
+    "\t.functype __wine_gex_syscall_body (i32) -> ()\n"
+    "\t.globl __wine_gex_syscall_switch\n"
+    "\t.type __wine_gex_syscall_switch,@function\n"
+    "__wine_gex_syscall_switch:\n"
+    "\t.functype __wine_gex_syscall_switch (i32) -> ()\n"
+    "\t.local i32\n"
+    "\tglobal.get __stack_pointer\n"
+    "\tlocal.set 1\n"
+    "\tcall __wine_gex_syscall_sp\n"
+    "\tglobal.set __stack_pointer\n"
+    "\tlocal.get 0\n"
+    "\tcall __wine_gex_syscall_body\n"
+    "\tlocal.get 1\n"
+    "\tglobal.set __stack_pointer\n"
+    "\tend_function\n" );
+
 /* Unix calls from the PE side (__wine_unix_call, through PE ntdll's
  * __wine_unix_call_dispatcher pointer, which load_ntdll_functions sets to
  * this): a unixlib's function table is in the same memory and function
  * table, so the call goes straight through. */
 NTSTATUS WINAPI __wine_unix_call_dispatcher( unixlib_handle_t handle, unsigned int code, void *args )
 {
-    return ((const unixlib_entry_t *)(UINT_PTR)handle)[code]( args );
+    /* The program's registers are in the thread's context while it is in
+     * native code (no syscall frame holds them), and every system call the
+     * Unix side makes passes its arguments in that context's EBX..EBP
+     * (gex's i386 personality): they are put back, as the program expects
+     * callee-saved registers to be. */
+    int ctx = cur_ctx(), i;
+    unsigned long long regs[8], pc = GEX_C64( GEX_CTX_PC );
+    NTSTATUS status;
+
+    for (i = 0; i < 8; i++) regs[i] = GEX_C64( GEX_CTX_XN(i) );
+    status = ((const unixlib_entry_t *)(UINT_PTR)handle)[code]( args );
+    for (i = 0; i < 8; i++) GEX_C64( GEX_CTX_XN(i) ) = regs[i];
+    GEX_C64( GEX_CTX_PC ) = pc;
+    return status;
 }
 
 /* What i386 assembles: in this port it is never jumped to, only named
@@ -958,7 +1001,7 @@ NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_p
     memcpy( stack->args_data, args, len );
 
     /* a frame of its own for the system calls the callback makes */
-    cb_frame = (struct syscall_frame *)(((ULONG_PTR)frame - frame_size) & ~63);
+    cb_frame = (struct syscall_frame *)(((ULONG_PTR)&ret - 256 - frame_size) & ~63);  /* below this function's frame */
     cb_frame->prev_frame = frame;
     cb_frame->syscall_cfa = &ret;
     get_teb_data( data )->syscall_frame = cb_frame;
@@ -1183,7 +1226,7 @@ void signal_init_process( TEB *teb )
     signal_alloc_thread( teb );
 
     /* gex's side: system calls from the PE side, faults in the program */
-    gex_unix_dispatcher( 0, (int)(ULONG_PTR)__wine_gex_syscall );
+    gex_unix_dispatcher( 0, (int)(ULONG_PTR)__wine_gex_syscall_switch );
     gex_fault_hook( (int)(ULONG_PTR)__wine_gex_fault );
     install_signal_handlers();
 }
