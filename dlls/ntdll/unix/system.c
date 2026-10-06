@@ -334,7 +334,7 @@ static const WCHAR Time_ZonesW[] = { '\\','R','e','g','i','s','t','r','y','\\',
  * This a set of mutually exclusive #if define()s each providing its
  * own functions to be called from init_cpu_info().
  */
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__wasm32__)
 
 static int next_xstate_offset( int off, UINT64 compaction_mask, int feature_idx )
 {
@@ -390,16 +390,42 @@ void copy_xstate( XSAVE_AREA_HEADER *dst, XSAVE_AREA_HEADER *src, UINT64 mask )
     }
 }
 
+#ifdef __wasm32__
+/* Native wasm32 under gex: the CPU Windows code sees is gex's x86, whose
+ * CPUID the host answers (the x86 lifter's sysreg -100, written with
+ * eax | ecx << 32, the results in the thread's register context, saved and
+ * restored around it). gex has no XSAVE: XGETBV is not reached (OSXSAVE is
+ * clear), and its SSE has DAZ. */
+#include "wine/gex/gex_abi.h"
+unsigned long __gex_get_ctx(void);
+
+static inline void do_cpuid( unsigned int ax, unsigned int cx, unsigned int *p )
+{
+    volatile unsigned long long *x = (volatile unsigned long long *)__gex_get_ctx();
+    unsigned long long saved[4] = { x[0], x[1], x[2], x[3] };
+    gex_sysreg_write( (int)(unsigned long)x, 0, -100, (long long)(ax | ((unsigned long long)cx << 32)) );
+    p[0] = (unsigned int)x[0];  /* eax */
+    p[1] = (unsigned int)x[3];  /* ebx */
+    p[2] = (unsigned int)x[1];  /* ecx */
+    p[3] = (unsigned int)x[2];  /* edx */
+    x[0] = saved[0]; x[1] = saved[1]; x[2] = saved[2]; x[3] = saved[3];
+}
+#else
 static inline void do_cpuid( unsigned int ax, unsigned int cx, unsigned int *p )
 {
     __asm__ ( "cpuid" : "=a" (p[0]), "=b" (p[1]), "=c" (p[2]), "=d" (p[3]) : "a" (ax), "c" (cx) );
 }
+#endif
 
 static inline UINT64 do_xgetbv( unsigned int cx )
 {
+#ifdef __wasm32__
+    return 3;  /* x87 and SSE state; nothing else (gex has no XSAVE) */
+#else
     UINT low, high;
     __asm__( "xgetbv" : "=a" (low), "=d" (high) : "c" (cx) );
     return low | ((UINT64)high << 32);
+#endif
 }
 
 /* Detect if a SSE2 processor is capable of Denormals Are Zero (DAZ) mode.

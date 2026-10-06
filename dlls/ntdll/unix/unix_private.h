@@ -49,6 +49,10 @@ static const WORD current_machine = IMAGE_FILE_MACHINE_AMD64;
 static const WORD current_machine = IMAGE_FILE_MACHINE_ARMNT;
 #elif defined(__aarch64__)
 static const WORD current_machine = IMAGE_FILE_MACHINE_ARM64;
+#elif defined(__wasm32__)
+/* Native wasm32 under gex: the machine is the guest's, i386 (gex runs the
+ * program's x86 code; Wine's own code is wasm). */
+static const WORD current_machine = IMAGE_FILE_MACHINE_I386;
 #endif
 extern WORD native_machine;
 
