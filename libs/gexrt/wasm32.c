@@ -679,3 +679,16 @@ static const void *const gexw_entries_anchor[2] __attribute__((used, section("ge
 const void *const __gexw_entries[2] __attribute__((used)) = { __start_gexw_entries, __stop_gexw_entries };
 
 #endif /* __wasm32__ */
+
+/* The MSVC CRT's initializer and terminator tables (.CRT$XI*, $XC*, $XP*, $XT*), which
+ * _initterm walks from the first marker to the last: wasm has no such
+ * sections, so each pair is one address, an empty table (a program's
+ * mainCRTStartup, ucrtbase's crt_main). */
+void *__xi_a[1] __attribute__((used));
+extern void *__xi_z[1] __attribute__((alias("__xi_a")));
+void *__xc_a[1] __attribute__((used));
+extern void *__xc_z[1] __attribute__((alias("__xc_a")));
+void *__xp_a[1] __attribute__((used));
+extern void *__xp_z[1] __attribute__((alias("__xp_a")));
+void *__xt_a[1] __attribute__((used));
+extern void *__xt_z[1] __attribute__((alias("__xt_a")));

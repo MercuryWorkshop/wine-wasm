@@ -850,8 +850,18 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
         if (ident) strarray_add( &names, ident );
     }
 
+    /* a program's entry point: mainCRTStartup(void), cdecl (its caller
+     * keeps its own stack pointer) */
+    if (spec->init_func && !(spec->characteristics & IMAGE_FILE_DLL))
+    {
+        output( "int %s(void);\n", spec->init_func );
+        output( "static int gexp__entry_body(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
+        output( "    return __gexw_ret32(ctx, ret, 0, (unsigned int)%s());\n}\n\n", spec->init_func );
+        output( "int gexp__entry(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
+        output( "    return __gexw_entry(ctx, depth, need, ret, gexp__entry_body);\n}\n\n" );
+    }
     /* the entry point: DllMain(hinst, reason, reserved), stdcall */
-    if (spec->init_func && find_func_sig( spec->init_func ))
+    else if (spec->init_func && find_func_sig( spec->init_func ))
     {
         output( "int %s(int, int, int);\n", spec->init_func );
         output( "static int gexp__entry_body(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
