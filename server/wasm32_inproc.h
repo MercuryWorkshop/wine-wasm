@@ -19,3 +19,6 @@
 /* the process's children are its own (ntdll.so waits for them): the server
  * takes no SIGCHLD, which it would answer with waitpid(-1) */
 #define sigaction(sig, act, old) wineserver_sigaction( sig, act, old )  /* (signal.h's prototype, renamed) */
+/* the server runs in the foreground here (-f): it never daemonizes, and a
+ * fork reference would make the whole loader fork-instrumented (asyncify) */
+#define fork wineserver_no_fork  /* (unistd.h's prototype, renamed) */

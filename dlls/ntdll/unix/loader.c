@@ -571,6 +571,12 @@ void wineserver_exit( int status )
     exit( status );
 }
 
+int wineserver_no_fork(void)
+{
+    errno = ENOSYS;
+    return -1;
+}
+
 int wineserver_sigaction( int sig, const struct sigaction *act, struct sigaction *old )
 {
     if (sig == SIGCHLD) return 0;
