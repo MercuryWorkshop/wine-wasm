@@ -1372,6 +1372,22 @@ void set_session_mapping( struct mapping *mapping )
     list_add_tail( &session.blocks, &block->entry );
 }
 
+#ifdef __wasm32__
+/* In process (wasm32_inproc.h): win32u reads the session here, inside the
+ * first block, instead of mapping a view of its own (a wasm memory cannot
+ * map the server's pages at a second address). */
+const void *wineserver_session_data( mem_size_t offset, mem_size_t *size )
+{
+    struct session_block *block;
+
+    if (list_empty( &session.blocks )) return NULL;
+    block = LIST_ENTRY( list_head( &session.blocks ), struct session_block, entry );
+    if (offset >= block->block_size) return NULL;
+    *size = block->block_size - offset;
+    return block->data + offset;
+}
+#endif
+
 static struct session_block *grow_session_mapping( mem_size_t needed )
 {
     size_t old_size = session_mapping->size, new_size;
