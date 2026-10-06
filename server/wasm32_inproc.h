@@ -16,3 +16,6 @@
 #define supported_machines wineserver_supported_machines
 #define supported_machines_count wineserver_supported_machines_count
 #define user_shared_data wineserver_user_shared_data
+/* the process's children are its own (ntdll.so waits for them): the server
+ * takes no SIGCHLD, which it would answer with waitpid(-1) */
+#define sigaction(sig, act, old) wineserver_sigaction( sig, act, old )  /* (signal.h's prototype, renamed) */

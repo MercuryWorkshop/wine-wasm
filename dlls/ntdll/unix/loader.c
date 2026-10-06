@@ -571,6 +571,12 @@ void wineserver_exit( int status )
     exit( status );
 }
 
+int wineserver_sigaction( int sig, const struct sigaction *act, struct sigaction *old )
+{
+    if (sig == SIGCHLD) return 0;
+    return sigaction( sig, act, old );
+}
+
 static void *wineserver_start( void *arg )
 {
     static char name[] = "wineserver", fg[] = "-f", dbg[] = "-d";
