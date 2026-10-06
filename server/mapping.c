@@ -1331,7 +1331,15 @@ size_t get_page_size(void)
 struct mapping *create_session_mapping( struct object *root, struct unicode_str name,
                                         unsigned int attr, const struct security_descriptor *sd )
 {
+#ifdef __wasm32__
+    /* in-process (wasm32_inproc.h): a client's view aliases the server's
+     * mapping only within one of the server's blocks (a wasm memory cannot
+     * map a page twice), so the session is made large once instead of
+     * growing block by block */
+    size_t size = 0x1000000;
+#else
     size_t size = max( sizeof(*shared_session) + sizeof(object_shm_t) * 512, 0x10000 );
+#endif
     struct mapping_init_data data = { .size = round_size( size, host_page_mask ), .flags = SEC_COMMIT,
                                       .file_access = FILE_READ_DATA | FILE_WRITE_DATA };
     struct object_params params = { .ops = &mapping_ops, .root = root, .name = name,
