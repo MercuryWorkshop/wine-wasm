@@ -310,6 +310,26 @@ void WINAPI RtlExitUserThread( ULONG status )
 }
 
 
+#ifdef __wasm32__
+/* A thread's entry is called as LPTHREAD_START_ROUTINE (BaseThreadInitThunk);
+ * RtlCreateUserThread's callers pass void functions (PRTL_THREAD_START_ROUTINE),
+ * which wasm cannot call at the other type: a native one is wrapped. */
+struct rtl_thread_start
+{
+    PRTL_THREAD_START_ROUTINE start;
+    void *param;
+};
+
+static DWORD WINAPI rtl_thread_start_wrapper( void *arg )
+{
+    struct rtl_thread_start s = *(struct rtl_thread_start *)arg;
+
+    RtlFreeHeap( GetProcessHeap(), 0, arg );
+    s.start( s.param );
+    return 0;
+}
+#endif
+
 /***********************************************************************
  *              RtlCreateUserThread   (NTDLL.@)
  */
@@ -341,6 +361,19 @@ NTSTATUS WINAPI RtlCreateUserThread( HANDLE process, SECURITY_DESCRIPTOR *descr,
     attr_list->Attributes[1].ReturnLength = NULL;
 
     InitializeObjectAttributes( &attr, NULL, 0, NULL, descr );
+
+#ifdef __wasm32__
+    if (process == NtCurrentProcess() && PtrToUlong( start ) < 0x3f0000)  /* a native function */
+    {
+        struct rtl_thread_start *s = RtlAllocateHeap( GetProcessHeap(), 0, sizeof(*s) );
+
+        if (!s) return STATUS_NO_MEMORY;
+        s->start = start;
+        s->param = param;
+        start = (PRTL_THREAD_START_ROUTINE)rtl_thread_start_wrapper;
+        param = s;
+    }
+#endif
 
     RtlGetActiveActivationContext( &actctx );
     if (actctx) flags |= THREAD_CREATE_FLAGS_CREATE_SUSPENDED;
