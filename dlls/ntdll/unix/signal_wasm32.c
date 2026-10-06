@@ -31,6 +31,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <signal.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -1040,6 +1041,138 @@ void signal_free_thread( TEB *teb )
 {
 }
 
+/***********************************************************************
+ * Signals (SIGUSR1: suspend, SIGQUIT: thread abort, SIGINT: Ctrl-C)
+ *
+ * A signal that arrives while the thread runs guest code is taken at a
+ * safepoint: gex-kernel builds i386's frame on the guest's stack and gex
+ * runs it through __wine_gex_signal (gex.signal_hook), which calls these
+ * handlers with the frame's ucontext, the guest's state. One that arrives
+ * in Unix code is taken when a system call returns (libgex), as on i386
+ * when inside a system call: the state is the syscall frame's.
+ */
+
+/* gex-kernel's i386 frame (Linux's ia32 sigcontext, in the ucontext) */
+struct gex_i386_sigcontext
+{
+    UINT gs, fs, es, ds, edi, esi, ebp, esp, ebx, edx, ecx, eax;
+    UINT trapno, err, eip, cs, eflags, esp_at_signal, ss, fpstate, oldmask, cr2;
+};
+struct gex_i386_ucontext
+{
+    UINT flags, link, ss_sp, ss_flags, ss_size;
+    struct gex_i386_sigcontext sc;
+};
+
+extern void __gex_signal_frames( volatile unsigned long long *x, unsigned long long pc );
+__attribute__((import_module("gex"), import_name("signal_hook"))) void gex_signal_hook( int idx );
+
+static __thread int in_guest_signal;
+
+static void __wine_gex_signal( int ctx, unsigned int pc )
+{
+    in_guest_signal++;
+    __gex_signal_frames( (volatile unsigned long long *)(ULONG_PTR)ctx, pc );
+    in_guest_signal--;
+}
+
+static void sc_to_context( const struct gex_i386_sigcontext *sc, CONTEXT *context )
+{
+    memset( context, 0, sizeof(*context) );
+    context->ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_SEGMENTS;
+    context->Eax = sc->eax; context->Ebx = sc->ebx; context->Ecx = sc->ecx; context->Edx = sc->edx;
+    context->Esi = sc->esi; context->Edi = sc->edi; context->Ebp = sc->ebp; context->Esp = sc->esp;
+    context->Eip = sc->eip; context->EFlags = sc->eflags;
+    context->SegCs = sc->cs; context->SegSs = sc->ss; context->SegDs = sc->ds;
+    context->SegEs = sc->es; context->SegFs = sc->fs; context->SegGs = sc->gs;
+}
+
+static void context_to_sc( const CONTEXT *context, struct gex_i386_sigcontext *sc )
+{
+    DWORD flags = context->ContextFlags & ~CONTEXT_i386;
+    if (flags & CONTEXT_INTEGER)
+    {
+        sc->eax = context->Eax; sc->ebx = context->Ebx; sc->ecx = context->Ecx;
+        sc->edx = context->Edx; sc->esi = context->Esi; sc->edi = context->Edi;
+    }
+    if (flags & CONTEXT_CONTROL)
+    {
+        sc->ebp = context->Ebp; sc->esp = context->Esp; sc->eip = context->Eip;
+        sc->eflags = context->EFlags;
+    }
+}
+
+/* the thread's state at the signal, the guest's or the syscall frame's */
+static void signal_wait_suspend( void *ucontext )
+{
+    struct thread_data *data = get_thread_data();
+
+    if (!data->teb)
+    {
+        server_select( NULL, 0, SELECT_INTERRUPTIBLE, 0, NULL, NULL );
+    }
+    else if (in_guest_signal)
+    {
+        struct gex_i386_ucontext *uc = ucontext;
+        CONTEXT context;
+
+        sc_to_context( &uc->sc, &context );
+        context.ContextFlags |= CONTEXT_EXCEPTION_REPORTING;
+        wait_suspend( &context );
+        context_to_sc( &context, &uc->sc );
+    }
+    else
+    {
+        struct xcontext context;
+
+        memset( &context, 0, sizeof(context) );
+        context.c.ContextFlags = CONTEXT_FULL | CONTEXT_EXCEPTION_REQUEST;
+        NtGetContextThread( GetCurrentThread(), &context.c );
+        wait_suspend( &context.c );
+        NtSetContextThread( GetCurrentThread(), &context.c );
+    }
+}
+
+static void usr1_handler( int signal, siginfo_t *siginfo, void *ucontext )
+{
+    signal_wait_suspend( ucontext );
+}
+
+static void quit_handler( int signal, siginfo_t *siginfo, void *ucontext )
+{
+    abort_thread( 0 );
+}
+
+static void int_handler( int signal, siginfo_t *siginfo, void *ucontext )
+{
+    HANDLE handle;
+
+    if (!p__wine_ctrl_routine) return;
+    if (!NtCreateThreadEx( &handle, THREAD_ALL_ACCESS, NULL, NtCurrentProcess(),
+                           p__wine_ctrl_routine, 0 /* CTRL_C_EVENT */, 0, 0, 0, 0, NULL ))
+        NtClose( handle );
+}
+
+static void install_signal_handlers(void)
+{
+    struct sigaction sig_act;
+
+    memset( &sig_act, 0, sizeof(sig_act) );
+    sig_act.sa_mask = server_block_set;
+    sig_act.sa_flags = SA_SIGINFO | SA_RESTART;
+    sig_act.sa_sigaction = usr1_handler;
+    if (sigaction( SIGUSR1, &sig_act, NULL ) == -1) goto error;
+    sig_act.sa_sigaction = quit_handler;
+    if (sigaction( SIGQUIT, &sig_act, NULL ) == -1) goto error;
+    sig_act.sa_sigaction = int_handler;
+    if (sigaction( SIGINT, &sig_act, NULL ) == -1) goto error;
+    gex_signal_hook( (int)(ULONG_PTR)__wine_gex_signal );
+    return;
+error:
+    perror( "sigaction" );
+    exit(1);
+}
+
 void signal_init_process( TEB *teb )
 {
     if (user_shared_data->XState.Size) xstate_size = user_shared_data->XState.Size - sizeof(XSAVE_FORMAT);
@@ -1052,6 +1185,7 @@ void signal_init_process( TEB *teb )
     /* gex's side: system calls from the PE side, faults in the program */
     gex_unix_dispatcher( 0, (int)(ULONG_PTR)__wine_gex_syscall );
     gex_fault_hook( (int)(ULONG_PTR)__wine_gex_fault );
+    install_signal_handlers();
 }
 
 /***********************************************************************
@@ -1117,6 +1251,9 @@ void signal_start_thread( PRTL_THREAD_START_ROUTINE entry, void *arg, TEB *teb )
     frame->esp = (DWORD)stack;
     frame->eip = (DWORD)pLdrInitializeThunk;
     frame->restore_flags |= CONTEXT_FULL | CONTEXT_EXTENDED_REGISTERS;
+    /* (before the context is written: a system call of ours uses its
+     * registers) */
+    pthread_sigmask( SIG_UNBLOCK, &server_block_set, NULL );
     frame_to_ctx( ctx, frame );
 
     /* user mode, for good: each call-out runs the program until something
