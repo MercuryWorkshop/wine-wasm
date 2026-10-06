@@ -383,8 +383,16 @@ static void init_paths(void)
 {
     Dl_info info;
 
+#ifdef __wasm32__
+    /* A closed-world wasm32 program (gex): ntdll.so is linked into the
+     * loader, which sits where ntdll.so would. */
+    (void)info;
+    if (!(ntdll_dir = realpath_dirname( "/proc/self/exe" )))
+        fatal_error( "cannot get path to ntdll.so\n" );
+#else
     if (!dladdr( init_paths, &info ) || !(ntdll_dir = realpath_dirname( info.dli_fname )))
         fatal_error( "cannot get path to ntdll.so\n" );
+#endif
 
     if ((build_dir = remove_tail( ntdll_dir, "/dlls/ntdll" )))
     {
@@ -2015,6 +2023,10 @@ static void reexec_loader( int argc, char *argv[], char *extra_arg )
     WORD machine = current_machine;
     char **new_argv;
 
+#ifdef __wasm32__
+    /* gex: no preloader and no other loader; this one goes on */
+    if (!extra_arg) return;
+#endif
     /* have to exec if we have a preloader, or an argument, or if we are the initial wrapper */
     if (!pre_exec() && !extra_arg && dlsym( RTLD_DEFAULT, "wine_main_preload_info" )) return;
 
