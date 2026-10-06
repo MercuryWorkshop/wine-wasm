@@ -3398,6 +3398,10 @@ static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_inf
  *
  * Map a PE image section into memory.
  */
+#ifdef __wasm32__
+__attribute__((import_module("gex"), import_name("image_mapped"))) void gex_image_mapped( int base, int fd );
+#endif
+
 static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size_ptr,
                                    ULONG_PTR limit_low, ULONG_PTR limit_high, ULONG alloc_type,
                                    struct pe_mapping_info *pe_mapping, USHORT machine,
@@ -3443,6 +3447,10 @@ static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size
 
     status = map_image_into_view( view, &pe_mapping->nt_name, unix_fd, &pe_mapping->image,
                                   machine, shared_fd, needs_close );
+#ifdef __wasm32__
+    /* gex: a native DLL's skeleton gets Wine's PE module at its exports */
+    if (status == STATUS_SUCCESS) gex_image_mapped( (int)(ULONG_PTR)view->base, unix_fd );
+#endif
     if (status == STATUS_SUCCESS)
     {
         if (offset)
