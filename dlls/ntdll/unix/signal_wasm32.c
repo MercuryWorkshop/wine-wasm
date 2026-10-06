@@ -989,6 +989,7 @@ struct callback_return
     ULONG   ret_len;
     NTSTATUS status;
     int     done;
+    UINT    esp;      /* the guest stack pointer the call-out waits for */
 };
 
 NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_ptr, ULONG *ret_len )
@@ -1021,7 +1022,10 @@ NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_p
      * layout at ESP, and it never returns (NtCallbackReturn ends it) */
     gp_set( ctx, R_ESP, esp );
     {
-        uint32_t ra = (uint32_t)(ULONG_PTR)pKiUserCallbackDispatcher ^ 1u;
+        /* gex's trampoline page's return pad (its page has a dispatch
+         * entry, so the call-out can watch it) */
+        uint32_t ra = 0x3ffff1;
+        ret.esp = esp;
         GEX_C64( GEX_CTX_LAST_TARGET ) = (uint32_t)(ULONG_PTR)pKiUserCallbackDispatcher;
         gex_call_out( ctx, (int64_t)(uint32_t)(ULONG_PTR)pKiUserCallbackDispatcher, ra, esp );
     }
@@ -1053,7 +1057,8 @@ NTSTATUS WINAPI NtCallbackReturn( void *ret_ptr, ULONG ret_len, NTSTATUS status 
     ret->done = 1;
     /* back to KeUserModeCallback: the guest run ends at the address the
      * call-out waits for */
-    frame->eip = (UINT)(ULONG_PTR)pKiUserCallbackDispatcher ^ 1u;
+    frame->eip = 0x3ffff1;
+    frame->esp = ret->esp;
     frame->restore_flags |= CONTEXT_CONTROL;
     return status;
 }
