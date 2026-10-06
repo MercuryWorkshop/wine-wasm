@@ -407,6 +407,10 @@ static void init_paths(void)
         wineloader = build_path( ntdll_dir, "wine" );
     }
 
+#ifdef __wasm32__
+    /* gex: the loader that starts other Windows processes is this one */
+    wineloader = realpath( "/proc/self/exe", NULL );
+#endif
     set_dll_path();
     set_system_dll_path();
     set_home_dir();
