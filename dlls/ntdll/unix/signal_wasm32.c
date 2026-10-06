@@ -855,6 +855,17 @@ NTSTATUS WINAPI __wine_unix_call_dispatcher( unixlib_handle_t handle, unsigned i
     return status;
 }
 
+/* A Unix call from i386 code (a translated builtin DLL's winecrt0 calls
+ * __wine_unix_call_dispatcher, which on wasm32 is gex's trampoline: the
+ * stdcall arguments are above its two return addresses): gex calls this. */
+static void __wine_gex_unix_call( int ctx )
+{
+    const UINT *w = (const UINT *)(ULONG_PTR)(gp_reg( ctx, R_ESP ) + 8);
+    unixlib_handle_t handle = w[0] | ((UINT64)w[1] << 32);
+    NTSTATUS status = __wine_unix_call_dispatcher( handle, w[2], (void *)(ULONG_PTR)w[3] );
+    gp_set( ctx, R_EAX, status );
+}
+
 /* What i386 assembles: in this port it is never jumped to, only named
  * (ntdll's PE side reads its address and gexrt calls __wine_gex_syscall
  * instead). */
@@ -1227,6 +1238,7 @@ void signal_init_process( TEB *teb )
 
     /* gex's side: system calls from the PE side, faults in the program */
     gex_unix_dispatcher( 0, (int)(ULONG_PTR)__wine_gex_syscall_switch );
+    gex_unix_dispatcher( 2, (int)(ULONG_PTR)__wine_gex_unix_call );
     gex_fault_hook( (int)(ULONG_PTR)__wine_gex_fault );
     install_signal_handlers();
 }
