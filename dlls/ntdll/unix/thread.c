@@ -1309,6 +1309,16 @@ static NTSTATUS create_server_thread( HANDLE *handle, struct thread_data **data_
 /***********************************************************************
  *           spawn_thread
  */
+#ifdef __wasm32__
+/* wasm calls through a pointer only at the function's own type */
+static void *server_init_thread_start( void *data )
+{
+    server_init_thread( data );
+    return NULL;
+}
+#define server_init_thread server_init_thread_start
+#endif
+
 static NTSTATUS spawn_thread( struct thread_data *data )
 {
     sigset_t sigset;
