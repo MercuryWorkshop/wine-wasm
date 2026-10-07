@@ -6239,6 +6239,23 @@ struct alpc_create_port_reply
 };
 
 
+/* Read the session's shared memory (wasm32: a process that cannot map it,
+ * a child of the process hosting the server, reads it through requests) */
+struct read_session_data_request
+{
+    struct request_header __header;
+    char __pad_12[4];
+    mem_size_t          offset;
+    data_size_t         size;
+    char __pad_28[4];
+};
+struct read_session_data_reply
+{
+    struct reply_header __header;
+    /* VARARG(data,bytes); */
+};
+
+
 enum request
 {
     REQ_new_process,
@@ -6549,6 +6566,7 @@ enum request
     REQ_d3dkmt_mutex_acquire,
     REQ_d3dkmt_mutex_release,
     REQ_alpc_create_port,
+    REQ_read_session_data,
     REQ_NB_REQUESTS
 };
 
@@ -6864,6 +6882,7 @@ union generic_request
     struct d3dkmt_mutex_acquire_request d3dkmt_mutex_acquire_request;
     struct d3dkmt_mutex_release_request d3dkmt_mutex_release_request;
     struct alpc_create_port_request alpc_create_port_request;
+    struct read_session_data_request read_session_data_request;
 };
 union generic_reply
 {
@@ -7177,8 +7196,9 @@ union generic_reply
     struct d3dkmt_mutex_acquire_reply d3dkmt_mutex_acquire_reply;
     struct d3dkmt_mutex_release_reply d3dkmt_mutex_release_reply;
     struct alpc_create_port_reply alpc_create_port_reply;
+    struct read_session_data_reply read_session_data_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 958
+#define SERVER_PROTOCOL_VERSION 959
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

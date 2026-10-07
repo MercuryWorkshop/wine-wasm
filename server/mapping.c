@@ -1388,6 +1388,22 @@ const void *wineserver_session_data( mem_size_t offset, mem_size_t *size )
 }
 #endif
 
+/* read the session's shared memory (for a process that cannot map it) */
+DECL_HANDLER(read_session_data)
+{
+    struct session_block *block;
+    mem_size_t size;
+
+    LIST_FOR_EACH_ENTRY( block, &session.blocks, struct session_block, entry )
+    {
+        if (req->offset < block->offset || req->offset >= block->offset + block->block_size) continue;
+        size = min( (mem_size_t)req->size, block->offset + block->block_size - req->offset );
+        set_reply_data( block->data + (req->offset - block->offset), min( size, get_reply_max_size() ) );
+        return;
+    }
+    set_error( STATUS_INVALID_PARAMETER );
+}
+
 static struct session_block *grow_session_mapping( mem_size_t needed )
 {
     size_t old_size = session_mapping->size, new_size;

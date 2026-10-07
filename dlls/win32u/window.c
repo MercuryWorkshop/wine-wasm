@@ -112,12 +112,19 @@ static BOOL is_valid_entry( HANDLE handle, unsigned short type )
     const volatile struct user_entry *entries = shared_session->user_entries;
     WORD index = USER_HANDLE_TO_INDEX( handle );
     if (index >= MAX_USER_HANDLES) return FALSE;
+#ifdef __wasm32__
+    session_mirror_refresh( entries + index, sizeof(*entries) );
+#endif
     return is_valid_entry_uniq( handle, type, ReadAcquire64( (LONG64 *)&entries[index].uniq ) );
 }
 
 static BOOL read_acquire_user_entry( HANDLE handle, unsigned short type, const volatile struct user_entry *src, struct user_entry *dst )
 {
-    UINT64 uniq = ReadAcquire64( (LONG64 *)&src->uniq );
+    UINT64 uniq;
+#ifdef __wasm32__
+    session_mirror_refresh( src, sizeof(*src) );  /* (winstation.c) */
+#endif
+    uniq = ReadAcquire64( (LONG64 *)&src->uniq );
     if (!is_valid_entry_uniq( handle, type, uniq )) return FALSE;
     dst->offset = src->offset;
     dst->tid = src->tid;
@@ -240,6 +247,10 @@ void *next_thread_user_object( UINT tid, HANDLE *handle, unsigned short type )
 
     for (i = index; i < MAX_USER_HANDLES; i++)
     {
+#ifdef __wasm32__
+        /* (this process's objects are the ones it has: no request for the rest) */
+        if (session_via_requests() && !client_objects[i]) continue;
+#endif
         if (!get_user_entry_at( i, type, &entry, handle )) continue;
         if (entry.pid != GetCurrentProcessId()) continue;
         if (tid != -1 && entry.tid != tid) continue;

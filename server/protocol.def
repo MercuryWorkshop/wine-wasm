@@ -4335,3 +4335,13 @@ enum inproc_sync_type
 @REPLY
     obj_handle_t        handle;         /* handle to the ALPC port */
 @END
+
+
+/* Read the session's shared memory (wasm32: a process that cannot map it,
+ * a child of the process hosting the server, reads it through requests) */
+@REQ(read_session_data)
+    mem_size_t          offset;         /* offset in the session mapping */
+    data_size_t         size;           /* how many bytes */
+@REPLY
+    VARARG(data,bytes);                 /* the bytes, as many as there are */
+@END

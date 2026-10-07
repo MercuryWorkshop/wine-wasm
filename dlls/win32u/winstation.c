@@ -79,8 +79,43 @@ static struct session_thread_data *get_session_thread_data(void)
     return thread_info->session_data;
 }
 
+#ifdef __wasm32__
+/* A process that cannot map the session (a child of the process hosting the
+ * in-process wineserver: one wasm memory each) reads it through requests,
+ * into a local copy laid out as the mapping is. Each read sequence (a seqlock
+ * acquire, a user entry) refreshes what it reads; the copy is consistent, so
+ * the seqlock check that follows passes. */
+#define SESSION_MIRROR_SIZE (16 << 20)  /* (server/mapping.c: one block) */
+static char *session_mirror;
+
+void session_mirror_refresh( const volatile void *ptr, SIZE_T size )
+{
+    SIZE_T offset = (const char *)ptr - session_mirror;
+
+    if (!session_mirror || offset >= SESSION_MIRROR_SIZE) return;
+    size = min( size, SESSION_MIRROR_SIZE - offset );
+    SERVER_START_REQ( read_session_data )
+    {
+        req->offset = offset;
+        req->size = size;
+        wine_server_set_reply( req, session_mirror + offset, size );
+        wine_server_call( req );
+    }
+    SERVER_END_REQ;
+}
+
+BOOL session_via_requests(void)
+{
+    return session_mirror != NULL;
+}
+#endif
+
 void shared_object_acquire_seqlock( const shared_object_t *object, UINT64 *seq )
 {
+#ifdef __wasm32__
+    /* the object and its extra bytes (a window's or class's, up to 512) */
+    session_mirror_refresh( object, sizeof(*object) + 512 );
+#endif
     while ((*seq = ReadNoFence64( &object->seq )) & 1) YieldProcessor();
     __SHARED_READ_FENCE;
 }
@@ -130,6 +165,16 @@ static NTSTATUS map_shared_session_block( SIZE_T offset, SIZE_T size, struct ses
         {
             block->offset = off.QuadPart;
             block->size = avail;
+            list_add_tail( &session_blocks, &block->entry );
+            *ret = block;
+            return STATUS_SUCCESS;
+        }
+        /* not this process's: through requests (session_mirror_refresh) */
+        if (session_mirror || (session_mirror = calloc( 1, SESSION_MIRROR_SIZE )))
+        {
+            block->data = session_mirror;
+            block->offset = 0;
+            block->size = SESSION_MIRROR_SIZE;
             list_add_tail( &session_blocks, &block->entry );
             *ret = block;
             return STATUS_SUCCESS;

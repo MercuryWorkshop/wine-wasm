@@ -254,6 +254,10 @@ struct object_lock
 #endif
 
 extern const shared_object_t *find_shared_session_object( object_id_t id, mem_size_t offset );
+#ifdef __wasm32__
+extern void session_mirror_refresh( const volatile void *ptr, SIZE_T size );
+extern BOOL session_via_requests(void);
+#endif
 extern void shared_object_acquire_seqlock( const shared_object_t *object, UINT64 *seq );
 extern BOOL shared_object_release_seqlock( const shared_object_t *object, UINT64 seq );
 

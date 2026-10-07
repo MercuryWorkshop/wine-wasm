@@ -315,6 +315,7 @@ DECL_HANDLER(d3dkmt_object_open_name);
 DECL_HANDLER(d3dkmt_mutex_acquire);
 DECL_HANDLER(d3dkmt_mutex_release);
 DECL_HANDLER(alpc_create_port);
+DECL_HANDLER(read_session_data);
 
 typedef void (*req_handler)( const void *req, void *reply );
 static const req_handler req_handlers[REQ_NB_REQUESTS] =
@@ -627,6 +628,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_d3dkmt_mutex_acquire,
     (req_handler)req_d3dkmt_mutex_release,
     (req_handler)req_alpc_create_port,
+    (req_handler)req_read_session_data,
 };
 
 C_ASSERT( sizeof(abstime_t) == 8 );
@@ -2394,3 +2396,7 @@ C_ASSERT( offsetof(struct alpc_create_port_request, max_msg_len) == 16 );
 C_ASSERT( sizeof(struct alpc_create_port_request) == 24 );
 C_ASSERT( offsetof(struct alpc_create_port_reply, handle) == 8 );
 C_ASSERT( sizeof(struct alpc_create_port_reply) == 16 );
+C_ASSERT( offsetof(struct read_session_data_request, offset) == 16 );
+C_ASSERT( offsetof(struct read_session_data_request, size) == 24 );
+C_ASSERT( sizeof(struct read_session_data_request) == 32 );
+C_ASSERT( sizeof(struct read_session_data_reply) == 8 );
