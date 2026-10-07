@@ -1348,6 +1348,10 @@ struct mapping *create_session_mapping( struct object *root, struct unicode_str 
     return create_named_object( &params );
 }
 
+#ifdef __wasm32__
+static pid_t session_pid;  /* the process the server (and its session) runs in */
+#endif
+
 void set_session_mapping( struct mapping *mapping )
 {
     int unix_fd = get_unix_fd( mapping->fd );
@@ -1370,6 +1374,9 @@ void set_session_mapping( struct mapping *mapping )
     shared_session = tmp;
     session_mapping = mapping;
     list_add_tail( &session.blocks, &block->entry );
+#ifdef __wasm32__
+    session_pid = getpid();
+#endif
 }
 
 #ifdef __wasm32__
@@ -1380,7 +1387,9 @@ const void *wineserver_session_data( mem_size_t offset, mem_size_t *size )
 {
     struct session_block *block;
 
-    if (list_empty( &session.blocks )) return NULL;
+    /* (a child process is a copy of this one, server state and all: a stale
+     * snapshot it must not read) */
+    if (getpid() != session_pid || list_empty( &session.blocks )) return NULL;
     block = LIST_ENTRY( list_head( &session.blocks ), struct session_block, entry );
     if (offset >= block->block_size) return NULL;
     *size = block->block_size - offset;
