@@ -848,6 +848,11 @@ NTSTATUS WINAPI __wine_unix_call_dispatcher( unixlib_handle_t handle, unsigned i
     unsigned long long regs[8], pc = GEX_C64( GEX_CTX_PC );
     NTSTATUS status;
 
+    /* a DLL whose Unix library is not linked into this program (W3's closed
+     * world: wineps.so, say) has no handle, and its DllMain's failure path
+     * still makes the call (DLL_PROCESS_DETACH) */
+    if (!handle) return STATUS_DLL_NOT_FOUND;
+
     for (i = 0; i < 8; i++) regs[i] = GEX_C64( GEX_CTX_XN(i) );
     status = ((const unixlib_entry_t *)(UINT_PTR)handle)[code]( args );
     for (i = 0; i < 8; i++) GEX_C64( GEX_CTX_XN(i) ) = regs[i];
