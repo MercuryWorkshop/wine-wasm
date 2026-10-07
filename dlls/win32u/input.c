@@ -503,6 +503,13 @@ static WORD kbd_tables_wchar_to_vkey( const KBDTABLES *tables, WCHAR wch )
     {
         for (entry = table->pVkToWchars; entry->VirtualKey; entry = NEXT_ENTRY(table, entry))
         {
+#ifdef __wasm32__
+            /* an SGCAPS entry is the mapping with Caps Lock on; the one
+             * after it, which is what VkKeyScan reports, the mapping without
+             * (winewayland makes every letter an SGCAPS pair: VkKeyScan('A')
+             * came out unshifted). Not wasm32-specific: an upstream fix. */
+            if (entry->Attributes & SGCAPS) continue;
+#endif
             for (mod = 0; mod < table->nModifications; ++mod)
             {
                 if (entry->wch[mod] == WCH_NONE || entry->wch[mod] != wch) continue;
