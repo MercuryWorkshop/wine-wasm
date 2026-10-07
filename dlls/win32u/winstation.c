@@ -934,8 +934,23 @@ HWND get_desktop_window(void)
             static DWORD desktop_tid;  /* (which doesn't wait for itself) */
             THREAD_BASIC_INFORMATION tbi;
 
+            static const WCHAR ownerW[] = {'\\','K','e','r','n','e','l','O','b','j','e','c','t','s','\\',
+                '_','_','w','i','n','e','_','g','e','x','_','d','e','s','k','t','o','p',0};
+            UNICODE_STRING owner_name = RTL_CONSTANT_STRING( ownerW );
+            OBJECT_ATTRIBUTES owner_attr;
+            HANDLE owner;
+
             if (GetCurrentThreadId() == desktop_tid) return 0;
+            /* one desktop thread in the session, in the first process that
+             * needs it: it holds a named mutant for as long as it lives (its
+             * window goes with it), and other processes wait for the window */
+            InitializeObjectAttributes( &owner_attr, &owner_name, OBJ_OPENIF, 0, NULL );
             if (InterlockedCompareExchange( &started, 1, 0 )) status = STATUS_SUCCESS, thread = 0;
+            else if (NtCreateMutant( &owner, MUTANT_ALL_ACCESS, &owner_attr, FALSE ) == STATUS_OBJECT_NAME_EXISTS)
+            {
+                NtClose( owner );
+                status = STATUS_SUCCESS, thread = 0;
+            }
             else if (!(status = start ? NtCreateThreadEx( &thread, THREAD_ALL_ACCESS, NULL, GetCurrentProcess(),
                                                           (PRTL_THREAD_START_ROUTINE)(ULONG_PTR)start, NULL,
                                                           THREAD_CREATE_FLAGS_CREATE_SUSPENDED, 0, 0, 0, NULL )
@@ -951,7 +966,7 @@ HWND get_desktop_window(void)
                 /* until its window is up and its thread in its message
                  * loop, which it enters as it names the shell window (on
                  * the default desktop: as explorer's WaitForInputIdle) */
-                for (i = 0; i < 1000 && !NtUserGetShellWindow(); i++)
+                for (i = 0; i < 6000 && !NtUserGetShellWindow(); i++)  /* (60 s: a child sets up slower) */
                     NtDelayExecution( FALSE, &delay );
             }
             else ERR_(win)( "failed to start the desktop thread %x\n", status );
