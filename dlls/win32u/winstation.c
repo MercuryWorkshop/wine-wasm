@@ -888,6 +888,27 @@ static inline TEB64 *NtCurrentTeb64(void) { return NULL; }
 static inline TEB64 *NtCurrentTeb64(void) { return (TEB64 *)NtCurrentTeb()->GdiBatchCount; }
 #endif
 
+#ifdef __wasm32__
+/* gex: explorer started with /desktop, the process making the desktop
+ * window. Its display driver loads lazily on wasm32 (the null driver loads
+ * no module), which asks for the desktop window before the desktop class
+ * window exists: it must not start another explorer (each one did). */
+static BOOL is_desktop_process(void)
+{
+    static int ret = -1;
+    if (ret < 0)
+    {
+        static const WCHAR desktopW[] = {' ','/','d','e','s','k','t','o','p'};
+        const UNICODE_STRING *cmd = &NtCurrentTeb()->Peb->ProcessParameters->CommandLine;
+        USHORT i, n = cmd->Length / sizeof(WCHAR);
+        ret = 0;
+        for (i = 0; !ret && i + ARRAY_SIZE(desktopW) <= n; i++)
+            ret = !memcmp( cmd->Buffer + i, desktopW, sizeof(desktopW) );
+    }
+    return ret;
+}
+#endif
+
 HWND get_desktop_window(void)
 {
     struct user_thread_info *thread_info = get_user_thread_info();
@@ -959,6 +980,9 @@ HWND get_desktop_window(void)
         ps_attr.Attributes[0].ReturnLength = NULL;
 
 #ifdef __wasm32__
+        static int desktop_thread = -1;
+        if (desktop_thread < 0) desktop_thread = !!getenv( "WINEGEX_DESKTOP_THREAD" );
+        if (desktop_thread)
         {
             /* gex: explorer's desktop runs as a thread of this process
              * (programs/explorer/desktop.c gexp_desktop_thread); a process
@@ -1010,7 +1034,8 @@ HWND get_desktop_window(void)
             }
             else ERR_(win)( "failed to start the desktop thread %x\n", status );
         }
-        if (0)
+        if (desktop_thread) {} else
+        if (is_desktop_process()) return 0;  /* (explorer /desktop: creating it) */
 #endif
         if (NtCurrentTeb64() && !NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR])
         {
@@ -1025,20 +1050,36 @@ HWND get_desktop_window(void)
                                           NULL, NULL, 0, THREAD_CREATE_FLAGS_CREATE_SUSPENDED, &params,
                                           &create_info, &ps_attr );
 #ifdef __wasm32__
-        if (0)
+        if (!desktop_thread && !status)
 #else
         if (!status)
 #endif
         {
             NtResumeThread( thread, NULL );
             TRACE_(win)( "started explorer\n" );
+#ifdef __wasm32__
+            {
+                /* a child process starts slower than WaitForInputIdle's
+                 * 10 s (and its idle event does not cross to this process):
+                 * until explorer names the shell window, as the thread
+                 * path waits */
+                LARGE_INTEGER delay = { .QuadPart = -10 * 10000 };
+                int i;
+                for (i = 0; i < 6000 && !NtUserGetShellWindow(); i++)
+                    NtDelayExecution( FALSE, &delay );
+            }
+#else
             NtUserWaitForInputIdle( process, 10000, FALSE );
+#endif
             NtClose( thread );
             NtClose( process );
         }
-#ifndef __wasm32__
-        else ERR_(win)( "failed to start explorer %x\n", status );
+#ifdef __wasm32__
+        else if (!desktop_thread)
+#else
+        else
 #endif
+            ERR_(win)( "failed to start explorer %x\n", status );
 
         SERVER_START_REQ( get_desktop_window )
         {
