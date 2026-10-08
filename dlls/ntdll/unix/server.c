@@ -282,11 +282,23 @@ static inline unsigned int wait_reply( int reply_fd, struct __server_request_inf
 /***********************************************************************
  *           server_call_unlocked
  */
+#ifdef __wasm32__
+/* Requests that may change the session, process-wide (all but reads of
+ * it): win32u's copy of the session in a child (winstation.c) is fresh
+ * only while this has not moved. */
+LONG __wine_session_writes;
+#endif
+
 unsigned int server_call_unlocked( void *req_ptr )
 {
     struct thread_data *data = get_thread_data();
     struct __server_request_info * const req = req_ptr;
     unsigned int ret;
+
+#ifdef __wasm32__
+    if (req->u.req.request_header.req != REQ_read_session_data)
+        __atomic_add_fetch( &__wine_session_writes, 1, __ATOMIC_SEQ_CST );
+#endif
 
     if ((ret = send_request( data->request_fd, req ))) return ret;
     return wait_reply( data->reply_fd, req );

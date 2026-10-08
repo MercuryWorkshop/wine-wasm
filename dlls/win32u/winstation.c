@@ -27,6 +27,7 @@
 #include <stddef.h>
 
 #include <pthread.h>
+#include <time.h>
 
 #include "ntstatus.h"
 #include "windef.h"
@@ -88,12 +89,42 @@ static struct session_thread_data *get_session_thread_data(void)
 #define SESSION_MIRROR_SIZE (16 << 20)  /* (server/mapping.c: one block) */
 static char *session_mirror;
 
+/* What this thread read lately: read again only when the process has made
+ * a request since (one that can change the session: __wine_session_writes)
+ * or the read is older than a millisecond (another process's changes),
+ * so a poll of every key or a run of IsWindow costs one request, not one
+ * each. */
+struct session_read { SIZE_T offset, size; LONG writes; ULONGLONG time; };
+static __thread struct session_read session_reads[16];
+static __thread unsigned int session_reads_next;
+
+static ULONGLONG session_now_us(void)
+{
+    struct timespec ts;
+    clock_gettime( CLOCK_MONOTONIC, &ts );
+    return ts.tv_sec * 1000000ull + ts.tv_nsec / 1000;
+}
+
 void session_mirror_refresh( const volatile void *ptr, SIZE_T size )
 {
+    extern LONG __wine_session_writes;
     SIZE_T offset = (const char *)ptr - session_mirror;
+    LONG writes = __atomic_load_n( &__wine_session_writes, __ATOMIC_SEQ_CST );
+    ULONGLONG now;
+    unsigned int i;
 
     if (!session_mirror || offset >= SESSION_MIRROR_SIZE) return;
     size = min( size, SESSION_MIRROR_SIZE - offset );
+    now = session_now_us();
+    for (i = 0; i < ARRAY_SIZE(session_reads); i++)
+    {
+        struct session_read *r = &session_reads[i];
+        if (r->size && r->offset <= offset && offset + size <= r->offset + r->size &&
+            r->writes == writes && now - r->time < 1000)
+            return;
+    }
+    session_reads[session_reads_next++ % ARRAY_SIZE(session_reads)] =
+        (struct session_read){ .offset = offset, .size = size, .writes = writes, .time = now };
     SERVER_START_REQ( read_session_data )
     {
         req->offset = offset;
@@ -119,6 +150,7 @@ void shared_object_acquire_seqlock( const shared_object_t *object, UINT64 *seq )
     while ((*seq = ReadNoFence64( &object->seq )) & 1)
     {
         YieldProcessor();
+        memset( session_reads, 0, sizeof(session_reads) );
         session_mirror_refresh( object, sizeof(*object) + 512 );
     }
 #else
