@@ -113,10 +113,17 @@ BOOL session_via_requests(void)
 void shared_object_acquire_seqlock( const shared_object_t *object, UINT64 *seq )
 {
 #ifdef __wasm32__
-    /* the object and its extra bytes (a window's or class's, up to 512) */
+    /* the object and its extra bytes (a window's or class's, up to 512),
+     * again for as long as the copy caught the server mid-write */
     session_mirror_refresh( object, sizeof(*object) + 512 );
-#endif
+    while ((*seq = ReadNoFence64( &object->seq )) & 1)
+    {
+        YieldProcessor();
+        session_mirror_refresh( object, sizeof(*object) + 512 );
+    }
+#else
     while ((*seq = ReadNoFence64( &object->seq )) & 1) YieldProcessor();
+#endif
     __SHARED_READ_FENCE;
 }
 
