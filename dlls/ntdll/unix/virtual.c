@@ -4469,6 +4469,45 @@ done:
 static const WCHAR shared_data_nameW[] = {'\\','K','e','r','n','e','l','O','b','j','e','c','t','s',
                                           '\\','_','_','w','i','n','e','_','u','s','e','r','_','s','h','a','r','e','d','_','d','a','t','a',0};
 
+#ifdef __wasm32__
+/* a child process's own USD clocks (virtual_map_user_shared_data) */
+static void usd_store( volatile KSYSTEM_TIME *t, ULONGLONG v )
+{
+    __atomic_store_n( &t->High2Time, (LONG)(v >> 32), __ATOMIC_SEQ_CST );
+    __atomic_store_n( &t->LowPart, (ULONG)v, __ATOMIC_SEQ_CST );
+    __atomic_store_n( &t->High1Time, (LONG)(v >> 32), __ATOMIC_SEQ_CST );
+}
+
+static void usd_clock_tick(void)
+{
+    KUSER_SHARED_DATA *usd = (KUSER_SHARED_DATA *)user_shared_data;
+    struct timespec ts;
+    ULONGLONG mono = 0, now = 0, tick;
+
+    if (!clock_gettime( CLOCK_BOOTTIME, &ts ) || !clock_gettime( CLOCK_MONOTONIC, &ts ))
+        mono = ts.tv_sec * (ULONGLONG)TICKSPERSEC + ts.tv_nsec / 100;
+    if (!clock_gettime( CLOCK_REALTIME, &ts ))
+        now = ticks_from_time_t( ts.tv_sec ) + ts.tv_nsec / 100;
+    tick = mono / 10000;
+    usd_store( &usd->SystemTime, now );
+    usd_store( &usd->InterruptTime, mono );
+    usd_store( &usd->TickCount, tick );
+    __atomic_store_n( &usd->TickCountLowDeprecated, (ULONG)tick, __ATOMIC_SEQ_CST );
+}
+
+static void *usd_clock_thread( void *arg )
+{
+    const struct timespec ms = { 0, 1000000 };
+
+    for (;;)
+    {
+        nanosleep( &ms, NULL );
+        usd_clock_tick();
+    }
+    return NULL;
+}
+#endif
+
 /***********************************************************************
  *           virtual_map_user_shared_data
  */
@@ -4493,6 +4532,30 @@ void virtual_map_user_shared_data(void)
     }
     if (needs_close) close( fd );
     NtClose( section );
+#ifdef __wasm32__
+    {
+        /* The USD is written by the server, which runs in the first process
+         * (wasm32_inproc.h). A child has its own wasm memory: what it mapped
+         * is a copy, its clocks stopped. It keeps them itself: a private
+         * page, the copy's contents, and a thread advancing the times as the
+         * server's set_user_shared_data_time does. */
+        extern KUSER_SHARED_DATA *wineserver_user_shared_data;
+        static pthread_t clock_thread;
+        void *copy;
+
+        if (!wineserver_user_shared_data && (copy = malloc( page_size )))
+        {
+            memcpy( copy, (void *)user_shared_data, page_size );
+            if (mmap( user_shared_data, page_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0 ) == user_shared_data)
+            {
+                memcpy( (void *)user_shared_data, copy, page_size );
+                usd_clock_tick();
+                pthread_create( &clock_thread, NULL, usd_clock_thread, NULL );
+            }
+            free( copy );
+        }
+    }
+#endif
 }
 
 
