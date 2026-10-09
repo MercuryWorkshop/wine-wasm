@@ -4495,13 +4495,17 @@ static void usd_clock_tick(void)
     __atomic_store_n( &usd->TickCountLowDeprecated, (ULONG)tick, __ATOMIC_SEQ_CST );
 }
 
+/* Every 16 ms, as wineserver refreshes its own copy at least that often
+ * (server/fd.c, user_shared_data_timeout): Windows's tick is 15.6 ms too.
+ * It was every 1 ms, about 900 wakeups a second in each child process, each
+ * a trip through gex's scheduler and compositor pump. */
 static void *usd_clock_thread( void *arg )
 {
-    const struct timespec ms = { 0, 1000000 };
+    const struct timespec period = { 0, 16 * 1000000 };
 
     for (;;)
     {
-        nanosleep( &ms, NULL );
+        nanosleep( &period, NULL );
         usd_clock_tick();
     }
     return NULL;
