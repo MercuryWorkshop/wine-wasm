@@ -1018,7 +1018,10 @@ NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_p
     memcpy( stack->args_data, args, len );
 
     /* a frame of its own for the system calls the callback makes */
-    cb_frame = (struct syscall_frame *)(((ULONG_PTR)&ret - 256 - frame_size) & ~63);  /* below this function's frame */
+    /* in this function's own frame: native code that a wasm caller reaches
+     * directly (a Unix call from the PE module, no system-call switch) runs
+     * on this stack, below the frame, and wrote over a frame put below it */
+    cb_frame = (struct syscall_frame *)(((ULONG_PTR)__builtin_alloca( frame_size + 63 ) + 63) & ~63);
     cb_frame->prev_frame = frame;
     cb_frame->syscall_cfa = &ret;
     get_teb_data( data )->syscall_frame = cb_frame;
