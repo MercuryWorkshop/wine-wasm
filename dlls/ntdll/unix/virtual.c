@@ -626,6 +626,10 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
     return ptr;
 }
 
+static unsigned int gex_reserve_tries, gex_reserve_ok;
+#ifdef __wasm32__
+static int gex_reserve_limit;
+#endif
 static void reserve_area( void *addr, void *end )
 {
 #ifdef __APPLE__
@@ -685,20 +689,71 @@ static void reserve_area( void *addr, void *end )
 
     if (!size) return;
 
+    gex_reserve_tries++;
     if (anon_mmap_tryfixed( addr, size, PROT_NONE, MAP_NORESERVE ) != MAP_FAILED)
     {
         mmap_add_reserved_area( addr, size );
+        gex_reserve_ok++;
         return;
     }
+#ifdef __wasm32__
+    /* ENOMEM is the end of the address space gex gives this process: past
+     * that address nothing maps, so once the lower half met it the upper
+     * half is not tried. Splitting the space above the limit down to the
+     * allocation granularity was 66930 failing mmap calls in every process,
+     * two to three seconds of a new process's start in the page. */
+    if (errno == ENOMEM) gex_reserve_limit = 1;
+    size = (size / 2) & ~granularity_mask;
+    if (size)
+    {
+        gex_reserve_limit = 0;
+        reserve_area( addr, (char *)addr + size );
+        if (gex_reserve_limit) return;
+        reserve_area( (char *)addr + size, end );
+    }
+#else
     size = (size / 2) & ~granularity_mask;
     if (size)
     {
         reserve_area( addr, (char *)addr + size );
         reserve_area( (char *)addr + size, end );
     }
+#endif
 #endif /* __APPLE__ */
 }
 
+
+#ifdef __wasm32__
+/* reserve_area over only the gaps /proc/self/maps shows in [addr, end):
+ * each failed mmap is a system call that costs about a millisecond in the
+ * page, and bisecting around the program's own mappings was over a
+ * thousand of them per process. A gap that still refuses is bisected as
+ * before. */
+static void reserve_gaps( void *addr, void *end )
+{
+    char line[256];
+    char *pos = addr;
+    FILE *f = fopen( "/proc/self/maps", "r" );
+
+    if (!f)
+    {
+        reserve_area( addr, end );
+        return;
+    }
+    while (fgets( line, sizeof(line), f ))
+    {
+        unsigned long lo, hi;
+        if (sscanf( line, "%lx-%lx", &lo, &hi ) != 2) continue;
+        if (end && (char *)lo >= (char *)end) break;
+        if ((char *)hi <= pos) continue;
+        if ((char *)ROUND_ADDR( lo, granularity_mask ) > pos) reserve_area( pos, ROUND_ADDR( lo, granularity_mask ) );
+        pos = (char *)ROUND_SIZE( 0, hi, granularity_mask );
+    }
+    fclose( f );
+    if (!end || pos < (char *)end) reserve_area( pos, end );
+}
+#define reserve_area reserve_gaps
+#endif
 
 static void mmap_init( const struct preload_info *preload_info )
 {
@@ -755,6 +810,9 @@ static void mmap_init( const struct preload_info *preload_info )
 
 #endif
 }
+#ifdef __wasm32__
+#undef reserve_area
+#endif
 
 
 /***********************************************************************
@@ -3692,12 +3750,18 @@ void virtual_init(void)
 #endif
 
     kernel_writewatch_init();
+    gex_stage( "vi writewatch" );
 
     if (preload_info && *preload_info)
         for (i = 0; (*preload_info)[i].size; i++)
             mmap_add_reserved_area( (*preload_info)[i].addr, (*preload_info)[i].size );
 
     mmap_init( preload_info ? *preload_info : NULL );
+    {
+        char buf[96];
+        snprintf( buf, sizeof(buf), "vi mmap_init (%u reserve tries, %u ok)", gex_reserve_tries, gex_reserve_ok );
+        gex_stage( buf );
+    }
 
     if ((preload = getenv("WINEPRELOADRESERVE")))
     {
@@ -3722,6 +3786,7 @@ void virtual_init(void)
 #endif
     view_block_start = alloc_virtual_heap( size );
     assert( view_block_start != MAP_FAILED );
+    gex_stage( "vi virtual_heap" );
     view_block_end = view_block_start + view_block_size / sizeof(*view_block_start);
     free_ranges = (void *)((char *)view_block_start + view_block_size);
     pages_vprot = (void *)((char *)view_block_start + 2 * view_block_size);

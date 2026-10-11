@@ -1957,6 +1957,24 @@ static ULONG_PTR get_image_address(void)
     return 0;
 }
 
+#ifdef __wasm32__
+/* WINEGEX_STAGES=1: one stderr line per start-up stage, wall-clock
+ * milliseconds, so a new process's start can be laid against its parent's
+ * (where the page's process creation spends its seconds). */
+void gex_stage( const char *what )
+{
+    static int on = -1;
+    struct timespec ts;
+    if (on < 0) on = getenv( "WINEGEX_STAGES" ) != NULL;
+    if (!on) return;
+    clock_gettime( CLOCK_REALTIME, &ts );
+    fprintf( stderr, "stage pid %d %lld.%03ld %s\n", (int)getpid(),
+             (long long)ts.tv_sec % 100000, ts.tv_nsec / 1000000, what );
+}
+#else
+void gex_stage( const char *what ) { }
+#endif
+
 /***********************************************************************
  *           start_main_thread
  */
@@ -1964,8 +1982,10 @@ static void start_main_thread(void)
 {
     TEB *teb = virtual_alloc_first_teb();
 
+    gex_stage( "first teb" );
     dbg_init();
     startup_info_size = server_init_process();
+    gex_stage( "server_init_process" );
     virtual_map_user_shared_data();
     init_cpu_info();
     init_files();
@@ -1975,6 +1995,7 @@ static void start_main_thread(void)
     init_thread_stack( teb, 0, 0, 0 );
     NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
     load_ntdll();
+    gex_stage( "load_ntdll" );
     load_wow64_ntdll( main_image_info.Machine );
     load_apiset_dll();
     server_init_process_done();
@@ -2217,7 +2238,9 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
     main_argc = argc;
     main_argv = argv;
 
+    gex_stage( "__wine_main" );
     init_paths();
+    gex_stage( "init_paths" );
     if (!getenv( "WINELOADERNOEXEC" ) || argc <= 1) check_command_line( argc, argv );
     unsetenv( "WINELOADERNOEXEC" );
 
@@ -2232,7 +2255,9 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
 #endif
 
     virtual_init();
+    gex_stage( "virtual_init" );
     init_environment();
+    gex_stage( "init_environment" );
 
 #ifdef __APPLE__
     apple_main_thread();

@@ -39,6 +39,25 @@
 #endif
 
 #include "main.h"
+#include <time.h>
+
+#ifdef __wasm32__
+/* WINEGEX_STAGES=1: one stderr line per start-up stage, wall-clock
+ * milliseconds, so a new process's start can be laid against its parent's
+ * (where the page's process creation spends its seconds). */
+static void gex_stage( const char *what )
+{
+    static int on = -1;
+    struct timespec ts;
+    if (on < 0) on = getenv( "WINEGEX_STAGES" ) != NULL;
+    if (!on) return;
+    clock_gettime( CLOCK_REALTIME, &ts );
+    fprintf( stderr, "stage pid %d %lld.%03ld %s\n", (int)getpid(),
+             (long long)ts.tv_sec % 100000, ts.tv_nsec / 1000000, what );
+}
+#else
+#define gex_stage(what) do { } while (0)
+#endif
 
 #if defined(__APPLE__) && defined(__x86_64__) && !defined(HAVE_WINE_PRELOADER)
 
@@ -175,7 +194,9 @@ int main( int argc, char *argv[] )
 {
     void *handle;
 
+    gex_stage( "loader main" );
     init_reserved_areas();
+    gex_stage( "loader reserved" );
 
     if ((handle = try_dlopen( get_self_exe() )) ||
         (handle = try_dlopen( argv[0] )))

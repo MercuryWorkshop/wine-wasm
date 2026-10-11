@@ -462,6 +462,7 @@ static int spawn_grandchild( void *arg )
     }
     argv = build_argv( &params->CommandLine, 2 );
 
+    gex_stage( "child exec" );
     exec_wineloader( argv, a->socketfd, a->pe_info );
     _exit(1);
 }
@@ -563,7 +564,9 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
          * intermediate's life on the parent's path), paid twice per Windows
          * process. Nothing is lost by not reparenting: an orphan here goes
          * to pid 1, which is Wine too and reaps nothing either. */
+        gex_stage( "spawn clone" );
         pid = fork_call( spawn_grandchild, &a );
+        gex_stage( "spawn clone returned" );
         if (pid == -1) status = STATUS_NO_MEMORY;
         if (stdin_fd != -1 && stdin_fd != 0) close( stdin_fd );
         if (stdout_fd != -1 && stdout_fd != 1) close( stdout_fd );

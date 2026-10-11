@@ -24,6 +24,8 @@
 #include <pthread.h>
 #include <signal.h>
 #include "unixlib.h"
+
+extern void gex_stage( const char *what );
 #include "wine/unixlib.h"
 #include "wine/server.h"
 #include "wine/list.h"

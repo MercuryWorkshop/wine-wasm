@@ -1693,7 +1693,9 @@ size_t server_init_process(void)
         if (arch && strcmp( arch, "win32" ) && strcmp( arch, "win64" ) && strcmp( arch, "wow64" ))
             fatal_error( "WINEARCH set to invalid value '%s', it must be win32, win64, or wow64.\n", arch );
 
+        gex_stage( "server_connect start" );
         fd_socket = server_connect();
+        gex_stage( "server_connect" );
     }
 
     /* setup the signal mask */
@@ -1739,6 +1741,7 @@ size_t server_init_process(void)
 
     reply_pipe = init_thread_pipe( data );
 
+    gex_stage( "init_first_thread start" );
     SERVER_START_REQ( init_first_thread )
     {
         req->unix_pid    = getpid();
@@ -1765,6 +1768,7 @@ size_t server_init_process(void)
         }
     }
     SERVER_END_REQ;
+    gex_stage( "init_first_thread" );
     close( reply_pipe );
 
     if (ret) server_protocol_error( "init_first_thread failed with status %x\n", ret );
