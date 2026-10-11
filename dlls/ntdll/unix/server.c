@@ -289,11 +289,60 @@ static inline unsigned int wait_reply( int reply_fd, struct __server_request_inf
 LONG __wine_session_writes;
 #endif
 
+/* WINEGEX_REQSTATS=1: per request code, how many server calls this process
+ * made and their round-trip time, on stderr every 10 s (W3.6's measurement:
+ * which requests ntsync would remove). */
+static int reqstats_on = -1;
+static unsigned int reqstats_n[REQ_NB_REQUESTS];
+static unsigned long long reqstats_ns[REQ_NB_REQUESTS];
+static unsigned long long reqstats_t0;
+
+static unsigned long long reqstats_now(void)
+{
+    struct timespec ts;
+    clock_gettime( CLOCK_MONOTONIC, &ts );
+    return ts.tv_sec * 1000000000ull + ts.tv_nsec;
+}
+
+static void reqstats_note( int code, unsigned long long ns )
+{
+    unsigned long long now = reqstats_now();
+    if (code >= 0 && code < REQ_NB_REQUESTS)
+    {
+        __atomic_add_fetch( &reqstats_n[code], 1, __ATOMIC_RELAXED );
+        __atomic_add_fetch( &reqstats_ns[code], ns, __ATOMIC_RELAXED );
+    }
+    if (!reqstats_t0) reqstats_t0 = now;
+    if (now - reqstats_t0 >= 10000000000ull)
+    {
+        char line[4096];
+        int i, len, total = 0;
+        unsigned long long secs = (now - reqstats_t0) / 1000000;
+        reqstats_t0 = now;
+        len = snprintf( line, sizeof(line), "reqstats pid %d over %llu ms:", getpid(), secs );
+        for (i = 0; i < REQ_NB_REQUESTS && len < (int)sizeof(line) - 64; i++)
+        {
+            unsigned int n = __atomic_exchange_n( &reqstats_n[i], 0, __ATOMIC_RELAXED );
+            unsigned long long t = __atomic_exchange_n( &reqstats_ns[i], 0, __ATOMIC_RELAXED );
+            if (!n) continue;
+            total += n;
+            len += snprintf( line + len, sizeof(line) - len, " %d:%u/%lluus", i, n, t / 1000 / n );
+        }
+        snprintf( line + len, sizeof(line) - len, " total %d\n", total );
+        write( 2, line, strlen(line) );
+    }
+}
+
 unsigned int server_call_unlocked( void *req_ptr )
 {
     struct thread_data *data = get_thread_data();
     struct __server_request_info * const req = req_ptr;
     unsigned int ret;
+    unsigned long long t0 = 0;
+
+    if (reqstats_on < 0) reqstats_on = getenv( "WINEGEX_REQSTATS" ) ? 1 : 0;
+    int code = req->u.req.request_header.req;
+    if (reqstats_on) t0 = reqstats_now();
 
 #ifdef __wasm32__
     if (req->u.req.request_header.req != REQ_read_session_data)
@@ -301,7 +350,9 @@ unsigned int server_call_unlocked( void *req_ptr )
 #endif
 
     if ((ret = send_request( data->request_fd, req ))) return ret;
-    return wait_reply( data->reply_fd, req );
+    ret = wait_reply( data->reply_fd, req );
+    if (reqstats_on) reqstats_note( code, reqstats_now() - t0 );
+    return ret;
 }
 
 
