@@ -466,11 +466,6 @@ static int spawn_grandchild( void *arg )
     _exit(1);
 }
 
-static int spawn_child( void *arg )
-{
-    _exit( fork_call( spawn_grandchild, arg ) == -1 );
-}
-
 static int exec_grandchild( void *arg )
 {
     const struct spawn_args *a = arg;
@@ -561,7 +556,18 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
 #ifdef __wasm32__
     {
         struct spawn_args a = { params, socketfd, unixdir, stdin_fd, stdout_fd, -1, -1, winedebug, pe_info };
-        pid = fork_call( spawn_child, &a );
+        /* One clone, which execs, rather than a child that clones the
+         * grandchild and exits so the parent can reap it at once: in the
+         * page each clone is a copy of the address space and a Worker (about
+         * a second to build the image, then two to three seconds of the
+         * intermediate's life on the parent's path), paid twice per Windows
+         * process. Nothing is lost by not reparenting: an orphan here goes
+         * to pid 1, which is Wine too and reaps nothing either. */
+        pid = fork_call( spawn_grandchild, &a );
+        if (pid == -1) status = STATUS_NO_MEMORY;
+        if (stdin_fd != -1 && stdin_fd != 0) close( stdin_fd );
+        if (stdout_fd != -1 && stdout_fd != 1) close( stdout_fd );
+        return status;
     }
     if (0)
 #else
