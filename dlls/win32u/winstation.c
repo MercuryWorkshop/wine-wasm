@@ -25,6 +25,7 @@
 #include <assert.h>
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdlib.h>
 
 #include <pthread.h>
 #include <time.h>
@@ -91,7 +92,7 @@ static char *session_mirror;
 
 /* What this thread read lately: read again only when the process has made
  * a request since (one that can change the session: __wine_session_writes)
- * or the read is older than a millisecond (another process's changes),
+ * or the read is older than session_ttl_us() (another process's changes),
  * so a poll of every key or a run of IsWindow costs one request, not one
  * each. */
 struct session_read { SIZE_T offset, size; LONG writes; ULONGLONG time; };
@@ -103,6 +104,24 @@ static ULONGLONG session_now_us(void)
     struct timespec ts;
     clock_gettime( CLOCK_MONOTONIC, &ts );
     return ts.tv_sec * 1000000ull + ts.tv_nsec / 1000;
+}
+
+/* How long a copy stays good against other processes' changes: 16 ms (a
+ * frame) by default, WINEGEX_SESSION_TTL_US to change. A millisecond was
+ * shorter than the gap between a game's per-frame reads, so nearly every
+ * read was a request: Undertale as a child made 217 a second at 1.4 ms
+ * each, 31% of its time, even with the copy aged from its arrival. A
+ * change this process makes goes through a request and is seen at once
+ * (__wine_session_writes); another process's, within the TTL. */
+static ULONGLONG session_ttl_us(void)
+{
+    static ULONGLONG ttl;
+    if (!ttl)
+    {
+        const char *env = getenv( "WINEGEX_SESSION_TTL_US" );
+        ttl = env && atoi( env ) > 0 ? atoi( env ) : 16000;
+    }
+    return ttl;
 }
 
 void session_mirror_refresh( const volatile void *ptr, SIZE_T size )
@@ -120,7 +139,7 @@ void session_mirror_refresh( const volatile void *ptr, SIZE_T size )
     {
         struct session_read *r = &session_reads[i];
         if (r->size && r->offset <= offset && offset + size <= r->offset + r->size &&
-            r->writes == writes && now - r->time < 1000)
+            r->writes == writes && now - r->time < session_ttl_us())
             return;
     }
     SERVER_START_REQ( read_session_data )
