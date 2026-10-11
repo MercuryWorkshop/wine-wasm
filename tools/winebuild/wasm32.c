@@ -483,6 +483,25 @@ static int spec_arg_matches( enum arg_type t, char p )
     }
 }
 
+/* Parameters that are a one-word struct passed by value. The .spec spells
+ * them as one long, which the counts below cannot tell from an int, but
+ * wasm32 C takes the struct by pointer: passing the value made
+ * GdiAlphaBlend read its BLENDFUNCTION from the address 0x01ff0000, so
+ * every AlphaBlend from i386 code drew nothing. */
+static int word_struct_param( const ORDDEF *odp, unsigned int j )
+{
+    static const struct { const char *name; unsigned int param; } table[] =
+    {
+        { "GdiAlphaBlend", 10 },  /* BLENDFUNCTION */
+    };
+    const char *name = odp->name ? odp->name : get_link_name( odp );
+    unsigned int i;
+
+    for (i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+        if (table[i].param == j && !strcmp( table[i].name, name )) return 1;
+    return 0;
+}
+
 /* One entry adapter, or NULL when the .spec and the code do not agree.
  *
  * The .spec's arguments are what the i386 caller pushed; the wasm
@@ -604,7 +623,8 @@ static const char *output_adapter( const ORDDEF *odp, const char *sig )
                 output( "(int)vabuf" );
             else if (params[j] == 'I' && count[j] == 2)
                 output( "(long long)__gexw_arg64(ctx, %u)", off );
-            else if (count[j] > 1 || !spec_arg_matches( odp->u.func.args[first[j]], params[j] ))
+            else if (count[j] > 1 || !spec_arg_matches( odp->u.func.args[first[j]], params[j] ) ||
+                     word_struct_param( odp, j ))
                 output( "(int)__gexw_argptr(ctx, %u)", off );  /* a struct by value */
             else switch (params[j])
             {
