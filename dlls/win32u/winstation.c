@@ -123,8 +123,6 @@ void session_mirror_refresh( const volatile void *ptr, SIZE_T size )
             r->writes == writes && now - r->time < 1000)
             return;
     }
-    session_reads[session_reads_next++ % ARRAY_SIZE(session_reads)] =
-        (struct session_read){ .offset = offset, .size = size, .writes = writes, .time = now };
     SERVER_START_REQ( read_session_data )
     {
         req->offset = offset;
@@ -133,6 +131,14 @@ void session_mirror_refresh( const volatile void *ptr, SIZE_T size )
         wine_server_call( req );
     }
     SERVER_END_REQ;
+    /* Aged from when the copy arrived, not from when it was asked for: a
+     * round trip takes longer than the millisecond (1-1.5 ms in the page),
+     * so a copy dated before it was already stale on arrival and every
+     * read of a poll loop (a game's key state, per frame) went to the
+     * server again -- 300 requests/s, 44% of Undertale's wall time as a
+     * child process in the page. */
+    session_reads[session_reads_next++ % ARRAY_SIZE(session_reads)] =
+        (struct session_read){ .offset = offset, .size = size, .writes = writes, .time = session_now_us() };
 }
 
 BOOL session_via_requests(void)
