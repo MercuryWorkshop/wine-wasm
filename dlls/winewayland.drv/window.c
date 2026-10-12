@@ -145,8 +145,12 @@ static void wayland_win_data_get_config(struct wayland_win_data *data,
 
     conf->minimized = !!(style & WS_MINIMIZE);
 
-    /* The fullscreen state is implied by the window position and style. */
-    if (data->is_fullscreen)
+    /* A placed window's state is Win32's alone: it is maximized, minimized
+     * or fullscreen by its position and size, which the compositor shows as
+     * they are, so there is no Wayland state to ask for or to agree with. */
+    if (process_wayland.gex_window_placement_manager_v1)
+        conf->minimized = FALSE;
+    else if (data->is_fullscreen)
     {
         if ((style & WS_MAXIMIZE) && (style & WS_CAPTION) == WS_CAPTION)
             window_state |= WAYLAND_SURFACE_CONFIG_STATE_MAXIMIZED;
@@ -181,6 +185,11 @@ static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *dat
     struct wl_region *input_region;
 
     TRACE("hwnd=%p\n", data->hwnd);
+
+    /* Placed by position, every top-level window is a window of its own: a
+     * tooltip, a menu or a taskbar is put where it is and stacked where it
+     * is, not attached to whichever window owns it. */
+    if (process_wayland.gex_window_placement_manager_v1) owner_surface = NULL;
 
     visible = ((NtUserGetWindowLongW(data->hwnd, GWL_STYLE) & WS_VISIBLE) == WS_VISIBLE) &&
                (!(exstyle & WS_EX_LAYERED) || data->layered_attribs_set);
@@ -246,6 +255,13 @@ static void wayland_surface_update_state_toplevel(struct wayland_surface *surfac
           surface->hwnd, surface->window.state,
           processing_config ? "processing" : "current",
           processing_config ? surface->processing.state : surface->current.state);
+
+    /* Placed: Win32 maximizes, minimizes and goes fullscreen by itself. */
+    if (surface->gex_placement)
+    {
+        if (processing_config) surface->processing.processed = TRUE;
+        return;
+    }
 
     /* If we are not processing a compositor requested config, use the
      * window state to determine and update the Wayland state. */
@@ -466,6 +482,11 @@ void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UIN
     else if (wayland_win_data_create_wayland_surface(data, owner_surface))
     {
         wayland_win_data_update_wayland_state(data);
+        if (data->wayland_surface->gex_placement)
+        {
+            wayland_surface_place(data->wayland_surface, !(swp_flags & SWP_NOZORDER));
+            wl_display_flush(process_wayland.wl_display);
+        }
     }
 
     if (owner_data) wayland_win_data_release(owner_data);
@@ -633,6 +654,38 @@ LRESULT WAYLAND_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 }
 
 /**********************************************************************
+ *           WAYLAND_ActivateWindow
+ *
+ * Win32 activated a window: a compositor that places windows gives it the
+ * keyboard, since it gives it nothing on its own -- and the window comes to
+ * the top, as activation brings a window to the top on Windows. Elsewhere a
+ * window manager raises the window it activates and Wine follows; with
+ * placement, Win32's z-order is the one there is.
+ */
+void WAYLAND_ActivateWindow(HWND hwnd, HWND previous)
+{
+    struct wayland_win_data *data;
+    HWND toplevel = NtUserGetAncestor(hwnd, GA_ROOT);
+    BOOL placed = FALSE;
+
+    TRACE("hwnd %p previous %p\n", hwnd, previous);
+
+    if (!process_wayland.gex_window_placement_manager_v1) return;
+    if (!toplevel || !(data = wayland_win_data_get(toplevel))) return;
+    if (data->wayland_surface && data->wayland_surface->gex_placement)
+    {
+        gex_window_placement_v1_activate(data->wayland_surface->gex_placement);
+        wl_display_flush(process_wayland.wl_display);
+        placed = TRUE;
+    }
+    wayland_win_data_release(data);
+
+    if (placed)
+        NtUserSetWindowPos(toplevel, HWND_TOP, 0, 0, 0, 0,
+                           SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
+}
+
+/**********************************************************************
  *           WAYLAND_DesktopWindowProc
  */
 LRESULT WAYLAND_DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
@@ -761,6 +814,10 @@ LRESULT WAYLAND_SysCommand(HWND hwnd, WPARAM wparam, LPARAM lparam, const POINT 
     else
         button_serial = 0;
     pthread_mutex_unlock(&process_wayland.pointer.mutex);
+
+    /* Placed windows are moved and sized by Win32's own loop, as on Windows. */
+    if ((command == SC_MOVE || command == SC_SIZE) && process_wayland.gex_window_placement_manager_v1)
+        return -1;
 
     if (command == SC_MOVE || command == SC_SIZE)
     {

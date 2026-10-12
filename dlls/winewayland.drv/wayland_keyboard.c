@@ -815,7 +815,10 @@ static void keyboard_handle_enter(void *private, struct wl_keyboard *wl_keyboard
          * directly once it's updated to not explicitly deactivate the old
          * foreground window when both the old and new foreground windows
          * are in the same non-current thread. */
-        if (surface->window.managed)
+        /* A placed window has the keyboard because Win32 activated it and
+         * said so (WAYLAND_ActivateWindow): the enter is the answer, not a
+         * request, and one arriving after the next activation would undo it. */
+        if (surface->window.managed && !surface->gex_placement)
             NtUserPostMessage(hwnd, WM_WAYLAND_SET_FOREGROUND, 0, 0);
     }
 
