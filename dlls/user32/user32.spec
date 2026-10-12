@@ -654,7 +654,7 @@
 @ stdcall GetProgmanWindow()
 @ stdcall GetPropA(long str)
 @ stdcall GetPropW(long wstr)
-@ stdcall GetQueueStatus(long) NtUserGetQueueStatus
+@ stdcall GetQueueStatus(long)
 @ stdcall GetRawInputBuffer(ptr ptr long) NtUserGetRawInputBuffer
 @ stdcall GetRawInputData(ptr long ptr ptr long) NtUserGetRawInputData
 @ stdcall GetRawInputDeviceInfoA(ptr long ptr ptr)
@@ -877,7 +877,7 @@
 @ stdcall MonitorFromWindow(long long)
 @ stdcall MoveWindow(long long long long long long) NtUserMoveWindow
 @ stdcall MsgWaitForMultipleObjects(long ptr long long long)
-@ stdcall MsgWaitForMultipleObjectsEx(long ptr long long long) NtUserMsgWaitForMultipleObjectsEx
+@ stdcall MsgWaitForMultipleObjectsEx(long ptr long long long)
 # @ stub NotifyOverlayWindow
 @ stdcall NotifyWinEvent(long long long long) NtUserNotifyWinEvent
 @ stdcall OemKeyScan(long)
@@ -964,7 +964,7 @@
 # @ stub RegisterGhostWindow
 @ stdcall RegisterHotKey(long long long long) NtUserRegisterHotKey
 @ stdcall RegisterLogonProcess(long long)
-# @ stub RegisterMessagePumpHook
+@ stdcall RegisterMessagePumpHook(ptr)
 @ stub RegisterNetworkCapabilities
 @ stdcall RegisterPointerDeviceNotifications(long long)
 # @ stub RegisterPointerInputTarget
@@ -1178,7 +1178,7 @@
 @ stdcall UnregisterClassW(wstr long)
 @ stdcall UnregisterDeviceNotification(long)
 @ stdcall UnregisterHotKey(long long) NtUserUnregisterHotKey
-# @ stub UnregisterMessagePumpHook
+@ stdcall UnregisterMessagePumpHook()
 # @ stub UnregisterPointerInputTarget
 # @ stub UnregisterPointerInputTargetEx
 @ stdcall UnregisterPowerSettingNotification(ptr)
@@ -1217,7 +1217,7 @@
 @ stub WNDPROC_CALLBACK
 @ stdcall WaitForInputIdle(long long)
 # @ stub WaitForRedirectionStartComplete
-@ stdcall WaitMessage() NtUserWaitMessage
+@ stdcall WaitMessage()
 @ stdcall WinHelpA(long str long long)
 @ stdcall WinHelpW(long wstr long long)
 @ stdcall WindowFromDC(long) NtUserWindowFromDC

@@ -704,12 +704,155 @@ BOOL WINAPI PostThreadMessageA( DWORD thread, UINT msg, WPARAM wparam, LPARAM lp
 }
 
 
+/* The message pump hook (RegisterMessagePumpHook): a component that runs
+ * a queue of its own beside the thread's (DUser, which DirectUI is built on)
+ * takes over the functions every message loop goes through, and calls the
+ * real ones it is given. */
+struct user_message_pump_addresses
+{
+    DWORD cbSize;
+    BOOL  (WINAPI *get_message)( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags, BOOL get );
+    BOOL  (WINAPI *wait_message_ex)( UINT mask, DWORD timeout );
+    DWORD (WINAPI *get_queue_status)( UINT flags );
+    DWORD (WINAPI *msg_wait)( DWORD count, const HANDLE *handles, DWORD timeout, DWORD mask, DWORD flags );
+};
+
+typedef BOOL (CALLBACK *MESSAGEPUMPHOOKPROC)( BOOL unregistering, struct user_message_pump_addresses *addresses );
+
+static BOOL WINAPI real_get_message( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags, BOOL get )
+{
+    if (get) return NtUserGetMessage( msg, hwnd, first, last );
+    return NtUserPeekMessage( msg, hwnd, first, last, flags );
+}
+
+static BOOL WINAPI real_wait_message_ex( UINT mask, DWORD timeout )
+{
+    NtUserMsgWaitForMultipleObjectsEx( 0, NULL, timeout, mask, 0 );
+    return TRUE;
+}
+
+static DWORD WINAPI real_get_queue_status( UINT flags )
+{
+    return NtUserGetQueueStatus( flags );
+}
+
+static DWORD WINAPI real_msg_wait( DWORD count, const HANDLE *handles, DWORD timeout, DWORD mask, DWORD flags )
+{
+    return NtUserMsgWaitForMultipleObjectsEx( count, handles, timeout, mask, flags );
+}
+
+static const struct user_message_pump_addresses real_pump =
+{
+    sizeof(real_pump), real_get_message, real_wait_message_ex, real_get_queue_status, real_msg_wait
+};
+static struct user_message_pump_addresses pump = real_pump;
+static MESSAGEPUMPHOOKPROC pump_hook;
+static LONG pump_hook_count;
+
+static CRITICAL_SECTION pump_section;
+static CRITICAL_SECTION_DEBUG pump_section_debug =
+{
+    0, 0, &pump_section,
+    { &pump_section_debug.ProcessLocksList, &pump_section_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": pump_section") }
+};
+static CRITICAL_SECTION pump_section = { &pump_section_debug, -1, 0, 0, 0, 0 };
+
+static inline BOOL pump_hooked(void)
+{
+    return ReadNoFence( &pump_hook_count ) > 0;
+}
+
+/***********************************************************************
+ *		RegisterMessagePumpHook  (USER32.@)
+ */
+BOOL WINAPI RegisterMessagePumpHook( MESSAGEPUMPHOOKPROC hook )
+{
+    BOOL ret = TRUE;
+
+    TRACE( "%p\n", hook );
+
+    if (!hook)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    EnterCriticalSection( &pump_section );
+    if (!pump_hook_count)
+    {
+        struct user_message_pump_addresses addresses = real_pump;
+
+        if (!hook( FALSE, &addresses ) || addresses.cbSize < sizeof(addresses)) ret = FALSE;
+        else
+        {
+            pump = addresses;
+            pump_hook = hook;
+        }
+    }
+    else if (hook != pump_hook) ret = FALSE;  /* (one hook per process, as on Windows) */
+    if (ret) InterlockedIncrement( &pump_hook_count );
+    LeaveCriticalSection( &pump_section );
+    return ret;
+}
+
+/***********************************************************************
+ *		UnregisterMessagePumpHook  (USER32.@)
+ */
+BOOL WINAPI UnregisterMessagePumpHook(void)
+{
+    BOOL ret = FALSE;
+
+    EnterCriticalSection( &pump_section );
+    if (pump_hook_count && !InterlockedDecrement( &pump_hook_count ))
+    {
+        pump_hook( TRUE, NULL );
+        pump = real_pump;
+        pump_hook = NULL;
+        ret = TRUE;
+    }
+    else if (pump_hook_count) ret = TRUE;
+    LeaveCriticalSection( &pump_section );
+    return ret;
+}
+
+/***********************************************************************
+ *		WaitMessage  (USER32.@)
+ */
+BOOL WINAPI WaitMessage(void)
+{
+    if (pump_hooked()) return pump.wait_message_ex( QS_ALLINPUT, INFINITE );
+    return NtUserWaitMessage();
+}
+
+/***********************************************************************
+ *		GetQueueStatus  (USER32.@)
+ */
+DWORD WINAPI GetQueueStatus( UINT flags )
+{
+    if (pump_hooked()) return pump.get_queue_status( flags );
+    return NtUserGetQueueStatus( flags );
+}
+
+/***********************************************************************
+ *		MsgWaitForMultipleObjectsEx  (USER32.@)
+ */
+DWORD WINAPI MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles, DWORD timeout,
+                                          DWORD mask, DWORD flags )
+{
+    if (pump_hooked()) return pump.msg_wait( count, handles, timeout, mask, flags );
+    return NtUserMsgWaitForMultipleObjectsEx( count, handles, timeout, mask, flags );
+}
+
 /***********************************************************************
  *		PeekMessageW  (USER32.@)
  */
 BOOL WINAPI DECLSPEC_HOTPATCH PeekMessageW( MSG *msg_out, HWND hwnd, UINT first, UINT last, UINT flags )
 {
-    if (!NtUserPeekMessage( msg_out, hwnd, first, last, flags )) return FALSE;
+    if (pump_hooked())
+    {
+        if (!pump.get_message( msg_out, hwnd, first, last, flags, FALSE )) return FALSE;
+    }
+    else if (!NtUserPeekMessage( msg_out, hwnd, first, last, flags )) return FALSE;
     if (msg_out->message == WM_UAHINIT) uah_check( TRUE );
     return TRUE;
 }
@@ -732,7 +875,8 @@ BOOL WINAPI DECLSPEC_HOTPATCH PeekMessageA( MSG *msg, HWND hwnd, UINT first, UIN
  */
 BOOL WINAPI DECLSPEC_HOTPATCH GetMessageW( MSG *msg, HWND hwnd, UINT first, UINT last )
 {
-    BOOL ret = NtUserGetMessage( msg, hwnd, first, last );
+    BOOL ret = pump_hooked() ? pump.get_message( msg, hwnd, first, last, PM_REMOVE, TRUE )
+                             : NtUserGetMessage( msg, hwnd, first, last );
     if (ret > 0 && msg->message == WM_UAHINIT) uah_check( TRUE );
     return ret;
 }
@@ -934,8 +1078,7 @@ LPARAM WINAPI GetMessageExtraInfo(void)
 DWORD WINAPI MsgWaitForMultipleObjects( DWORD count, const HANDLE *handles,
                                         BOOL wait_all, DWORD timeout, DWORD mask )
 {
-    return NtUserMsgWaitForMultipleObjectsEx( count, handles, timeout, mask,
-                                              wait_all ? MWMO_WAITALL : 0 );
+    return MsgWaitForMultipleObjectsEx( count, handles, timeout, mask, wait_all ? MWMO_WAITALL : 0 );
 }
 
 
