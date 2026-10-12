@@ -83,9 +83,71 @@ BOOL WINAPI WinStationVirtualOpen( PVOID a, PVOID b, PVOID c )
     return FALSE;
 }
 
+/* The local server: Wine has one session, the console, in which every
+ * process runs. */
+#define LOCAL_SERVER ((HANDLE)(ULONG_PTR)0x5752)
+
+HANDLE WINAPI WinStationOpenServerW( const WCHAR *name )
+{
+    TRACE( "%s\n", debugstr_w(name) );
+    if (name && *name)
+    {
+        FIXME( "remote server %s not supported\n", debugstr_w(name) );
+        SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
+        return NULL;
+    }
+    return LOCAL_SERVER;
+}
+
+BOOLEAN WINAPI WinStationCloseServer( HANDLE server )
+{
+    TRACE( "%p\n", server );
+    return TRUE;
+}
+
+BOOLEAN WINAPI WinStationFreeMemory( void *mem )
+{
+    TRACE( "%p\n", mem );
+    HeapFree( GetProcessHeap(), 0, mem );
+    return TRUE;
+}
+
 BOOLEAN WINAPI WinStationEnumerateW( HANDLE server, PSESSIONIDW *sessionids, ULONG *count )
 {
-    FIXME( "%p %p %p\n", server, sessionids, count );
-    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
+    SESSIONIDW *session;
+
+    TRACE( "%p %p %p\n", server, sessionids, count );
+    if (server && server != LOCAL_SERVER)
+    {
+        SetLastError( ERROR_INVALID_HANDLE );
+        return FALSE;
+    }
+    if (!(session = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*session) )))
+    {
+        SetLastError( ERROR_NOT_ENOUGH_MEMORY );
+        return FALSE;
+    }
+    session->SessionId = NtCurrentTeb()->Peb->SessionId;
+    lstrcpyW( session->WinStationName, L"Console" );
+    session->State = State_Active;
+    *sessionids = session;
+    *count = 1;
+    return TRUE;
+}
+
+/* Connection properties come from a remote desktop client: the console
+ * session has none. */
+BOOLEAN WINAPI WinStationGetConnectionProperty( ULONG session, const GUID *type, void **value )
+{
+    TRACE( "%ld %s %p\n", session, debugstr_guid(type), value );
+    if (value) *value = NULL;
+    SetLastError( ERROR_NOT_FOUND );
     return FALSE;
+}
+
+BOOLEAN WINAPI WinStationFreePropertyValue( void *value )
+{
+    TRACE( "%p\n", value );
+    HeapFree( GetProcessHeap(), 0, value );
+    return TRUE;
 }

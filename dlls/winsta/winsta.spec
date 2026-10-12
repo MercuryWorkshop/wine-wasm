@@ -21,7 +21,7 @@
 @ stub WinStationAutoReconnect
 @ stub WinStationBroadcastSystemMessage
 @ stub WinStationCheckLoopBack
-@ stub WinStationCloseServer
+@ stdcall WinStationCloseServer(long)
 @ stub WinStationConnectA
 @ stub WinStationConnectCallback
 @ stub WinStationConnectW
@@ -33,7 +33,7 @@
 @ stub WinStationEnumerate_IndexedA
 @ stub WinStationEnumerate_IndexedW
 @ stub WinStationFreeGAPMemory
-@ stub WinStationFreeMemory
+@ stdcall WinStationFreeMemory(ptr)
 @ stub WinStationGenerateLicense
 @ stdcall WinStationGetAllProcesses(ptr long ptr ptr)
 @ stub WinStationGetLanAdapterNameA
@@ -47,7 +47,7 @@
 @ stub WinStationNameFromLogonIdW
 @ stub WinStationNtsdDebug
 @ stub WinStationOpenServerA
-@ stub WinStationOpenServerW
+@ stdcall WinStationOpenServerW(wstr)
 @ stdcall WinStationQueryInformationA(ptr long long ptr long ptr)
 @ stdcall WinStationQueryInformationW(ptr long long ptr long ptr)
 @ stub WinStationQueryLicense
@@ -93,3 +93,5 @@
 @ stub _WinStationUpdateSettings
 @ stub _WinStationUpdateUserConfig
 @ stub _WinStationWaitForConnect
+@ stdcall WinStationGetConnectionProperty(long ptr ptr)
+@ stdcall WinStationFreePropertyValue(ptr)
