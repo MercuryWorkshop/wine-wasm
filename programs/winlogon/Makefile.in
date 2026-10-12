@@ -1,5 +1,5 @@
 MODULE    = winlogon.exe
-IMPORTS   = advapi32
+IMPORTS   = user32 advapi32
 
 EXTRADLLFLAGS = -mconsole
 
