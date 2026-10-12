@@ -1210,6 +1210,80 @@ BOOL WINAPI PaintMonitor( HMONITOR monitor, HDC hdc, const RECT *rect )
 }
 
 /*******************************************************************
+ *		GhostWindowFromHungWindow (USER32.@)
+ *
+ * Windows replaces a window that stops responding with a "ghost": not here.
+ */
+HWND WINAPI GhostWindowFromHungWindow( HWND hwnd )
+{
+    return 0;
+}
+
+/*******************************************************************
+ *		HungWindowFromGhostWindow (USER32.@)
+ */
+HWND WINAPI HungWindowFromGhostWindow( HWND hwnd )
+{
+    return 0;
+}
+
+#ifndef TPM_WORKAREA
+#define TPM_WORKAREA 0x10000
+#endif
+
+/*******************************************************************
+ *		CalculatePopupWindowPosition (USER32.@)
+ *
+ * Where a popup of SIZE goes at ANCHOR, aligned by the TPM_ flags, inside
+ * the monitor (or its work area), and off EXCLUDE: beside it, or with
+ * TPM_VERTICAL above or below it, flipped to the other side if it does not
+ * fit, as TrackPopupMenuEx places menus.
+ */
+BOOL WINAPI CalculatePopupWindowPosition( const POINT *anchor, const SIZE *size, UINT flags,
+                                          RECT *exclude, RECT *pos )
+{
+    MONITORINFO mi = { sizeof(mi) };
+    RECT area, ex = { 0 }, r;
+    BOOL avoid;
+    int x, y;
+
+    TRACE( "%s %s %#x %s %p\n", wine_dbgstr_point( anchor ), size ? wine_dbgstr_point( (POINT *)size ) : "(null)",
+           flags, wine_dbgstr_rect( exclude ), pos );
+    if (!anchor || !size || !pos)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    GetMonitorInfoW( MonitorFromPoint( *anchor, MONITOR_DEFAULTTONEAREST ), &mi );
+    area = (flags & TPM_WORKAREA) ? mi.rcWork : mi.rcMonitor;
+    if (exclude) ex = *exclude;
+    avoid = !IsRectEmpty( &ex );
+
+    if (flags & TPM_RIGHTALIGN) x = anchor->x - size->cx;
+    else if (flags & TPM_CENTERALIGN) x = anchor->x - size->cx / 2;
+    else x = anchor->x;
+    if (flags & TPM_BOTTOMALIGN) y = anchor->y - size->cy;
+    else if (flags & TPM_VCENTERALIGN) y = anchor->y - size->cy / 2;
+    else y = anchor->y;
+
+    SetRect( &r, x, y, x + size->cx, y + size->cy );
+    if (avoid && IntersectRect( &r, &r, &ex ))
+    {
+        if (flags & TPM_VERTICAL) y = (flags & TPM_BOTTOMALIGN) ? ex.top - size->cy : ex.bottom;
+        else x = (flags & TPM_RIGHTALIGN) ? ex.left - size->cx : ex.right;
+    }
+
+    /* off the far side: flip to the other side of EXCLUDE, or move back in */
+    if (x + size->cx > area.right) x = (avoid && !(flags & TPM_VERTICAL)) ? ex.left - size->cx : area.right - size->cx;
+    if (x < area.left) x = (avoid && !(flags & TPM_VERTICAL) && ex.right + size->cx <= area.right) ? ex.right : area.left;
+    if (y + size->cy > area.bottom) y = (avoid && (flags & TPM_VERTICAL)) ? ex.top - size->cy : area.bottom - size->cy;
+    if (y < area.top) y = (avoid && (flags & TPM_VERTICAL) && ex.bottom + size->cy <= area.bottom) ? ex.bottom : area.top;
+
+    SetRect( pos, x, y, x + size->cx, y + size->cy );
+    return TRUE;
+}
+
+/*******************************************************************
  *		IsSETEnabled (USER32.@)
  */
 BOOL WINAPI IsSETEnabled(void)
