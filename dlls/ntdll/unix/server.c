@@ -345,6 +345,26 @@ extern int gex_door_call( void *req, int unix_pid, int unix_tid );
 static int door_on = -1;
 static int door_pid;
 static __thread int door_tid;
+
+/* 1: the request ran in a door, its status in *ret */
+static int door_try( struct __server_request_info *req, unsigned int *ret )
+{
+    int r;
+
+    if (door_on < 0)
+    {
+        const char *env = getenv( "WINEGEX_DOOR" );
+        door_on = !(env && !strcmp( env, "0" ));
+        door_pid = getpid();
+    }
+    if (!door_on) return 0;
+    if (!door_tid) door_tid = syscall( SYS_gettid );
+    r = gex_door_call( req, door_pid, door_tid );
+    if (r == 2) abort_thread( 0 );
+    if (r) return 0;
+    *ret = req->u.reply.reply_header.error;
+    return 1;
+}
 #endif
 
 unsigned int server_call_unlocked( void *req_ptr )
@@ -364,24 +384,10 @@ unsigned int server_call_unlocked( void *req_ptr )
 #endif
 
 #ifdef __wasm32__
-    if (door_on < 0)
+    if (door_try( req, &ret ))
     {
-        const char *env = getenv( "WINEGEX_DOOR" );
-        door_on = !(env && !strcmp( env, "0" ));
-        door_pid = getpid();
-    }
-    if (door_on)
-    {
-        int r;
-        if (!door_tid) door_tid = syscall( SYS_gettid );
-        r = gex_door_call( req, door_pid, door_tid );
-        if (r == 0)
-        {
-            ret = req->u.reply.reply_header.error;
-            if (reqstats_on) reqstats_note( code, reqstats_now() - t0 );
-            return ret;
-        }
-        if (r == 2) abort_thread( 0 );
+        if (reqstats_on) reqstats_note( code, reqstats_now() - t0 );
+        return ret;
     }
 #endif
     if ((ret = send_request( data->request_fd, req ))) return ret;
@@ -401,6 +407,17 @@ unsigned int CDECL wine_server_call( void *req_ptr )
     sigset_t old_set;
     unsigned int ret;
 
+#ifdef __wasm32__
+    /* A door call is one host call: no signal handler can run inside it and
+     * reuse a half-written request pipe, so it needs no blocked signals (two
+     * system calls). The pipes still do. */
+    if (!reqstats_on)
+    {
+        if (((struct __server_request_info *)req_ptr)->u.req.request_header.req != REQ_read_session_data)
+            __atomic_add_fetch( &__wine_session_writes, 1, __ATOMIC_SEQ_CST );
+        if (door_try( req_ptr, &ret )) return ret;
+    }
+#endif
     pthread_sigmask( SIG_BLOCK, &server_block_set, &old_set );
     ret = server_call_unlocked( req_ptr );
     pthread_sigmask( SIG_SETMASK, &old_set, NULL );
