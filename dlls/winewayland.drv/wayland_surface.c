@@ -25,6 +25,7 @@
 #include "config.h"
 
 #include <assert.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -357,6 +358,24 @@ void wayland_surface_make_toplevel(struct wayland_surface *surface)
 
     wayland_surface_init_fractional_scale(surface, 1.0);
 
+    if (process_wayland.gex_window_placement_manager_v1)
+    {
+        surface->gex_placement = gex_window_placement_manager_v1_get_placement(
+            process_wayland.gex_window_placement_manager_v1, surface->wl_surface);
+        if (surface->gex_placement)
+        {
+            /* Win32 draws the frame, and other windows name this one by its
+             * handle when they stack above or below it. */
+            gex_window_placement_v1_set_unmanaged(surface->gex_placement);
+            gex_window_placement_v1_set_stack_id(surface->gex_placement,
+                                                 (UINT)(ULONG_PTR)surface->hwnd);
+            surface->placed_at.x = surface->placed_at.y = INT_MIN;
+            surface->placed_layer = 0;
+            surface->placed_below = 0;
+            surface->placed_stacked = FALSE;
+        }
+    }
+
     wl_surface_commit(surface->wl_surface);
     wl_display_flush(process_wayland.wl_display);
 
@@ -365,6 +384,56 @@ void wayland_surface_make_toplevel(struct wayland_surface *surface)
 err:
     wayland_surface_clear_role(surface);
     ERR("Failed to assign toplevel role to wayland surface\n");
+}
+
+/**********************************************************************
+ *          wayland_surface_place
+ *
+ * Tell a compositor that places windows (gex_window_placement_v1) where
+ * the window is and what it is under, as Win32 has it. Position and layer
+ * are sent when they change; the z-order when `restack` says it changed,
+ * or the surface has never been stacked.
+ */
+void wayland_surface_place(struct wayland_surface *surface, BOOL restack)
+{
+    struct gex_window_placement_v1 *placement = surface->gex_placement;
+    DWORD exstyle;
+    UINT layer;
+    HWND above;
+
+    if (!placement) return;
+
+    if (surface->window.rect.left != surface->placed_at.x ||
+        surface->window.rect.top != surface->placed_at.y)
+    {
+        surface->placed_at.x = surface->window.rect.left;
+        surface->placed_at.y = surface->window.rect.top;
+        gex_window_placement_v1_set_position(placement, surface->placed_at.x, surface->placed_at.y);
+    }
+
+    exstyle = NtUserGetWindowLongW(surface->hwnd, GWL_EXSTYLE);
+    layer = (exstyle & WS_EX_TOPMOST) ? GEX_WINDOW_PLACEMENT_V1_LAYER_TOPMOST
+                                      : GEX_WINDOW_PLACEMENT_V1_LAYER_NORMAL;
+    if (layer != surface->placed_layer)
+    {
+        surface->placed_layer = layer;
+        gex_window_placement_v1_set_layer(placement, layer);
+        restack = TRUE;
+    }
+
+    if (restack || !surface->placed_stacked)
+    {
+        /* Directly below the nearest visible window above it in Win32's
+         * z-order, or at the top when there is none. */
+        above = surface->hwnd;
+        while ((above = NtUserGetWindowRelative(above, GW_HWNDPREV)))
+            if (NtUserGetWindowLongW(above, GWL_STYLE) & WS_VISIBLE) break;
+        TRACE("hwnd=%p below %p layer %u at %d,%d\n", surface->hwnd, above, layer,
+              surface->placed_at.x, surface->placed_at.y);
+        gex_window_placement_v1_place_below(placement, (UINT)(ULONG_PTR)above);
+        surface->placed_below = above;
+        surface->placed_stacked = TRUE;
+    }
 }
 
 /**********************************************************************
@@ -435,6 +504,11 @@ void wayland_surface_clear_role(struct wayland_surface *surface)
         break;
 
     case WAYLAND_SURFACE_ROLE_TOPLEVEL:
+        if (surface->gex_placement)
+        {
+            gex_window_placement_v1_destroy(surface->gex_placement);
+            surface->gex_placement = NULL;
+        }
         if (surface->xdg_toplevel_icon)
         {
             xdg_toplevel_icon_manager_v1_set_icon(

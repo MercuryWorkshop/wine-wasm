@@ -41,6 +41,7 @@
 #include "pointer-warp-v1-client-protocol.h"
 #include "alpha-modifier-v1-client-protocol.h"
 #include "fractional-scale-v1-client-protocol.h"
+#include "gex-window-placement-v1-client-protocol.h"
 
 #include "windef.h"
 #include "winbase.h"
@@ -174,6 +175,11 @@ struct wayland
     struct xdg_wm_base *xdg_wm_base;
     struct wl_shm *wl_shm;
     struct wp_viewporter *wp_viewporter;
+    /* gex: the compositor shows windows where Win32 puts them and stacks
+     * them as Win32 does. With it, every top-level window is an xdg_toplevel
+     * placed by position and z-order, and Win32 -- not the compositor --
+     * moves, sizes, maximizes, activates and raises. */
+    struct gex_window_placement_manager_v1 *gex_window_placement_manager_v1;
     struct wl_subcompositor *wl_subcompositor;
     struct wp_fractional_scale_manager_v1 *wp_fractional_scale_manager_v1;
     struct zwp_pointer_constraints_v1 *zwp_pointer_constraints_v1;
@@ -299,6 +305,13 @@ struct wayland_surface
         };
     };
     struct wp_alpha_modifier_surface_v1 *wp_alpha_modifier_surface_v1;
+    /* gex_window_placement_v1, with the toplevel role, and what it was last
+     * told: position, layer, and the window it was put under. */
+    struct gex_window_placement_v1 *gex_placement;
+    POINT placed_at;
+    UINT placed_layer;
+    HWND placed_below;
+    BOOL placed_stacked;
 
     struct wayland_surface_config pending, requested, processing, current;
     BOOL resizing;
@@ -326,6 +339,7 @@ void wayland_output_use_xdg_extension(struct wayland_output *output);
  */
 
 struct wayland_surface *wayland_surface_create(HWND hwnd);
+void wayland_surface_place(struct wayland_surface *surface, BOOL restack);
 void wayland_surface_destroy(struct wayland_surface *surface);
 void wayland_surface_make_toplevel(struct wayland_surface *surface);
 void wayland_surface_make_subsurface(struct wayland_surface *surface,
@@ -454,6 +468,7 @@ RGNDATA *get_region_data(HRGN region);
 
 LRESULT WAYLAND_ClipboardWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 BOOL WAYLAND_ClipCursor(const RECT *clip, BOOL reset);
+void WAYLAND_ActivateWindow(HWND hwnd, HWND previous);
 LRESULT WAYLAND_DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 void WAYLAND_DestroyWindow(HWND hwnd);
 BOOL WAYLAND_SetIMECompositionRect(HWND hwnd, RECT rect);
