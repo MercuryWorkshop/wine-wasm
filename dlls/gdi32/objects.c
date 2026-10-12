@@ -635,6 +635,31 @@ HBITMAP WINAPI CreateDiscardableBitmap( HDC hdc, INT width, INT height )
     return CreateCompatibleBitmap( hdc, width, height );
 }
 
+#define SBA_STOCK 0x00000001
+
+/******************************************************************************
+ *           SetBitmapAttributes (GDI32.@)
+ *
+ * Windows 7's uxtheme marks the bitmaps of a visual style SBA_STOCK. A
+ * stock bitmap is only a protection against an application deleting it,
+ * which a bitmap shared between processes needs on Windows; here every
+ * bitmap stays its process's own, so there is nothing to change.
+ */
+HBITMAP WINAPI SetBitmapAttributes( HBITMAP bitmap, DWORD flags )
+{
+    if ((flags & ~SBA_STOCK) || get_object_type( bitmap ) != NTGDI_OBJ_BITMAP) return 0;
+    return bitmap;
+}
+
+/******************************************************************************
+ *           ClearBitmapAttributes (GDI32.@)
+ */
+HBITMAP WINAPI ClearBitmapAttributes( HBITMAP bitmap, DWORD flags )
+{
+    if ((flags & ~SBA_STOCK) || get_object_type( bitmap ) != NTGDI_OBJ_BITMAP) return 0;
+    return bitmap;
+}
+
 /***********************************************************************
  *           ExtCreateRegion   (GDI32.@)
  *

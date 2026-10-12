@@ -538,6 +538,25 @@ HMENU WINAPI GetMenu( HWND hWnd )
 
 
 /**********************************************************************
+ *         PaintMenuBar    (USER32.@)
+ *
+ * Paint a window's menu bar into its window DC, from left to the window
+ * width less right, top down: the visual style's non-client painting uses
+ * it. Returns the menu bar's height.
+ */
+DWORD WINAPI PaintMenuBar( HWND hwnd, HDC hdc, int left, int right, int top, BOOL active )
+{
+    HMENU menu;
+    RECT window, rect;
+
+    if ((GetWindowLongW( hwnd, GWL_STYLE ) & (WS_CHILD | WS_POPUP)) == WS_CHILD) return 0;
+    if (!(menu = GetMenu( hwnd )) || !IsMenu( menu ) || !GetWindowRect( hwnd, &window )) return 0;
+    SetRect( &rect, left, top, window.right - window.left - right, top + GetSystemMetrics( SM_CYMENU ));
+    return NtUserDrawMenuBarTemp( hwnd, hdc, &rect, menu, NULL );
+}
+
+
+/**********************************************************************
  *         GetSubMenu    (USER32.@)
  */
 HMENU WINAPI GetSubMenu( HMENU menu, INT pos )

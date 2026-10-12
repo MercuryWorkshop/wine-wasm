@@ -1185,6 +1185,30 @@ BOOL WINAPI IsWindow( HWND hwnd )
 }
 
 
+/*******************************************************************
+ *		IsWindowInDestroy (USER32.@)
+ *
+ * Whether DestroyWindow is destroying the window (it has been or is being
+ * sent WM_DESTROY).
+ */
+BOOL WINAPI IsWindowInDestroy( HWND hwnd )
+{
+    return NtUserCallHwnd( hwnd, NtUserCallHwnd_IsWindowInDestroy );
+}
+
+
+/*******************************************************************
+ *		IsServerSideWindow (USER32.@)
+ *
+ * Whether the window procedure runs in the kernel. None does here: every
+ * window procedure, the builtin classes' included, is a client one.
+ */
+BOOL WINAPI IsServerSideWindow( HWND hwnd )
+{
+    return FALSE;
+}
+
+
 /***********************************************************************
  *		GetWindowThreadProcessId (USER32.@)
  */

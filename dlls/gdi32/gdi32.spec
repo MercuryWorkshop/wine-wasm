@@ -36,7 +36,7 @@
 @ stub CheckColorsInGamut
 @ stdcall ChoosePixelFormat(long ptr)
 @ stdcall Chord(long long long long long long long long long)
-# @ stub ClearBitmapAttributes
+@ stdcall ClearBitmapAttributes(long long)
 # @ stub ClearBrushAttributes
 @ stdcall CloseEnhMetaFile(long)
 @ stdcall CloseFigure(long)
@@ -581,7 +581,7 @@
 @ stdcall SelectPalette(long long long)
 @ stdcall SetAbortProc(long ptr)
 @ stdcall SetArcDirection(long long)
-# @ stub SetBitmapAttributes
+@ stdcall SetBitmapAttributes(long long)
 @ stdcall SetBitmapBits(long long ptr) NtGdiSetBitmapBits
 @ stdcall SetBitmapDimensionEx(long long long ptr) NtGdiSetBitmapDimension
 @ stdcall SetBkColor(long long)

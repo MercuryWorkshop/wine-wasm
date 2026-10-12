@@ -794,8 +794,8 @@
 @ stdcall IsProcessDPIAware()
 @ stdcall IsRectEmpty(ptr)
 # @ stub IsSETEnabled
-# @ stub IsServerSideWindow
-# @ stub IsThreadDesktopComposited
+@ stdcall IsServerSideWindow(long)
+@ stdcall IsThreadDesktopComposited()
 # @ stub IsThreadTSFEventAware
 # @ stub IsTopLevelWindow
 @ stdcall IsTouchWindow(long ptr)
@@ -804,7 +804,7 @@
 @ stdcall IsWindow(long)
 @ stdcall IsWindowArranged(long)
 @ stdcall IsWindowEnabled(long)
-# @ stub IsWindowInDestroy
+@ stdcall IsWindowInDestroy(long)
 @ stdcall IsWindowRedirectedForPrint(long)
 @ stdcall IsWindowUnicode(long)
 @ stdcall IsWindowVisible(long)
@@ -897,7 +897,7 @@
 @ stdcall PackDDElParam(long long long)
 @ stdcall PackTouchHitTestingProximityEvaluation(ptr ptr)
 @ stdcall PaintDesktop(long)
-# @ stub PaintMenuBar
+@ stdcall PaintMenuBar(long long long long long long)
 # @ stub PaintMonitor
 @ stdcall PeekMessageA(ptr long long long long)
 @ stdcall PeekMessageW(ptr long long long long)
