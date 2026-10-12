@@ -316,6 +316,14 @@ DECL_HANDLER(d3dkmt_mutex_acquire);
 DECL_HANDLER(d3dkmt_mutex_release);
 DECL_HANDLER(alpc_create_port);
 DECL_HANDLER(read_session_data);
+DECL_HANDLER(create_lpc_port);
+DECL_HANDLER(connect_lpc_port);
+DECL_HANDLER(listen_lpc_port);
+DECL_HANDLER(accept_lpc_port);
+DECL_HANDLER(complete_lpc_port);
+DECL_HANDLER(send_lpc_message);
+DECL_HANDLER(reply_lpc_message);
+DECL_HANDLER(get_lpc_reply);
 
 typedef void (*req_handler)( const void *req, void *reply );
 static const req_handler req_handlers[REQ_NB_REQUESTS] =
@@ -629,6 +637,14 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_d3dkmt_mutex_release,
     (req_handler)req_alpc_create_port,
     (req_handler)req_read_session_data,
+    (req_handler)req_create_lpc_port,
+    (req_handler)req_connect_lpc_port,
+    (req_handler)req_listen_lpc_port,
+    (req_handler)req_accept_lpc_port,
+    (req_handler)req_complete_lpc_port,
+    (req_handler)req_send_lpc_message,
+    (req_handler)req_reply_lpc_message,
+    (req_handler)req_get_lpc_reply,
 };
 
 C_ASSERT( sizeof(abstime_t) == 8 );
@@ -2400,3 +2416,44 @@ C_ASSERT( offsetof(struct read_session_data_request, offset) == 16 );
 C_ASSERT( offsetof(struct read_session_data_request, size) == 24 );
 C_ASSERT( sizeof(struct read_session_data_request) == 32 );
 C_ASSERT( sizeof(struct read_session_data_reply) == 8 );
+C_ASSERT( offsetof(struct create_lpc_port_request, max_info) == 12 );
+C_ASSERT( offsetof(struct create_lpc_port_request, max_msg) == 16 );
+C_ASSERT( sizeof(struct create_lpc_port_request) == 24 );
+C_ASSERT( offsetof(struct create_lpc_port_reply, handle) == 8 );
+C_ASSERT( sizeof(struct create_lpc_port_reply) == 16 );
+C_ASSERT( sizeof(struct connect_lpc_port_request) == 16 );
+C_ASSERT( offsetof(struct connect_lpc_port_reply, wait) == 8 );
+C_ASSERT( offsetof(struct connect_lpc_port_reply, max_msg) == 12 );
+C_ASSERT( sizeof(struct connect_lpc_port_reply) == 16 );
+C_ASSERT( offsetof(struct listen_lpc_port_request, handle) == 12 );
+C_ASSERT( sizeof(struct listen_lpc_port_request) == 16 );
+C_ASSERT( offsetof(struct listen_lpc_port_reply, context) == 8 );
+C_ASSERT( offsetof(struct listen_lpc_port_reply, type) == 16 );
+C_ASSERT( offsetof(struct listen_lpc_port_reply, id) == 20 );
+C_ASSERT( offsetof(struct listen_lpc_port_reply, pid) == 24 );
+C_ASSERT( offsetof(struct listen_lpc_port_reply, tid) == 28 );
+C_ASSERT( sizeof(struct listen_lpc_port_reply) == 32 );
+C_ASSERT( offsetof(struct accept_lpc_port_request, context) == 16 );
+C_ASSERT( offsetof(struct accept_lpc_port_request, id) == 24 );
+C_ASSERT( offsetof(struct accept_lpc_port_request, accept) == 28 );
+C_ASSERT( sizeof(struct accept_lpc_port_request) == 32 );
+C_ASSERT( offsetof(struct accept_lpc_port_reply, handle) == 8 );
+C_ASSERT( sizeof(struct accept_lpc_port_reply) == 16 );
+C_ASSERT( offsetof(struct complete_lpc_port_request, handle) == 12 );
+C_ASSERT( sizeof(struct complete_lpc_port_request) == 16 );
+C_ASSERT( offsetof(struct send_lpc_message_request, handle) == 12 );
+C_ASSERT( offsetof(struct send_lpc_message_request, type) == 16 );
+C_ASSERT( sizeof(struct send_lpc_message_request) == 24 );
+C_ASSERT( offsetof(struct send_lpc_message_reply, wait) == 8 );
+C_ASSERT( offsetof(struct send_lpc_message_reply, id) == 12 );
+C_ASSERT( sizeof(struct send_lpc_message_reply) == 16 );
+C_ASSERT( offsetof(struct reply_lpc_message_request, handle) == 12 );
+C_ASSERT( offsetof(struct reply_lpc_message_request, id) == 16 );
+C_ASSERT( sizeof(struct reply_lpc_message_request) == 24 );
+C_ASSERT( offsetof(struct get_lpc_reply_request, wait) == 12 );
+C_ASSERT( sizeof(struct get_lpc_reply_request) == 16 );
+C_ASSERT( offsetof(struct get_lpc_reply_reply, port) == 8 );
+C_ASSERT( offsetof(struct get_lpc_reply_reply, id) == 12 );
+C_ASSERT( offsetof(struct get_lpc_reply_reply, pid) == 16 );
+C_ASSERT( offsetof(struct get_lpc_reply_reply, tid) == 20 );
+C_ASSERT( sizeof(struct get_lpc_reply_reply) == 24 );

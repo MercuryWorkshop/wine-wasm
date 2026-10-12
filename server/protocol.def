@@ -4345,3 +4345,84 @@ enum inproc_sync_type
 @REPLY
     VARARG(data,bytes);                 /* the bytes, as many as there are */
 @END
+
+
+/* Create an LPC connection port (NtCreatePort) */
+@REQ(create_lpc_port)
+    data_size_t         max_info;       /* max connection info length */
+    data_size_t         max_msg;        /* max message length */
+    VARARG(objattr,object_attributes);  /* object attributes */
+@REPLY
+    obj_handle_t        handle;         /* handle to the connection port */
+@END
+
+
+/* Connect to an LPC connection port (NtConnectPort): then wait on wait and call get_lpc_reply */
+@REQ(connect_lpc_port)
+    VARARG(objattr,object_attributes);  /* the port's name */
+    VARARG(info,bytes);                 /* connection info */
+@REPLY
+    obj_handle_t        wait;           /* signaled when accepted or refused */
+    data_size_t         max_msg;        /* max message length */
+@END
+
+
+/* Receive the next message on an LPC port (STATUS_PENDING: wait on the port) */
+@REQ(listen_lpc_port)
+    obj_handle_t        handle;         /* connection or server communication port */
+@REPLY
+    client_ptr_t        context;        /* the server's context for the sender's connection */
+    unsigned int        type;           /* LPC message type */
+    unsigned int        id;             /* message id */
+    process_id_t        pid;            /* sender */
+    thread_id_t         tid;
+    VARARG(data,bytes);                 /* message data */
+@END
+
+
+/* Accept or refuse a received LPC connection request */
+@REQ(accept_lpc_port)
+    client_ptr_t        context;        /* the server's context for the connection */
+    unsigned int        id;             /* the request's message id */
+    int                 accept;         /* accept it or refuse it */
+    VARARG(info,bytes);                 /* connection info returned to the client */
+@REPLY
+    obj_handle_t        handle;         /* the server communication port */
+@END
+
+
+/* Complete an accepted LPC connection */
+@REQ(complete_lpc_port)
+    obj_handle_t        handle;         /* the server communication port */
+@END
+
+
+/* Send an LPC request or datagram (requests: then wait on wait and call get_lpc_reply) */
+@REQ(send_lpc_message)
+    obj_handle_t        handle;         /* client communication port */
+    unsigned int        type;           /* LPC_REQUEST or LPC_DATAGRAM */
+    VARARG(data,bytes);                 /* message data */
+@REPLY
+    obj_handle_t        wait;           /* requests: signaled when replied to */
+    unsigned int        id;             /* message id */
+@END
+
+
+/* Reply to a received LPC request */
+@REQ(reply_lpc_message)
+    obj_handle_t        handle;         /* a port of the connection */
+    unsigned int        id;             /* the request's message id */
+    VARARG(data,bytes);                 /* reply data */
+@END
+
+
+/* Get what an LPC wait was answered with */
+@REQ(get_lpc_reply)
+    obj_handle_t        wait;           /* the wait from connect_lpc_port or send_lpc_message */
+@REPLY
+    obj_handle_t        port;           /* connections: the client communication port */
+    unsigned int        id;             /* replies: message id */
+    process_id_t        pid;            /* the replier */
+    thread_id_t         tid;
+    VARARG(data,bytes);                 /* reply data, or the accepted connection info */
+@END
