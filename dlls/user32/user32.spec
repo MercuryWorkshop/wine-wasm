@@ -244,7 +244,7 @@
 # @ stub BuildReasonArray
 @ stdcall CalcChildScroll(long long)
 @ stdcall CalcMenuBar(long long long long ptr) CalcMenuBar
-# @ stub CalculatePopupWindowPosition
+@ stdcall CalculatePopupWindowPosition(ptr ptr long ptr ptr)
 @ stdcall CallMsgFilter(ptr long) NtUserCallMsgFilter
 @ stdcall CallMsgFilterA(ptr long) NtUserCallMsgFilter
 @ stdcall CallMsgFilterW(ptr long) NtUserCallMsgFilter
@@ -726,12 +726,12 @@
 @ stdcall GetWindowTextW(long ptr long)
 @ stdcall GetWindowThreadProcessId(long ptr)
 @ stdcall GetWindowWord(long long)
-# @ stub GhostWindowFromHungWindow
+@ stdcall GhostWindowFromHungWindow(long)
 @ stdcall GrayStringA(long long ptr long long long long long long)
 @ stdcall GrayStringW(long long ptr long long long long long long)
 @ stdcall HideCaret(long) NtUserHideCaret
 @ stdcall HiliteMenuItem(long long long long) NtUserHiliteMenuItem
-# @ stub HungWindowFromGhostWindow
+@ stdcall HungWindowFromGhostWindow(long)
 # @ stub IMPGetIMEA
 # @ stub IMPGetIMEW
 # @ stub IMPQueryIMEA
