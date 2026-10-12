@@ -1788,6 +1788,7 @@ DECL_HANDLER(make_process_system)
         LIST_FOR_EACH_ENTRY( thread, &process->thread_list, struct thread, proc_entry )
             release_thread_desktop( thread, 0 );
         process->is_system = 1;
+        if (process->token) token_set_system_logon( process->token );
         if (!--user_processes && !shutdown_stage && master_socket_timeout != TIMEOUT_INFINITE)
             shutdown_timeout = add_timeout_user( master_socket_timeout, server_shutdown_timeout, NULL );
     }

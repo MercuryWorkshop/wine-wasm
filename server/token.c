@@ -84,6 +84,12 @@ static const struct sid high_label_sid = { SID_REVISION, 1, SECURITY_MANDATORY_L
 
 static struct luid prev_luid_value = { 1000, 0 };
 
+/* Logon sessions. Every process runs as the one user, in one interactive
+ * logon session; Wine's system processes (services and their hosts, which
+ * run as LocalSystem on Windows) are in the SYSTEM logon session. */
+static const struct luid system_logon_id = { 0x3e7, 0 };  /* SYSTEM_LUID */
+static struct luid interactive_logon_id;
+
 static const WCHAR token_name[] = {'T','o','k','e','n'};
 
 struct type_descr token_type =
@@ -114,6 +120,7 @@ struct token
     struct acl    *default_dacl;    /* the default DACL to assign to objects created by this user */
     int            impersonation_level; /* impersonation level this token is capable of if non-primary token */
     int            elevation;       /* elevation type */
+    struct luid    logon_id;        /* logon session (TokenStatistics' AuthenticationId) */
 };
 
 struct privilege
@@ -461,6 +468,8 @@ static struct token *create_token( unsigned int primary, unsigned int session_id
         unsigned int i;
 
         allocate_luid( &token->token_id );
+        if (!interactive_logon_id.low_part) allocate_luid( &interactive_logon_id );
+        token->logon_id = interactive_logon_id;
         if (modified_id)
             token->modified_id = *modified_id;
         else
@@ -581,6 +590,7 @@ struct token *token_duplicate( struct token *src_token, unsigned primary,
                           NULL, 0, src_token->default_dacl, modified_id,
                           0, impersonation_level, src_token->elevation );
     if (!token) return token;
+    token->logon_id = src_token->logon_id;
 
     /* copy groups */
     token->primary_group = NULL;
@@ -1062,6 +1072,12 @@ const struct sid *token_get_primary_group( struct token *token )
     return token->primary_group;
 }
 
+/* a system process's token is in the SYSTEM logon session */
+void token_set_system_logon( struct token *token )
+{
+    token->logon_id = system_logon_id;
+}
+
 unsigned int token_get_session_id( struct token *token )
 {
     return token->session_id;
@@ -1535,6 +1551,7 @@ DECL_HANDLER(get_token_info)
             reply->is_elevated = token->elevation == TokenElevationTypeFull;
         reply->group_count = list_count( &token->groups );
         reply->privilege_count = list_count( &token->privileges );
+        reply->logon_id = token->logon_id;
         release_object( token );
     }
 }
