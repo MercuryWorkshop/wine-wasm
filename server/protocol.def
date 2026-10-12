@@ -509,7 +509,9 @@ enum apc_type
     APC_MAP_VIEW_EX,
     APC_UNMAP_VIEW,
     APC_CREATE_THREAD,
-    APC_DUP_HANDLE
+    APC_DUP_HANDLE,
+    APC_READ_VM,
+    APC_WRITE_VM
 };
 
 struct user_apc
@@ -647,6 +649,13 @@ union apc_call
         unsigned int     attributes;   /* object attributes */
         unsigned int     options;      /* duplicate options */
     } dup_handle;
+    struct
+    {
+        enum apc_type    type;         /* APC_READ_VM, APC_WRITE_VM */
+        unsigned int     __pad;
+        client_ptr_t     addr;         /* where in the target process */
+        mem_size_t       size;         /* how many bytes */
+    } vm;
 };
 
 union apc_result
@@ -759,6 +768,12 @@ union apc_result
         enum apc_type    type;      /* APC_BREAK_PROCESS */
         unsigned int     status;    /* status returned by call */
     } break_process;
+    struct
+    {
+        enum apc_type    type;      /* APC_READ_VM, APC_WRITE_VM */
+        unsigned int     status;    /* status returned by call */
+        mem_size_t       size;      /* bytes transferred */
+    } vm;
 };
 
 enum irp_type
@@ -4426,4 +4441,19 @@ enum inproc_sync_type
     process_id_t        pid;            /* the replier */
     thread_id_t         tid;
     VARARG(data,bytes);                 /* reply data, or the accepted connection info */
+@END
+
+
+/* The data an APC carries: what APC_WRITE_VM writes, what APC_READ_VM read */
+@REQ(get_apc_data)
+    obj_handle_t        handle;         /* the APC (the queuer's or the target's handle) */
+@REPLY
+    VARARG(data,bytes);
+@END
+
+
+/* Set the data an APC carries back (APC_READ_VM, in the target) */
+@REQ(set_apc_data)
+    obj_handle_t        handle;         /* the APC (the target's handle) */
+    VARARG(data,bytes);
 @END

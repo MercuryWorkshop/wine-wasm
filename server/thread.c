@@ -92,6 +92,8 @@ struct thread_apc
     int                 executed; /* has it been executed by the client? */
     union apc_call      call;     /* call arguments */
     union apc_result    result;   /* call results once executed */
+    void               *data;     /* data carried (APC_WRITE_VM: to the target; APC_READ_VM: back) */
+    data_size_t         data_size;
 };
 
 static void thread_apc_dump( struct object *obj, int verbose );
@@ -670,6 +672,7 @@ static void thread_apc_destroy( struct object *obj )
 {
     struct thread_apc *apc = (struct thread_apc *)obj;
 
+    free( apc->data );
     if (apc->caller) release_object( apc->caller );
     if (apc->owner)
     {
@@ -698,6 +701,8 @@ static struct thread_apc *create_apc( struct object *owner, const union apc_call
         apc->reserve     = NULL;
         apc->executed    = 0;
         apc->result.type = APC_NONE;
+        apc->data        = NULL;
+        apc->data_size   = 0;
         if (owner) grab_object( owner );
 
         if (!(apc->sync = create_internal_sync( 1, 0 )))
@@ -2154,6 +2159,25 @@ DECL_HANDLER(queue_apc)
     case APC_CREATE_THREAD:
         process = get_process_from_handle( req->handle, PROCESS_CREATE_THREAD );
         break;
+    case APC_READ_VM:
+        process = get_process_from_handle( req->handle, PROCESS_VM_READ );
+        break;
+    case APC_WRITE_VM:
+        process = get_process_from_handle( req->handle, PROCESS_VM_WRITE );
+        if (process && get_req_data_size() - sizeof(*call) != apc->call.vm.size)
+        {
+            release_object( process );
+            process = NULL;
+            set_error( STATUS_INVALID_PARAMETER );
+        }
+        else if (process && apc->call.vm.size &&
+                 !(apc->data = memdup( (const char *)call + sizeof(*call), apc->call.vm.size )))
+        {
+            release_object( process );
+            process = NULL;
+        }
+        else apc->data_size = apc->call.vm.size;
+        break;
     case APC_DUP_HANDLE:
         process = get_process_from_handle( req->handle, PROCESS_DUP_HANDLE );
         if (process && process != current->process)
@@ -2218,6 +2242,37 @@ DECL_HANDLER(get_apc_result)
 
     /* close the handle directly to avoid an extra round-trip */
     close_handle( current->process, req->handle );
+    release_object( apc );
+}
+
+/* get the data an APC carries */
+DECL_HANDLER(get_apc_data)
+{
+    struct thread_apc *apc;
+
+    if (!(apc = (struct thread_apc *)get_handle_obj( current->process, req->handle,
+                                                     0, &thread_apc_ops ))) return;
+    set_reply_data( apc->data, min( apc->data_size, get_reply_max_size() ));
+    release_object( apc );
+}
+
+/* set the data an APC carries back */
+DECL_HANDLER(set_apc_data)
+{
+    struct thread_apc *apc;
+    data_size_t size = get_req_data_size();
+    void *data = NULL;
+
+    if (!(apc = (struct thread_apc *)get_handle_obj( current->process, req->handle,
+                                                     0, &thread_apc_ops ))) return;
+    if (size && !(data = memdup( get_req_data(), size )))
+    {
+        release_object( apc );
+        return;
+    }
+    free( apc->data );
+    apc->data = data;
+    apc->data_size = size;
     release_object( apc );
 }
 
