@@ -514,8 +514,8 @@ NTSTATUS WINAPI NtQueryInformationToken( HANDLE token, TOKEN_INFORMATION_CLASS c
             {
                 statistics->TokenId.LowPart  = reply->token_id.low_part;
                 statistics->TokenId.HighPart = reply->token_id.high_part;
-                statistics->AuthenticationId.LowPart  = 0; /* FIXME */
-                statistics->AuthenticationId.HighPart = 0; /* FIXME */
+                statistics->AuthenticationId.LowPart  = reply->logon_id.low_part;
+                statistics->AuthenticationId.HighPart = reply->logon_id.high_part;
                 statistics->ExpirationTime.u.HighPart = 0x7fffffff;
                 statistics->ExpirationTime.u.LowPart  = 0xffffffff;
                 statistics->TokenType = reply->primary ? TokenPrimary : TokenImpersonation;

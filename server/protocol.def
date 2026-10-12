@@ -3894,6 +3894,7 @@ struct handle_info
     int            is_elevated;   /* is the token elevated as per GetTokenInformation(TokenElevation) */
     int            group_count;   /* the number of groups the token is a member of */
     int            privilege_count; /* the number of privileges the token has */
+    struct luid    logon_id;      /* the token's logon session */
 @END
 
 

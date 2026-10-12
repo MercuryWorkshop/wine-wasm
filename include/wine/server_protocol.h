@@ -5506,7 +5506,8 @@ struct get_token_info_reply
     int            is_elevated;
     int            group_count;
     int            privilege_count;
-    char __pad_52[4];
+    struct luid    logon_id;
+    char __pad_60[4];
 };
 
 

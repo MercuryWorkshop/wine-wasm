@@ -3073,6 +3073,7 @@ static void dump_get_token_info_reply( const struct get_token_info_reply *req )
     fprintf( stderr, ", is_elevated=%d", req->is_elevated );
     fprintf( stderr, ", group_count=%d", req->group_count );
     fprintf( stderr, ", privilege_count=%d", req->privilege_count );
+    dump_luid( ", logon_id=", &req->logon_id );
 }
 
 static void dump_create_linked_token_request( const struct create_linked_token_request *req )
