@@ -990,3 +990,40 @@ BOOL WINAPI UmsThreadYield(void *param)
     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
 }
+
+
+/***********************************************************************
+ *           CheckElevationEnabled   (KERNEL32.@)
+ *
+ * Whether User Account Control is on: it is not here, every process has
+ * the user's full token.
+ */
+DWORD WINAPI CheckElevationEnabled( BOOL *enabled )
+{
+    if (!enabled) return ERROR_INVALID_PARAMETER;
+    *enabled = FALSE;
+    return ERROR_SUCCESS;
+}
+
+/***********************************************************************
+ *           CheckElevation   (KERNEL32.@)
+ *
+ * Whether starting the program needs elevation: never, without UAC.
+ */
+DWORD WINAPI CheckElevation( const WCHAR *name, DWORD *flags, HANDLE token, DWORD *run_level, DWORD *reason )
+{
+    TRACE( "%s %p %p %p %p\n", debugstr_w(name), flags, token, run_level, reason );
+    if (run_level) *run_level = 0;
+    if (reason) *reason = 0;
+    return ERROR_SUCCESS;
+}
+
+/***********************************************************************
+ *           WerpNotifyUseStringResource   (KERNEL32.@)
+ *
+ * Windows Error Reporting's notice of a string resource in use: nothing to do.
+ */
+HRESULT WINAPI WerpNotifyUseStringResource( const WCHAR *str )
+{
+    return S_OK;
+}

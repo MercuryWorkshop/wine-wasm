@@ -793,7 +793,7 @@
 # @ stub IsOneCoreTransformMode
 @ stdcall IsProcessDPIAware()
 @ stdcall IsRectEmpty(ptr)
-# @ stub IsSETEnabled
+@ stdcall IsSETEnabled()
 @ stdcall IsServerSideWindow(long)
 @ stdcall IsThreadDesktopComposited()
 # @ stub IsThreadTSFEventAware
@@ -898,7 +898,7 @@
 @ stdcall PackTouchHitTestingProximityEvaluation(ptr ptr)
 @ stdcall PaintDesktop(long)
 @ stdcall PaintMenuBar(long long long long long long)
-# @ stub PaintMonitor
+@ stdcall PaintMonitor(long long ptr)
 @ stdcall PeekMessageA(ptr long long long long)
 @ stdcall PeekMessageW(ptr long long long long)
 @ stdcall PhysicalToLogicalPoint(long ptr)
@@ -1232,3 +1232,6 @@
 @ varargs wsprintfW(wstr wstr)
 @ stdcall wvsprintfA(ptr str ptr)
 @ stdcall wvsprintfW(ptr wstr ptr)
+
+# Windows 7
+2000 stdcall -noname DesktopHasWatermarkText()

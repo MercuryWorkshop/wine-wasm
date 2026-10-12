@@ -43,6 +43,7 @@
 @ stub WinStationGetTermSrvCountersValue
 @ stub WinStationInstallLicense
 @ stub WinStationIsHelpAssistantSession
+@ stdcall WinStationIsSessionRemoteable(long long ptr)
 @ stub WinStationNameFromLogonIdA
 @ stub WinStationNameFromLogonIdW
 @ stub WinStationNtsdDebug

@@ -1208,12 +1208,14 @@
 @ stdcall TpWaitForWait(ptr long)
 @ stdcall TpWaitForWork(ptr long)
 @ stdcall -ret64 VerSetConditionMask(int64 long long)
+@ stdcall WinSqmAddToStream(ptr long long ptr)
 @ stdcall WinSqmEndSession(long)
 @ stdcall WinSqmIncrementDWORD(long long long)
 @ stdcall WinSqmIsOptedIn()
 @ stdcall WinSqmSetDWORD(ptr long long)
 @ stdcall WinSqmSetIfMaxDWORD(long long long)
 @ stdcall WinSqmStartSession(ptr long long)
+@ stdcall ShipAssert(ptr long)
 @ extern -arch=win32 Wow64Transition
 @ stdcall -private ZwAcceptConnectPort(ptr long ptr long ptr ptr) NtAcceptConnectPort
 @ stdcall -private ZwAccessCheck(ptr long long ptr ptr ptr ptr ptr) NtAccessCheck

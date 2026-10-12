@@ -281,6 +281,36 @@ void WINAPI WinSqmSetIfMaxDWORD(DWORD unk1, DWORD unk2, DWORD unk3)
 }
 
 /******************************************************************************
+ *          WinSqmAddToStream (NTDLL.@)
+ *
+ * Software Quality Metrics: nothing is collected.
+ */
+void WINAPI WinSqmAddToStream( HANDLE session, DWORD datapoint_id, DWORD count, void *entries )
+{
+    TRACE( "(%p, %lu, %lu, %p)\n", session, datapoint_id, count, entries );
+}
+
+/******************************************************************************
+ *          AitLogFeatureUsageByApp (NTDLL.1)
+ *
+ * Application Impact Telemetry: nothing is collected.
+ */
+void WINAPI AitLogFeatureUsageByApp( ULONG feature )
+{
+    TRACE( "(%lu)\n", feature );
+}
+
+/******************************************************************************
+ *          ShipAssert (NTDLL.@)
+ *
+ * An assertion that failed in a retail build of a Windows component.
+ */
+void WINAPI ShipAssert( void *address, ULONG flags )
+{
+    ERR( "assertion failed at %p (%#lx)\n", address, flags );
+}
+
+/******************************************************************************
  *                  EtwEventActivityIdControl (NTDLL.@)
  */
 ULONG WINAPI EtwEventActivityIdControl(ULONG code, GUID *guid)

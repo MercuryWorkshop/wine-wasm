@@ -215,8 +215,8 @@
 @ stdcall CancelTimerQueueTimer(ptr ptr)
 @ stdcall -import CancelWaitableTimer(long)
 @ stdcall -import ChangeTimerQueueTimer(ptr ptr long long)
-# @ stub CheckElevation
-# @ stub CheckElevationEnabled
+@ stdcall CheckElevation(wstr ptr long ptr ptr)
+@ stdcall CheckElevationEnabled(ptr)
 # @ stub CheckForReadOnlyResource
 @ stdcall CheckNameLegalDOS8Dot3A(str ptr long ptr ptr)
 @ stdcall CheckNameLegalDOS8Dot3W(wstr ptr long ptr ptr)
@@ -1650,7 +1650,7 @@
 # @ stub WerpInitiateRemoteRecovery
 # @ stub WerpNotifyLoadStringResource
 # @ stub WerpNotifyLoadStringResourceEx
-# @ stub WerpNotifyUseStringResource
+@ stdcall WerpNotifyUseStringResource(wstr)
 # @ stub WerpStringLookup
 @ stdcall -import WideCharToMultiByte(long long wstr long ptr long ptr ptr)
 @ stdcall WinExec(str long)
