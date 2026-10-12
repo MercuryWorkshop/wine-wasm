@@ -72,6 +72,7 @@ struct door_area
     int calls;             /* 104: door calls served, all time */
     unsigned int thread_start; /* 108: table index of __gex_thread_start */
     int pid;               /* 112: this process's pid */
+    int owner;             /* 116: who holds the lock: a client's tid, or -1 the pump (diagnostics) */
 };
 
 #define DOOR_VERSION 1
@@ -171,6 +172,12 @@ void door_init(void)
     gex_door_publish( a );
 }
 
+/* door calls served so far (the pump: did any run while it waited?) */
+unsigned int door_calls(void)
+{
+    return door_area ? __atomic_load_n( (unsigned int *)&door_area->calls, __ATOMIC_ACQUIRE ) : 0;
+}
+
 /* the kick pipe's read end, for the pump's epoll set (-1 without doors) */
 int door_kick_fd(void)
 {
@@ -210,7 +217,11 @@ void door_pump_lock(void)
     for (;;)
     {
         int v = 0;
-        if (__atomic_compare_exchange_n( &a->lock, &v, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED )) return;
+        if (__atomic_compare_exchange_n( &a->lock, &v, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED ))
+        {
+            a->owner = -1;
+            return;
+        }
         door_serve_proxy();
         if (v == 1 && !__atomic_compare_exchange_n( &a->lock, &v, 2, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED ))
             continue;

@@ -152,6 +152,7 @@ extern timeout_t door_earliest_deadline( void );
 extern void door_init( void );
 extern int door_kick_fd( void );
 extern void door_kicked( void );
+extern unsigned int door_calls( void );
 extern void door_pump_lock( void );
 extern void door_pump_unlock( long long wake );
 #endif

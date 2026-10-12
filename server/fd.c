@@ -551,12 +551,16 @@ static inline void main_loop_epoll(void)
 
     while (active_users)
     {
+#ifdef __wasm32__
+        unsigned int door_calls_before;
+#endif
         timeout = get_next_timeout( &ts );
 
         if (!active_users) break;  /* last user removed by a timeout */
         if (epoll_fd == -1) break;  /* an error occurred with epoll */
 
 #ifdef __wasm32__
+        door_calls_before = door_calls();
         door_pump_unlock( timeout == -1 ? -1 : monotonic_time + (long long)timeout * 10000 );
 #endif
 
@@ -575,6 +579,15 @@ static inline void main_loop_epoll(void)
         for (i = 0; i < ret; i++)
             if (events[i].data.u32 == ~0u) door_kicked();
         door_pump_lock();
+        /* Requests ran in doors while this waited: the events may name fds
+         * they closed (a poll user number since given to another fd), so
+         * they are asked for again, now that nothing else runs. */
+        if (door_calls() != door_calls_before)
+        {
+            ret = epoll_wait( epoll_fd, events, ARRAY_SIZE( events ), 0 );
+            for (i = 0; i < ret; i++)
+                if (events[i].data.u32 == ~0u) door_kicked();
+        }
 #endif
         set_current_time();
 
