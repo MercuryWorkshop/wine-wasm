@@ -134,7 +134,8 @@ static BOOL AddServiceElem(LPWSTR service_name,
             KEY_READ, &service_hkey);
     if (ret != ERROR_SUCCESS)
     {
-        WINE_ERR("cannot open key %s, err=%ld\n",
+        /* not installed: the caller leaves it out of its group */
+        WINE_TRACE("cannot open key %s, err=%ld\n",
                 wine_dbgstr_w(service_param_key), ret);
         goto cleanup;
     }
@@ -249,12 +250,12 @@ static BOOL StartGroupServices(LPWSTR services)
     service_name = services;
     while (*service_name != '\0')
     {
-        if (!AddServiceElem(service_name, &service_table[service_count]))
-        {
-            HeapFree(GetProcessHeap(), 0, service_table);
-            return FALSE;
-        }
-        ++service_count;
+        /* a group lists services that need not all be installed (Windows 7's
+         * netsvcs lists dozens): those are left out of the table */
+        if (AddServiceElem(service_name, &service_table[service_count]))
+            ++service_count;
+        else
+            WINE_WARN("service %s not available\n", wine_dbgstr_w(service_name));
         service_name = service_name + lstrlenW(service_name);
         ++service_name;
     }
