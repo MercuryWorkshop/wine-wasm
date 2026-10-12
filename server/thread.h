@@ -112,6 +112,9 @@ extern struct thread *get_thread_from_id( thread_id_t id );
 extern struct thread *get_thread_from_handle( obj_handle_t handle, unsigned int access );
 extern struct thread *get_thread_from_tid( int tid );
 extern struct thread *get_thread_from_pid( int pid );
+#ifdef __wasm32__
+extern struct thread *door_find_thread( int unix_pid, int unix_tid );
+#endif
 extern struct thread *get_wait_queue_thread( struct wait_queue_entry *entry );
 extern enum select_opcode get_wait_queue_select_op( struct wait_queue_entry *entry );
 extern client_ptr_t get_wait_queue_key( struct wait_queue_entry *entry );

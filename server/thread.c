@@ -180,6 +180,9 @@ static const struct fd_ops thread_fd_ops =
 };
 
 static struct list thread_list = LIST_INIT(thread_list);
+#ifdef __wasm32__
+static struct thread *door_last;  /* door_find_thread's last answer */
+#endif
 
 #if defined(__linux__) && defined(RLIMIT_NICE)
 static int nice_limit;
@@ -605,6 +608,9 @@ static void thread_destroy( struct object *obj )
     assert( obj->ops == &thread_ops );
 
     list_remove( &thread->entry );
+#ifdef __wasm32__
+    if (door_last == thread) door_last = NULL;
+#endif
     cleanup_thread( thread );
     release_object( thread->process );
     if (thread->id) free_ptid( thread->id );
@@ -724,6 +730,26 @@ struct thread *get_thread_from_tid( int tid )
     }
     return NULL;
 }
+
+#ifdef __wasm32__
+/* the thread a door call comes from (door.c): its Unix pid and tid */
+struct thread *door_find_thread( int unix_pid, int unix_tid )
+{
+    struct thread *thread, *last = door_last;
+
+    if (last && last->unix_tid == unix_tid && last->unix_pid == unix_pid && last->state != TERMINATED &&
+        last->reply_fd)
+        return last;
+    LIST_FOR_EACH_ENTRY( thread, &thread_list, struct thread, entry )
+    {
+        if (thread->unix_tid == unix_tid && thread->unix_pid == unix_pid && thread->state != TERMINATED &&
+            thread->reply_fd)
+            return door_last = thread;
+    }
+    return NULL;
+}
+
+#endif
 
 /* find a thread from a Unix pid */
 struct thread *get_thread_from_pid( int pid )

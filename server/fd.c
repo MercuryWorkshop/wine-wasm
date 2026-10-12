@@ -539,12 +539,26 @@ static inline void main_loop_epoll(void)
 
     if (epoll_fd == -1) return;
 
+#ifdef __wasm32__
+    /* gex door calls (door.c): the kick pipe in the set, by a user number
+     * no fd has; the door lock held but for the wait */
+    if (door_kick_fd() != -1)
+    {
+        struct epoll_event ev = { .events = EPOLLIN, .data.u32 = ~0u };
+        epoll_ctl( epoll_fd, EPOLL_CTL_ADD, door_kick_fd(), &ev );
+    }
+#endif
+
     while (active_users)
     {
         timeout = get_next_timeout( &ts );
 
         if (!active_users) break;  /* last user removed by a timeout */
         if (epoll_fd == -1) break;  /* an error occurred with epoll */
+
+#ifdef __wasm32__
+        door_pump_unlock( timeout == -1 ? -1 : monotonic_time + (long long)timeout * 10000 );
+#endif
 
 #ifdef HAVE_EPOLL_PWAIT2
         if (!failed_epoll_pwait2)
@@ -557,12 +571,20 @@ static inline void main_loop_epoll(void)
 #endif
             ret = epoll_wait( epoll_fd, events, ARRAY_SIZE( events ), timeout );
 
+#ifdef __wasm32__
+        for (i = 0; i < ret; i++)
+            if (events[i].data.u32 == ~0u) door_kicked();
+        door_pump_lock();
+#endif
         set_current_time();
 
         /* put the events into the pollfd array first, like poll does */
         for (i = 0; i < ret; i++)
         {
             int user = events[i].data.u32;
+#ifdef __wasm32__
+            if (user == -1) continue;  /* the door's kick */
+#endif
             pollfd[user].revents = events[i].events;
         }
 
@@ -570,6 +592,9 @@ static inline void main_loop_epoll(void)
         for (i = 0; i < ret; i++)
         {
             int user = events[i].data.u32;
+#ifdef __wasm32__
+            if (user == -1) continue;
+#endif
             if (pollfd[user].revents) fd_poll_event( poll_users[user], pollfd[user].revents );
         }
     }
@@ -915,6 +940,28 @@ static int get_next_timeout( struct timespec *ts )
     if (ret > INT_MAX) ret = INT_MAX;
     return ret;
 }
+
+#ifdef __wasm32__
+/* the earliest timeout, in monotonic time, -1 for none (door.c: whether a
+ * door call armed one before the pump's wait ends) */
+timeout_t door_earliest_deadline(void)
+{
+    timeout_t ret = -1;
+    struct list *ptr;
+
+    if ((ptr = list_head( &abs_timeout_list )) != NULL)
+    {
+        struct timeout_user *timeout = LIST_ENTRY( ptr, struct timeout_user, entry );
+        ret = timeout->when - current_time + monotonic_time;
+    }
+    if ((ptr = list_head( &rel_timeout_list )) != NULL)
+    {
+        struct timeout_user *timeout = LIST_ENTRY( ptr, struct timeout_user, entry );
+        if (ret == -1 || -timeout->when < ret) ret = -timeout->when;
+    }
+    return ret;
+}
+#endif
 
 /* server main poll() loop */
 void main_loop(void)

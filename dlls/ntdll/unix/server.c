@@ -333,6 +333,20 @@ static void reqstats_note( int code, unsigned long long ns )
     }
 }
 
+#ifdef __wasm32__
+/* gex door calls (gex docs/wineserver-kernel.md): the request runs in the
+ * server memory on this thread, no pipes. 0: done, the reply in place; 1:
+ * no door (not published to this Worker yet, too large, or the server does
+ * not know this thread yet): use the pipes; 2: the thread died in the
+ * request, as a closed reply pipe. WINEGEX_DOOR=0 turns it off. */
+__attribute__((import_module("gex"), import_name("door_call")))
+extern int gex_door_call( void *req, int unix_pid, int unix_tid );
+
+static int door_on = -1;
+static int door_pid;
+static __thread int door_tid;
+#endif
+
 unsigned int server_call_unlocked( void *req_ptr )
 {
     struct thread_data *data = get_thread_data();
@@ -349,6 +363,27 @@ unsigned int server_call_unlocked( void *req_ptr )
         __atomic_add_fetch( &__wine_session_writes, 1, __ATOMIC_SEQ_CST );
 #endif
 
+#ifdef __wasm32__
+    if (door_on < 0)
+    {
+        const char *env = getenv( "WINEGEX_DOOR" );
+        door_on = !(env && !strcmp( env, "0" ));
+        door_pid = getpid();
+    }
+    if (door_on)
+    {
+        int r;
+        if (!door_tid) door_tid = syscall( SYS_gettid );
+        r = gex_door_call( req, door_pid, door_tid );
+        if (r == 0)
+        {
+            ret = req->u.reply.reply_header.error;
+            if (reqstats_on) reqstats_note( code, reqstats_now() - t0 );
+            return ret;
+        }
+        if (r == 2) abort_thread( 0 );
+    }
+#endif
     if ((ret = send_request( data->request_fd, req ))) return ret;
     ret = wait_reply( data->reply_fd, req );
     if (reqstats_on) reqstats_note( code, reqstats_now() - t0 );

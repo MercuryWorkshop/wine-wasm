@@ -225,10 +225,29 @@ void write_reply( struct thread *thread )
         fatal_protocol_error( thread, "reply write: %s\n", strerror( errno ));
 }
 
+#ifdef __wasm32__
+/* a door call's reply goes here (door.c), not to the reply pipe */
+static char *door_reply;
+static int door_replied;
+#endif
+
 /* send a reply to the current thread */
 static void send_reply( union generic_reply *reply )
 {
     int ret;
+
+#ifdef __wasm32__
+    if (door_reply)
+    {
+        memcpy( door_reply, reply, sizeof(*reply) );
+        if (current->reply_size)
+            memcpy( door_reply + sizeof(*reply), current->reply_data, current->reply_size );
+        door_replied = 1;
+        free( current->reply_data );
+        current->reply_data = NULL;
+        return;
+    }
+#endif
 
     if (!current->reply_size)
     {
@@ -351,6 +370,30 @@ error:
     else if (errno != EWOULDBLOCK && (EWOULDBLOCK == EAGAIN || errno != EAGAIN))
         fatal_protocol_error( thread, "read: %s\n", strerror( errno ));
 }
+
+#ifdef __wasm32__
+/* Run the request at buf (a door call, door.c): its header, then its
+ * data; the reply goes after them, 8-aligned. Returns the reply's offset,
+ * or ~1u if the request left no reply (the thread died in it). */
+unsigned int door_run_request( struct thread *thread, char *buf )
+{
+    unsigned int req_size, reply_off;
+
+    memcpy( &thread->req, buf, sizeof(thread->req) );
+    req_size = thread->req.request_header.request_size;
+    reply_off = (sizeof(thread->req) + req_size + 7) & ~7u;
+    thread->req_toread = 0;
+    thread->req_data = req_size ? buf + sizeof(thread->req) : NULL;
+    door_reply = buf + reply_off;
+    door_replied = 0;
+    grab_object( thread );
+    call_req_handler( thread );
+    thread->req_data = NULL;
+    release_object( thread );
+    door_reply = NULL;
+    return door_replied ? reply_off : ~1u;
+}
+#endif
 
 /* receive a file descriptor on the process socket */
 int receive_fd( struct process *process )

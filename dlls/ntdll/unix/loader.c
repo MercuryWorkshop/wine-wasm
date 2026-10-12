@@ -548,43 +548,38 @@ static int exec_wineserver( pid_t *pid, char **argv )
  * Start a new wine server.
  */
 #ifdef __wasm32__
-/* wasm32 (gex): wineserver is linked into the loader (server/wasm32_inproc.h)
- * and runs as a thread of this process, sharing its memory: what it maps
- * MAP_SHARED, the client sees. Its own working directory (it lives in the
- * server directory), the same descriptors. */
-extern int wineserver_main( int argc, char *argv[] );
-static pthread_t wineserver_thread;
-static int wineserver_state;  /* 0 starting, 1 ready, 2 + exit status: ended */
+/* wasm32 (gex): wineserver is its own process again, on the server memory
+ * every Worker of the session can map; clients call into it directly (door
+ * calls, server.c; gex docs/wineserver-kernel.md). It runs in the foreground
+ * (-f: it never forks, which would make it fork-instrumented) and says it is
+ * up with a byte on the descriptor WINEGEX_SERVER_READY names. */
+void *wineserver_user_shared_data;  /* (none in this process: virtual.c gives every process its own USD) */
+static BOOL wineserver_started;
 
-void wineserver_ready(void)
+/* win32u: the session is never this process's own memory */
+const void *wineserver_session_data( UINT64 offset, UINT64 *size )
 {
-    __atomic_store_n( &wineserver_state, 1, __ATOMIC_SEQ_CST );
+    return NULL;
 }
 
-void wineserver_exit( int status )
+extern int clone( int (*func)(void *), void *stack, int flags, void *arg, ... );
+
+struct server_spawn { char *path; char *argv[4]; int ready_fd; };
+
+static int exec_server_child( void *arg )
 {
-    if (pthread_equal( pthread_self(), wineserver_thread ))
-    {
-        __atomic_store_n( &wineserver_state, 2 + (status & 0xff), __ATOMIC_SEQ_CST );
-        pthread_exit( NULL );
-    }
-    exit( status );
+    struct server_spawn *s = arg;
+    char env[32];
+
+    snprintf( env, sizeof(env), "%d", s->ready_fd );
+    setenv( "WINEGEX_SERVER_READY", env, 1 );
+    setsid();
+    execv( s->path, s->argv );
+    _exit( 1 );
 }
 
-int wineserver_no_fork(void)
-{
-    errno = ENOSYS;
-    return -1;
-}
-
-int wineserver_sigaction( int sig, const struct sigaction *act, struct sigaction *old )
-{
-    if (sig == SIGCHLD) return 0;
-    return sigaction( sig, act, old );
-}
-
-/* Ask the server this process hosts, if any, to save the registry (its
- * flush_key does, under wasm32): it ends with the process. */
+/* Ask the server to save the registry when the process that started it
+ * exits (gexc ends the session with it). */
 void wineserver_flush(void)
 {
     static const WCHAR machineW[] = {'\\','R','e','g','i','s','t','r','y','\\','M','a','c','h','i','n','e',0};
@@ -592,7 +587,7 @@ void wineserver_flush(void)
     OBJECT_ATTRIBUTES attr;
     HANDLE key;
 
-    if (__atomic_load_n( &wineserver_state, __ATOMIC_SEQ_CST ) != 1) return;
+    if (!wineserver_started) return;
     init_unicode_string( &name, machineW );
     InitializeObjectAttributes( &attr, &name, 0, 0, NULL );
     if (NtOpenKey( &key, KEY_READ, &attr )) return;
@@ -600,34 +595,38 @@ void wineserver_flush(void)
     NtClose( key );
 }
 
-static void *wineserver_start( void *arg )
-{
-    static char name[] = "wineserver", fg[] = "-f", dbg[] = "-d";
-    char *argv[] = { name, fg, arg ? dbg : NULL, NULL };
-
-    syscall( SYS_unshare, CLONE_FS );
-    wineserver_exit( wineserver_main( arg ? 3 : 2, argv ));
-    return NULL;
-}
-
 void start_server( BOOL debug )
 {
     static BOOL started;
-    pthread_attr_t attr;
-    int state;
+    static char name[] = "wineserver", fg[] = "-f", dbg[] = "-d";
+    struct server_spawn s = { NULL, { name, fg, debug ? dbg : NULL, NULL } };
+    const size_t stack_size = 256 * 1024;
+    char *stack, c;
+    int fds[2], ret;
+    pid_t pid;
 
     if (started) return;
-    wineserver_state = 0;
-    pthread_attr_init( &attr );
-    pthread_attr_setstacksize( &attr, 1024 * 1024 );
-    if (pthread_create( &wineserver_thread, &attr, wineserver_start, debug ? (void *)1 : NULL ))
-        fatal_error( "could not start wineserver\n" );
-    pthread_attr_destroy( &attr );
-    while (!(state = __atomic_load_n( &wineserver_state, __ATOMIC_SEQ_CST ))) usleep( 1000 );
-    if (state == 1) { started = TRUE; return; }
-    pthread_join( wineserver_thread, NULL );
-    if (state == 2 + 2) return;  /* server lock held by someone else, will retry later */
-    exit( state - 2 ? state - 2 : 1 );
+    started = TRUE;
+    if (!(s.path = getenv( "WINESERVER" ))) s.path = build_path( ntdll_dir, "wineserver" );
+    if (pipe( fds ) == -1) fatal_error( "could not start wineserver: pipe\n" );
+    fcntl( fds[0], F_SETFD, FD_CLOEXEC );
+    s.ready_fd = fds[1];
+    stack = mmap( NULL, stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0 );
+    if (stack == MAP_FAILED) fatal_error( "could not start wineserver: stack\n" );
+    pid = clone( exec_server_child, stack + stack_size, CLONE_VFORK | SIGCHLD, &s );
+    munmap( stack, stack_size );
+    close( fds[1] );
+    if (pid == -1) fatal_error( "could not start wineserver %s\n", s.path );
+    while ((ret = read( fds[0], &c, 1 )) == -1 && errno == EINTR);
+    close( fds[0] );
+    if (ret == 1) { wineserver_started = TRUE; return; }
+    /* it exited first: another server holds the lock (status 2), so the
+     * connection will retry; anything else is fatal, as upstream */
+    {
+        int status;
+        if (waitpid( pid, &status, 0 ) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 2) return;
+    }
+    fatal_error( "wineserver %s failed to start\n", s.path );
 }
 #else
 void start_server( BOOL debug )
