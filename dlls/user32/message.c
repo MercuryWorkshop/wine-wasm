@@ -758,9 +758,11 @@ static CRITICAL_SECTION_DEBUG pump_section_debug =
 };
 static CRITICAL_SECTION pump_section = { &pump_section_debug, -1, 0, 0, 0, 0 };
 
+/* the hook applies to the threads that registered it (each DUser thread
+ * does, as it initialises), as on Windows: the others run the real functions */
 static inline BOOL pump_hooked(void)
 {
-    return ReadNoFence( &pump_hook_count ) > 0;
+    return ReadNoFence( &pump_hook_count ) > 0 && NtUserGetThreadInfo()->pump_hook_count;
 }
 
 /***********************************************************************
@@ -790,7 +792,11 @@ BOOL WINAPI RegisterMessagePumpHook( MESSAGEPUMPHOOKPROC hook )
         }
     }
     else if (hook != pump_hook) ret = FALSE;  /* (one hook per process, as on Windows) */
-    if (ret) InterlockedIncrement( &pump_hook_count );
+    if (ret)
+    {
+        NtUserGetThreadInfo()->pump_hook_count++;
+        InterlockedIncrement( &pump_hook_count );
+    }
     LeaveCriticalSection( &pump_section );
     return ret;
 }
@@ -800,17 +806,21 @@ BOOL WINAPI RegisterMessagePumpHook( MESSAGEPUMPHOOKPROC hook )
  */
 BOOL WINAPI UnregisterMessagePumpHook(void)
 {
+    struct ntuser_thread_info *info = NtUserGetThreadInfo();
     BOOL ret = FALSE;
 
     EnterCriticalSection( &pump_section );
-    if (pump_hook_count && !InterlockedDecrement( &pump_hook_count ))
+    if (info->pump_hook_count && pump_hook_count)
     {
-        pump_hook( TRUE, NULL );
-        pump = real_pump;
-        pump_hook = NULL;
+        info->pump_hook_count--;
+        if (!InterlockedDecrement( &pump_hook_count ))
+        {
+            pump_hook( TRUE, NULL );
+            pump = real_pump;
+            pump_hook = NULL;
+        }
         ret = TRUE;
     }
-    else if (pump_hook_count) ret = TRUE;
     LeaveCriticalSection( &pump_section );
     return ret;
 }
