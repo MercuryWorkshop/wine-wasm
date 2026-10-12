@@ -296,6 +296,19 @@ static void call_req_handler( struct thread *thread )
     current->reply_size = 0;
     clear_error();
     memset( &reply, 0, sizeof(reply) );
+#ifdef __wasm32__
+    {
+        /* WINEGEX_SERVER_DIE=N: the server dies at its Nth request (a leg:
+         * its clients must end, as when wineserver dies) */
+        static int die_at = -1, served;
+        if (die_at < 0) die_at = getenv( "WINEGEX_SERVER_DIE" ) ? atoi( getenv( "WINEGEX_SERVER_DIE" ) ) : 0;
+        if (die_at && ++served == die_at)
+        {
+            fprintf( stderr, "wineserver: dies at request %d (WINEGEX_SERVER_DIE)\n", served );
+            _exit( 1 );
+        }
+    }
+#endif
 
     if (debug_level) trace_request();
 

@@ -74,6 +74,8 @@ struct door_area
     int pid;               /* 112: this process's pid */
     int owner;             /* 116: who holds the lock: a client's tid, or -1 the pump */
     int owner_pid;         /* 120: and its pid (the host: a Worker ended inside a door) */
+    int poisoned;          /* 124: a door call died midway (a trap, a Worker stopped
+                            * inside one): the server's state cannot be trusted */
 };
 
 #define DOOR_VERSION 1
@@ -125,6 +127,8 @@ static int door_instance_ready( void *arg )
 
 unsigned int __wine_door_dispatch( int unix_pid, int unix_tid, long long now, long long boot );
 
+static int door_trap_at;
+
 /* proxied system calls, by number, for the census (WINEGEX_DOOR_STATS) */
 static int door_stats[512];
 
@@ -138,6 +142,7 @@ void door_init(void)
     char *stack;
 
     if (getenv( "WINEGEX_DOOR" ) && !strcmp( getenv( "WINEGEX_DOOR" ), "0" )) return;
+    if (getenv( "WINEGEX_DOOR_TRAP" )) door_trap_at = atoi( getenv( "WINEGEX_DOOR_TRAP" ) );
     if (pipe2( fds, O_CLOEXEC | O_NONBLOCK ) == -1) return;
     if (!(a->buf = (unsigned int)(unsigned long)malloc( DOOR_BUF_SIZE ))) return;
     if (!(stack = malloc( DOOR_STACK_SIZE ))) return;
@@ -225,6 +230,14 @@ void door_pump_lock(void)
         if (__atomic_compare_exchange_n( &a->lock, &v, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED ))
         {
             a->owner = -1;
+            /* A handler cut off midway cannot be repaired: the server goes,
+             * as when wineserver dies, and its clients see their pipes close. */
+            if (__atomic_load_n( &a->poisoned, __ATOMIC_ACQUIRE ))
+            {
+                fprintf( stderr, "wineserver: door: a door call died midway (pid %d tid %d); the server exits\n",
+                         a->owner_pid, a->poisoned );
+                _exit( 1 );
+            }
             return;
         }
         door_serve_proxy();
@@ -261,6 +274,9 @@ unsigned int __wine_door_dispatch( int unix_pid, int unix_tid, long long now, lo
 
     if (!(thread = door_find_thread( unix_pid, unix_tid ))) return ~0u;
     a->calls++;
+    /* WINEGEX_DOOR_TRAP=N: the Nth door call traps midway (the poisoning
+     * leg: the session must end, not hang) */
+    if (door_trap_at && a->calls == door_trap_at) __builtin_trap();
     if (now)
     {
         static int warned;
