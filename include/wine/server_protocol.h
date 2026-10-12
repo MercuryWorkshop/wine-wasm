@@ -493,7 +493,9 @@ enum apc_type
     APC_MAP_VIEW_EX,
     APC_UNMAP_VIEW,
     APC_CREATE_THREAD,
-    APC_DUP_HANDLE
+    APC_DUP_HANDLE,
+    APC_READ_VM,
+    APC_WRITE_VM
 };
 
 struct user_apc
@@ -631,6 +633,13 @@ union apc_call
         unsigned int     attributes;
         unsigned int     options;
     } dup_handle;
+    struct
+    {
+        enum apc_type    type;
+        unsigned int     __pad;
+        client_ptr_t     addr;
+        mem_size_t       size;
+    } vm;
 };
 
 union apc_result
@@ -743,6 +752,12 @@ union apc_result
         enum apc_type    type;
         unsigned int     status;
     } break_process;
+    struct
+    {
+        enum apc_type    type;
+        unsigned int     status;
+        mem_size_t       size;
+    } vm;
 };
 
 enum irp_type
@@ -6387,6 +6402,32 @@ struct get_lpc_reply_reply
 };
 
 
+
+struct get_apc_data_request
+{
+    struct request_header __header;
+    obj_handle_t        handle;
+};
+struct get_apc_data_reply
+{
+    struct reply_header __header;
+    /* VARARG(data,bytes); */
+};
+
+
+
+struct set_apc_data_request
+{
+    struct request_header __header;
+    obj_handle_t        handle;
+    /* VARARG(data,bytes); */
+};
+struct set_apc_data_reply
+{
+    struct reply_header __header;
+};
+
+
 enum request
 {
     REQ_new_process,
@@ -6706,6 +6747,8 @@ enum request
     REQ_send_lpc_message,
     REQ_reply_lpc_message,
     REQ_get_lpc_reply,
+    REQ_get_apc_data,
+    REQ_set_apc_data,
     REQ_NB_REQUESTS
 };
 
@@ -7030,6 +7073,8 @@ union generic_request
     struct send_lpc_message_request send_lpc_message_request;
     struct reply_lpc_message_request reply_lpc_message_request;
     struct get_lpc_reply_request get_lpc_reply_request;
+    struct get_apc_data_request get_apc_data_request;
+    struct set_apc_data_request set_apc_data_request;
 };
 union generic_reply
 {
@@ -7352,6 +7397,8 @@ union generic_reply
     struct send_lpc_message_reply send_lpc_message_reply;
     struct reply_lpc_message_reply reply_lpc_message_reply;
     struct get_lpc_reply_reply get_lpc_reply_reply;
+    struct get_apc_data_reply get_apc_data_reply;
+    struct set_apc_data_reply set_apc_data_reply;
 };
 
 #define SERVER_PROTOCOL_VERSION 960

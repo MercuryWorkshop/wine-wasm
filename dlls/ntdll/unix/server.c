@@ -455,7 +455,8 @@ static NTSTATUS invoke_user_apc( CONTEXT *context, const struct user_apc *apc, N
 /***********************************************************************
  *              invoke_system_apc
  */
-static void invoke_system_apc( const union apc_call *call, union apc_result *result, BOOL self )
+static void invoke_system_apc( const union apc_call *call, union apc_result *result, BOOL self,
+                               obj_handle_t apc_handle )
 {
     SIZE_T size, bits;
     void *addr;
@@ -768,6 +769,57 @@ static void invoke_system_apc( const union apc_call *call, union apc_result *res
         if (!self) NtClose( wine_server_ptr_handle(call->dup_handle.dst_process) );
         break;
     }
+    case APC_READ_VM:
+    case APC_WRITE_VM:
+    {
+        /* another process reading or writing this one's memory: the data
+         * travels with the APC (W3: the server cannot reach this memory) */
+        void *addr = wine_server_get_ptr( call->vm.addr );
+        SIZE_T size = call->vm.size;
+        void *buffer;
+
+        result->type = call->type;
+        result->vm.size = 0;
+        if ((ULONG_PTR)addr != call->vm.addr || size != call->vm.size || !apc_handle)
+        {
+            result->vm.status = STATUS_INVALID_PARAMETER;
+            break;
+        }
+        if (!(buffer = malloc( size ? size : 1 )))
+        {
+            result->vm.status = STATUS_NO_MEMORY;
+            break;
+        }
+        if (call->type == APC_READ_VM)
+        {
+            SIZE_T done = virtual_uninterrupted_read_memory( addr, buffer, size );
+
+            SERVER_START_REQ( set_apc_data )
+            {
+                req->handle = apc_handle;
+                wine_server_add_data( req, buffer, done );
+                result->vm.status = wine_server_call( req );
+            }
+            SERVER_END_REQ;
+            if (!result->vm.status && done != size) result->vm.status = STATUS_PARTIAL_COPY;
+            result->vm.size = done;
+        }
+        else
+        {
+            SERVER_START_REQ( get_apc_data )
+            {
+                req->handle = apc_handle;
+                wine_server_set_reply( req, buffer, size );
+                if (!(result->vm.status = wine_server_call( req )) && wine_server_reply_size( reply ) != size)
+                    result->vm.status = STATUS_INVALID_PARAMETER;
+            }
+            SERVER_END_REQ;
+            if (!result->vm.status && !(result->vm.status = virtual_uninterrupted_write_memory( addr, buffer, size )))
+                result->vm.size = size;
+        }
+        free( buffer );
+        break;
+    }
     default:
         server_protocol_error( "get_apc_request: bad type %d\n", call->type );
         break;
@@ -828,7 +880,7 @@ unsigned int server_select( const union select_op *select_op, data_size_t size, 
             SERVER_END_REQ;
 
             if (ret != STATUS_KERNEL_APC) break;
-            invoke_system_apc( &reply_data.call, &result, FALSE );
+            invoke_system_apc( &reply_data.call, &result, FALSE, apc_handle );
 
             /* don't signal multiple times */
             if (size >= sizeof(select_op->signal_and_wait) && select_op->op == SELECT_SIGNAL_AND_WAIT)
@@ -968,7 +1020,7 @@ unsigned int server_queue_process_apc( HANDLE process, const union apc_call *cal
 
         if (self)
         {
-            invoke_system_apc( call, result, TRUE );
+            invoke_system_apc( call, result, TRUE, 0 );
         }
         else
         {
@@ -993,6 +1045,88 @@ unsigned int server_queue_process_apc( HANDLE process, const union apc_call *cal
             if (!ret && result->type == APC_NONE) continue;  /* APC didn't run, try again */
         }
         return ret;
+    }
+}
+
+
+/***********************************************************************
+ *           server_process_memory
+ *
+ * Read or write another process's memory through an APC that process runs:
+ * the wasm32 (W3) server is a thread of one process and cannot reach the
+ * memory of the others, which gex keeps apart.
+ */
+unsigned int server_process_memory( HANDLE process, BOOL write, void *addr, void *buffer,
+                                    SIZE_T size, SIZE_T *done )
+{
+    union apc_call call;
+    union apc_result result;
+
+    *done = 0;
+    memset( &call, 0, sizeof(call) );
+    call.vm.type = write ? APC_WRITE_VM : APC_READ_VM;
+    call.vm.addr = wine_server_client_ptr( addr );
+    call.vm.size = size;
+
+    for (;;)
+    {
+        unsigned int ret;
+        HANDLE handle = 0;
+        BOOL self = FALSE;
+        sigset_t sigset;
+
+        SERVER_START_REQ( queue_apc )
+        {
+            req->handle = wine_server_obj_handle( process );
+            wine_server_add_data( req, &call, sizeof(call) );
+            if (write) wine_server_add_data( req, buffer, size );
+            if (!(ret = wine_server_call( req )))
+            {
+                handle = wine_server_ptr_handle( reply->handle );
+                self = reply->self;
+            }
+        }
+        SERVER_END_REQ;
+        if (ret) return ret;
+
+        if (self)
+        {
+            if (write)
+            {
+                if ((ret = virtual_uninterrupted_write_memory( addr, buffer, size ))) return ret;
+                *done = size;
+                return STATUS_SUCCESS;
+            }
+            *done = virtual_uninterrupted_read_memory( addr, buffer, size );
+            return *done == size ? STATUS_SUCCESS : STATUS_PARTIAL_COPY;
+        }
+
+        NtWaitForSingleObject( handle, FALSE, NULL );
+
+        server_enter_uninterrupted_section( &fd_cache_mutex, &sigset );
+        close_inproc_sync( handle );
+        if (!write)
+        {
+            SERVER_START_REQ( get_apc_data )
+            {
+                req->handle = wine_server_obj_handle( handle );
+                wine_server_set_reply( req, buffer, size );
+                if (!server_call_unlocked( req )) *done = wine_server_reply_size( reply );
+            }
+            SERVER_END_REQ;
+        }
+        SERVER_START_REQ( get_apc_result )
+        {
+            req->handle = wine_server_obj_handle( handle );
+            if (!(ret = server_call_unlocked( req ))) result = reply->result;
+        }
+        SERVER_END_REQ;
+        server_leave_uninterrupted_section( &fd_cache_mutex, &sigset );
+
+        if (ret) return ret;
+        if (result.type == APC_NONE) continue;  /* APC didn't run, try again */
+        if (write) *done = result.vm.size;
+        return result.vm.status;
     }
 }
 

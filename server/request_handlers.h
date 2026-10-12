@@ -324,6 +324,8 @@ DECL_HANDLER(complete_lpc_port);
 DECL_HANDLER(send_lpc_message);
 DECL_HANDLER(reply_lpc_message);
 DECL_HANDLER(get_lpc_reply);
+DECL_HANDLER(get_apc_data);
+DECL_HANDLER(set_apc_data);
 
 typedef void (*req_handler)( const void *req, void *reply );
 static const req_handler req_handlers[REQ_NB_REQUESTS] =
@@ -645,6 +647,8 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_send_lpc_message,
     (req_handler)req_reply_lpc_message,
     (req_handler)req_get_lpc_reply,
+    (req_handler)req_get_apc_data,
+    (req_handler)req_set_apc_data,
 };
 
 C_ASSERT( sizeof(abstime_t) == 8 );
@@ -2458,3 +2462,8 @@ C_ASSERT( offsetof(struct get_lpc_reply_reply, id) == 12 );
 C_ASSERT( offsetof(struct get_lpc_reply_reply, pid) == 16 );
 C_ASSERT( offsetof(struct get_lpc_reply_reply, tid) == 20 );
 C_ASSERT( sizeof(struct get_lpc_reply_reply) == 24 );
+C_ASSERT( offsetof(struct get_apc_data_request, handle) == 12 );
+C_ASSERT( sizeof(struct get_apc_data_request) == 16 );
+C_ASSERT( sizeof(struct get_apc_data_reply) == 8 );
+C_ASSERT( offsetof(struct set_apc_data_request, handle) == 12 );
+C_ASSERT( sizeof(struct set_apc_data_request) == 16 );
