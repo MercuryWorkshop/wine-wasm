@@ -5192,6 +5192,35 @@ NTSTATUS virtual_uninterrupted_write_memory( void *addr, const void *buffer, SIZ
 
 
 /***********************************************************************
+ *           reprotect_readable
+ *
+ * Apply the exec forcing (or its end) to the readable, non-executable pages
+ * of a range: those it changes. Pages that are executable anyway keep
+ * their protection untouched; reprotecting them, as mprotect_range would,
+ * tells the host the code there may have changed (gex retires what it
+ * translated or bound there, Wine's own exports included).
+ */
+static void reprotect_readable( void *base, size_t size, BYTE set )
+{
+    char *addr = ROUND_ADDR( base, host_page_mask ), *start = NULL;
+    size_t i, count = ROUND_SIZE( base, size, host_page_mask ) / host_page_size;
+
+    for (i = 0; i <= count; i++)
+    {
+        char *page = addr + i * host_page_size;
+        int prot = i < count ? get_unix_prot( get_host_page_vprot( page ) | set ) : 0;
+        BOOL change = (prot & PROT_READ) && !(prot & PROT_EXEC);
+
+        if (change && !start) start = page;
+        else if (!change && start)
+        {
+            mprotect_range( start, page - start, set, 0 );
+            start = NULL;
+        }
+    }
+}
+
+/***********************************************************************
  *           virtual_set_force_exec
  *
  * Whether to force exec prot on all views.
@@ -5211,7 +5240,7 @@ void virtual_set_force_exec( BOOL enable )
             /* file mappings are always accessible */
             BYTE commit = is_view_valloc( view ) ? 0 : VPROT_COMMITTED;
 
-            mprotect_range( view->base, view->size, commit, 0 );
+            reprotect_readable( view->base, view->size, commit );
         }
     }
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
