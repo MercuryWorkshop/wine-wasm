@@ -328,6 +328,8 @@ DECL_HANDLER(get_apc_data);
 DECL_HANDLER(set_apc_data);
 DECL_HANDLER(set_user_api_hook);
 DECL_HANDLER(get_user_api_hook);
+DECL_HANDLER(add_session_bitmap);
+DECL_HANDLER(get_session_bitmap);
 
 typedef void (*req_handler)( const void *req, void *reply );
 static const req_handler req_handlers[REQ_NB_REQUESTS] =
@@ -653,6 +655,8 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_set_apc_data,
     (req_handler)req_set_user_api_hook,
     (req_handler)req_get_user_api_hook,
+    (req_handler)req_add_session_bitmap,
+    (req_handler)req_get_session_bitmap,
 };
 
 C_ASSERT( sizeof(abstime_t) == 8 );
@@ -2479,3 +2483,13 @@ C_ASSERT( sizeof(struct get_user_api_hook_request) == 16 );
 C_ASSERT( offsetof(struct get_user_api_hook_reply, serial) == 8 );
 C_ASSERT( offsetof(struct get_user_api_hook_reply, dll_len) == 12 );
 C_ASSERT( sizeof(struct get_user_api_hook_reply) == 16 );
+C_ASSERT( offsetof(struct add_session_bitmap_request, width) == 12 );
+C_ASSERT( offsetof(struct add_session_bitmap_request, height) == 16 );
+C_ASSERT( sizeof(struct add_session_bitmap_request) == 24 );
+C_ASSERT( offsetof(struct add_session_bitmap_reply, index) == 8 );
+C_ASSERT( sizeof(struct add_session_bitmap_reply) == 16 );
+C_ASSERT( offsetof(struct get_session_bitmap_request, index) == 12 );
+C_ASSERT( sizeof(struct get_session_bitmap_request) == 16 );
+C_ASSERT( offsetof(struct get_session_bitmap_reply, width) == 8 );
+C_ASSERT( offsetof(struct get_session_bitmap_reply, height) == 12 );
+C_ASSERT( sizeof(struct get_session_bitmap_reply) == 16 );

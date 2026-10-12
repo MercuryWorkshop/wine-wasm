@@ -4475,3 +4475,23 @@ enum inproc_sync_type
     data_size_t         dll_len;        /* bytes of the DLL path; the function name follows */
     VARARG(names,bytes);                /* nothing if no hook is registered */
 @END
+
+
+/* Make a bitmap a session stock object (SetBitmapAttributes): its bits, 32 bpp top-down */
+@REQ(add_session_bitmap)
+    int                 width;
+    int                 height;
+    VARARG(bits,bytes);
+@REPLY
+    unsigned int        index;          /* its index among the session's stock bitmaps */
+@END
+
+
+/* Get a session stock bitmap */
+@REQ(get_session_bitmap)
+    unsigned int        index;
+@REPLY
+    int                 width;
+    int                 height;
+    VARARG(bits,bytes);
+@END

@@ -920,10 +920,171 @@ BOOL WINAPI NtGdiGradientFill( HDC hdc, TRIVERTEX *vert_array, ULONG nvert,
 /******************************************************************************
  *           NtGdiDrawStream   (win32u.@)
  */
+/* GdiDrawStream: a stream of commands, as Windows 7's uxtheme draws a visual
+ * style's images with it: a magic, then a target, a source and nine-grid draws */
+#define DS_MAGIC          0x44727753   /* 'DrwS' */
+#define DS_SETTARGETID    0
+#define DS_SETSOURCEID    1
+#define DS_NINEGRIDID     9
+
+#define DSDNG_STRETCH        0x01
+#define DSDNG_TILE           0x02
+#define DSDNG_PERPIXELALPHA  0x04
+#define DSDNG_TRANSPARENT    0x08
+#define DSDNG_MUSTFLIP       0x10
+#define DSDNG_TRUESIZE       0x20
+
+struct ds_settarget { ULONG id; ULONG hdc; RECTL clip; };
+struct ds_setsource { ULONG id; ULONG hbm; };
+struct ds_ninegrid
+{
+    ULONG id;
+    RECTL dst;
+    RECTL src;
+    ULONG flags;
+    LONG  left, right, top, bottom;   /* the source's sizing margins */
+    COLORREF transparent;
+};
+
+/* draw one part of a nine-grid, stretched or tiled from src to dst */
+static void ds_part( HDC hdc, HDC src_dc, const RECT *dst, const RECT *src, ULONG flags, COLORREF transparent )
+{
+    int dw = dst->right - dst->left, dh = dst->bottom - dst->top;
+    int sw = src->right - src->left, sh = src->bottom - src->top;
+    int x, y, w, h;
+
+    if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
+    if ((flags & DSDNG_TILE) && (dw != sw || dh != sh))
+    {
+        for (y = dst->top; y < dst->bottom; y += sh)
+            for (x = dst->left; x < dst->right; x += sw)
+            {
+                RECT d = { x, y, min( x + sw, dst->right ), min( y + sh, dst->bottom ) };
+                RECT r = { src->left, src->top, src->left + d.right - d.left, src->top + d.bottom - d.top };
+                ds_part( hdc, src_dc, &d, &r, flags & ~DSDNG_TILE, transparent );
+            }
+        return;
+    }
+    x = dst->left; y = dst->top; w = dw; h = dh;
+    if (flags & DSDNG_PERPIXELALPHA)
+    {
+        BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+        NtGdiAlphaBlend( hdc, x, y, w, h, src_dc, src->left, src->top, sw, sh, *(DWORD *)&bf, 0 );
+    }
+    else if (flags & DSDNG_TRANSPARENT)
+        NtGdiTransparentBlt( hdc, x, y, w, h, src_dc, src->left, src->top, sw, sh, transparent );
+    else
+        NtGdiStretchBlt( hdc, x, y, w, h, src_dc, src->left, src->top, sw, sh, SRCCOPY, 0 );
+}
+
+static void ds_ninegrid( HDC hdc, HDC src_dc, const struct ds_ninegrid *ng )
+{
+    RECT dst = { ng->dst.left, ng->dst.top, ng->dst.right, ng->dst.bottom };
+    RECT src = { ng->src.left, ng->src.top, ng->src.right, ng->src.bottom };
+    int sl = ng->left, sr = ng->right, st = ng->top, sb = ng->bottom;
+    int dl, dr, dt, db, dw, dh, i, j;
+    ULONG flags = ng->flags;
+    int dx[4], dy[4], sx[4], sy[4];
+
+    if (flags & DSDNG_MUSTFLIP) FIXME( "mirrored images not supported\n" );
+    if (dst.right < dst.left) { int t = dst.left; dst.left = dst.right; dst.right = t; }
+    dw = dst.right - dst.left;
+    dh = dst.bottom - dst.top;
+
+    if (flags & DSDNG_TRUESIZE)
+    {
+        RECT d = { dst.left, dst.top, dst.left + min( dw, src.right - src.left ),
+                   dst.top + min( dh, src.bottom - src.top ) };
+        RECT s = { src.left, src.top, src.left + d.right - d.left, src.top + d.bottom - d.top };
+        ds_part( hdc, src_dc, &d, &s, flags & ~(DSDNG_STRETCH | DSDNG_TILE), ng->transparent );
+        return;
+    }
+
+    /* margins wider than the destination shrink in proportion */
+    dl = sl; dr = sr; dt = st; db = sb;
+    if (dl + dr > dw && dl + dr > 0) { dl = muldiv( dw, sl, sl + sr ); dr = dw - dl; }
+    if (dt + db > dh && dt + db > 0) { dt = muldiv( dh, st, st + sb ); db = dh - dt; }
+
+    sx[0] = src.left; sx[1] = src.left + sl; sx[2] = src.right - sr; sx[3] = src.right;
+    sy[0] = src.top;  sy[1] = src.top + st;  sy[2] = src.bottom - sb; sy[3] = src.bottom;
+    dx[0] = dst.left; dx[1] = dst.left + dl; dx[2] = dst.right - dr; dx[3] = dst.right;
+    dy[0] = dst.top;  dy[1] = dst.top + dt;  dy[2] = dst.bottom - db; dy[3] = dst.bottom;
+
+    for (j = 0; j < 3; j++)
+        for (i = 0; i < 3; i++)
+        {
+            RECT d = { dx[i], dy[j], dx[i + 1], dy[j + 1] };
+            RECT s = { sx[i], sy[j], sx[i + 1], sy[j + 1] };
+            /* corners keep their size; edges and the centre stretch or tile */
+            ULONG part_flags = (i != 1 && j != 1) ? flags & ~DSDNG_TILE : flags;
+            ds_part( hdc, src_dc, &d, &s, part_flags, ng->transparent );
+        }
+}
+
 BOOL WINAPI NtGdiDrawStream( HDC hdc, ULONG in, void *pvin )
 {
-    FIXME("stub: %p, %d, %p\n", hdc, in, pvin);
-    return FALSE;
+    const BYTE *p = pvin, *end = p + in;
+    HDC target = 0, src_dc = 0;
+    HGDIOBJ old_bitmap = 0;
+    int saved = 0;
+    BOOL ret = FALSE;
+
+    TRACE( "%p %u %p\n", hdc, (int)in, pvin );
+    if (!pvin || in < sizeof(ULONG) || *(const ULONG *)p != DS_MAGIC) return FALSE;
+    p += sizeof(ULONG);
+
+    while (p + sizeof(ULONG) <= end)
+    {
+        switch (*(const ULONG *)p)
+        {
+        case DS_SETTARGETID:
+        {
+            const struct ds_settarget *t = (const void *)p;
+            if (p + sizeof(*t) > end) goto done;
+            if (saved) NtGdiRestoreDC( target, -1 );
+            target = ULongToHandle( t->hdc );
+            if (!target) target = hdc;
+            if (!(saved = NtGdiSaveDC( target ))) goto done;
+            NtGdiIntersectClipRect( target, t->clip.left, t->clip.top, t->clip.right, t->clip.bottom );
+            p += sizeof(*t);
+            break;
+        }
+        case DS_SETSOURCEID:
+        {
+            const struct ds_setsource *s = (const void *)p;
+            if (p + sizeof(*s) > end) goto done;
+            if (!src_dc && !(src_dc = NtGdiCreateCompatibleDC( hdc ))) goto done;
+            if (old_bitmap) NtGdiSelectBitmap( src_dc, old_bitmap );
+            old_bitmap = NtGdiSelectBitmap( src_dc, ULongToHandle( s->hbm ));
+            TRACE( "source %#x -> %p\n", (int)s->hbm, old_bitmap );
+            p += sizeof(*s);
+            break;
+        }
+        case DS_NINEGRIDID:
+        {
+            const struct ds_ninegrid *ng = (const void *)p;
+            if (p + sizeof(*ng) > end || !target || !old_bitmap) goto done;
+            TRACE( "nine-grid %s from %s flags %#x margins %d,%d,%d,%d\n", wine_dbgstr_rect( (const RECT *)&ng->dst ),
+                   wine_dbgstr_rect( (const RECT *)&ng->src ), (int)ng->flags, (int)ng->left, (int)ng->right, (int)ng->top, (int)ng->bottom );
+            ds_ninegrid( target, src_dc, ng );
+            p += sizeof(*ng);
+            break;
+        }
+        default:
+            FIXME( "unknown command %u\n", *(const ULONG *)p );
+            goto done;
+        }
+    }
+    ret = TRUE;
+
+done:
+    if (saved) NtGdiRestoreDC( target, -1 );
+    if (src_dc)
+    {
+        if (old_bitmap) NtGdiSelectBitmap( src_dc, old_bitmap );
+        NtGdiDeleteObjectApp( src_dc );
+    }
+    return ret;
 }
 
 /*************************************************************************
