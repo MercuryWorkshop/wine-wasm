@@ -388,10 +388,26 @@ NET_API_STATUS WINAPI NetSessionEnum(LMSTR servername, LMSTR UncClientName,
 NET_API_STATUS WINAPI NetShareEnum( LMSTR servername, DWORD level, LPBYTE* bufptr,
     DWORD prefmaxlen, LPDWORD entriesread, LPDWORD totalentries, LPDWORD resume_handle)
 {
-    FIXME("Stub (%s %ld %p %ld %p %p %p)\n", debugstr_w(servername), level, bufptr,
-        prefmaxlen, entriesread, totalentries, resume_handle);
+    TRACE("(%s %ld %p %ld %p %p %p)\n", debugstr_w(servername), level, bufptr,
+          prefmaxlen, entriesread, totalentries, resume_handle);
 
-    return ERROR_NOT_SUPPORTED;
+    if (!bufptr || !entriesread || !totalentries) return ERROR_INVALID_PARAMETER;
+    if (!NETAPI_IsLocalComputer( servername ))
+    {
+        FIXME( "remote computers not supported\n" );
+        return ERROR_NOT_SUPPORTED;
+    }
+    switch (level)
+    {
+    case 0: case 1: case 2: case 501: case 502: case 503: break;
+    default: return ERROR_INVALID_LEVEL;
+    }
+    /* this computer shares nothing (it has no file server), which is what
+     * the shell's sharing state for local folders comes from */
+    *bufptr = NULL;
+    *entriesread = *totalentries = 0;
+    if (resume_handle) *resume_handle = 0;
+    return NERR_Success;
 }
 
 /************************************************************
