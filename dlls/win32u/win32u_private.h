@@ -64,6 +64,7 @@ extern void window_surface_set_layered( struct window_surface *surface, COLORREF
 
 /* defwnd.c */
 extern BOOL adjust_window_rect( RECT *rect, DWORD style, BOOL menu, DWORD ex_style, UINT dpi );
+extern BOOL user_api_hooked;
 extern LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
                                     BOOL ansi );
 extern LRESULT desktop_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, BOOL ansi );
@@ -83,6 +84,7 @@ extern LRESULT call_message_hooks( INT id, INT code, WPARAM wparam, LPARAM lpara
                                    size_t lparam_size, size_t message_size, BOOL ansi );
 extern BOOL is_hooked( INT id );
 extern UINT set_user_api_hook( const struct user_api_hook_names *names );
+extern void refresh_sys_colors(void);
 extern BOOL get_user_api_hook( struct user_api_hook_names *names );
 
 /* imm.c */

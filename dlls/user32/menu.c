@@ -908,8 +908,14 @@ INT WINAPI MenuItemFromPoint( HWND hwnd, HMENU menu, POINT pt )
  */
 DWORD WINAPI CalcMenuBar(HWND hwnd, DWORD left, DWORD right, DWORD top, RECT *rect)
 {
-    FIXME("(%p, %ld, %ld, %ld, %p): stub\n", hwnd, left, right, top, rect);
-    return 0;
+    /* lays out the menu bar of a window whose rect is rect, between its left
+     * and right borders, top below the window's top; returns the bar's height */
+    RECT bar;
+
+    TRACE("(%p, %ld, %ld, %ld, %s)\n", hwnd, left, right, top, wine_dbgstr_rect(rect));
+    if (!rect) return 0;
+    SetRect( &bar, left, top, rect->right - rect->left - right, top );
+    return NtUserCallHwndParam( hwnd, (UINT_PTR)&bar, NtUserCallHwndParam_CalcMenuBar );
 }
 
 

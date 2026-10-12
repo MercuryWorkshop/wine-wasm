@@ -198,7 +198,7 @@ typedef struct
     BOOL (WINAPI *DrawFrameControl)( HDC, RECT *, UINT, UINT );
     BOOL (WINAPI *DrawCaption)( HWND, HDC, const RECT *, UINT );
     void (WINAPI *MDIRedrawFrame)( HWND, DWORD );
-    HWND (WINAPI *GetRealWindowOwner)( HWND );
+    DWORD (WINAPI *GetWindowProcessId)( HWND );   /* Windows 7's uxtheme: the window's process */
 } USERAPIHOOK;
 
 #define WM_UAHINIT 0x031b

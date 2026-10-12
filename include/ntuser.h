@@ -1125,6 +1125,7 @@ enum
     NtUserCallOneParam_GetAsyncKeyboardState,
     /* temporary exports */
     NtUserGetDeskPattern,
+    NtUserCallOneParam_SetUserApiHooked,
 };
 
 static inline HICON NtUserCreateCursorIcon( BOOL is_icon )
@@ -1431,6 +1432,7 @@ enum
     NtUserCallHwndParam_SetRawWindowPos,
     NtUserCallHwndParam_GetPrivateData,
     NtUserCallHwndParam_SetPrivateData,
+    NtUserCallHwndParam_CalcMenuBar,
 };
 
 struct get_window_rects_params
