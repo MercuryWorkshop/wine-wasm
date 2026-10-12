@@ -186,7 +186,8 @@ static BOOL start_rpcss(void)
 {
     SERVICE_STATUS_PROCESS status;
     SC_HANDLE scm, service;
-    BOOL ret = FALSE;
+    BOOL ret = FALSE, started;
+    DWORD i;
 
     TRACE("\n");
 
@@ -203,7 +204,15 @@ static BOOL start_rpcss(void)
         return FALSE;
     }
 
-    if (StartServiceW(service, 0, NULL) || GetLastError() == ERROR_SERVICE_ALREADY_RUNNING)
+    /* RpcSs runs from boot on Windows: wait out the services' start-up
+     * (the database is locked while services.exe starts its own) */
+    for (i = 0;; i++)
+    {
+        if ((started = StartServiceW(service, 0, NULL)) || GetLastError() != ERROR_SERVICE_DATABASE_LOCKED || i >= 300)
+            break;
+        Sleep( 100 );
+    }
+    if (started || GetLastError() == ERROR_SERVICE_ALREADY_RUNNING)
     {
         ULONGLONG start_time = GetTickCount64();
         do
@@ -226,7 +235,7 @@ static BOOL start_rpcss(void)
             WARN("RpcSs failed to start %lu\n", status.dwCurrentState);
     }
     else
-        ERR("Failed to start RpcSs service\n");
+        ERR("Failed to start RpcSs service: %lu\n", GetLastError());
 
     CloseServiceHandle(service);
     CloseServiceHandle(scm);
@@ -485,6 +494,7 @@ static HRESULT create_server(REFCLSID rclsid, HANDLE *process)
     DWORD               size = (MAX_PATH+1) * sizeof(WCHAR);
     STARTUPINFOW        sinfo;
     PROCESS_INFORMATION pinfo;
+    DWORD type;
     LONG ret;
 
     TRACE("Attempting to start server for %s\n", debugstr_guid(rclsid));
@@ -501,12 +511,19 @@ static HRESULT create_server(REFCLSID rclsid, HANDLE *process)
         return hr;
     }
 
-    ret = RegQueryValueExW(key, NULL, NULL, NULL, (LPBYTE)command, &size);
+    ret = RegQueryValueExW(key, NULL, NULL, &type, (LPBYTE)command, &size);
     RegCloseKey(key);
     if (ret)
     {
         WARN("No default value for LocalServer32 key\n");
         return REGDB_E_CLASSNOTREG; /* FIXME: check retval */
+    }
+    /* Windows' own servers are registered %SystemRoot%-relative */
+    if (type == REG_EXPAND_SZ)
+    {
+        WCHAR expanded[MAX_PATH + 1];
+        DWORD len = ExpandEnvironmentStringsW(command, expanded, ARRAY_SIZE(expanded));
+        if (len && len <= ARRAY_SIZE(expanded)) lstrcpyW(command, expanded);
     }
 
     memset(&sinfo, 0, sizeof(sinfo));
@@ -632,7 +649,8 @@ HRESULT rpc_get_local_class_object(REFCLSID rclsid, REFIID riid, void **obj)
     int tries = 0;
     ULONG length;
     HRESULT hr;
-    static const int MAXTRIES = 30; /* 30 seconds */
+    /* as Windows, which gives a server 120 seconds to register (DCOM event 10010) */
+    static const int MAXTRIES = 120;
 
     TRACE("clsid %s, riid %s\n", debugstr_guid(rclsid), debugstr_guid(riid));
 
