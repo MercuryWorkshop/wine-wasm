@@ -205,6 +205,10 @@ static inline struct shellbrowserwindow *impl_from_IShellBrowser(IShellBrowser *
 }
 
 static void shellwindows_init(void);
+static BOOL winlist_init_native(void);
+#ifdef __wasm32__
+static BOOL desktop_is_thread;  /* gexp_desktop_thread: in an application process */
+#endif
 static void desktopshellbrowserwindow_init(void);
 
 static RECT get_icon_rect( unsigned int index )
@@ -1326,10 +1330,15 @@ void manage_desktop( WCHAR *arg )
         }
     }
 
-#ifndef __wasm32__
-    desktopshellbrowserwindow_init();
-    shellwindows_init();
+#ifdef __wasm32__
+    /* (as a process of its own, explorer /desktop hosts the shell windows
+     * list, which Windows' shell components register their windows with) */
+    if (!desktop_is_thread)
 #endif
+    {
+        desktopshellbrowserwindow_init();
+        if (!winlist_init_native()) shellwindows_init();
+    }
 
     /* Ideally we would set the window of an IShellView here, but we never
        actually create one, so the desktop window itself will have to do. */
@@ -2592,6 +2601,32 @@ static void desktopshellbrowserwindow_init(void)
         return;
 
     IShellFolder_CreateViewObject(folder, NULL, &IID_IShellView, (void**)&desktopshellbrowserwindow.view);
+}
+
+/* Windows' own shell windows list, when Windows' ExplorerFrame is installed
+ * (a DLL override): its shell (explorer.exe) starts the list on its desktop
+ * thread with ExplorerFrame's WinList_Init (ordinal 110), which registers
+ * the ShellWindows class object; Windows' folder windows need its pending
+ * registrations and window enumeration, which Wine's list does not have */
+static BOOL winlist_init_native(void)
+{
+    BOOL (WINAPI *winlist_init)(void);
+    HMODULE frame;
+
+    if (!(frame = LoadLibraryW( L"explorerframe.dll" ))) return FALSE;
+    if (!(winlist_init = (void *)GetProcAddress( frame, (const char *)110 )))
+    {
+        FreeLibrary( frame );
+        return FALSE;
+    }
+    OleInitialize( NULL );
+    if (winlist_init())
+    {
+        TRACE( "using ExplorerFrame's shell windows list\n" );
+        return TRUE;
+    }
+    WARN( "ExplorerFrame's WinList_Init failed\n" );
+    return FALSE;
 }
 
 static void shellwindows_init(void)
