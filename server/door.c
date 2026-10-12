@@ -72,7 +72,8 @@ struct door_area
     int calls;             /* 104: door calls served, all time */
     unsigned int thread_start; /* 108: table index of __gex_thread_start */
     int pid;               /* 112: this process's pid */
-    int owner;             /* 116: who holds the lock: a client's tid, or -1 the pump (diagnostics) */
+    int owner;             /* 116: who holds the lock: a client's tid, or -1 the pump */
+    int owner_pid;         /* 120: and its pid (the host: a Worker ended inside a door) */
 };
 
 #define DOOR_VERSION 1
@@ -212,10 +213,14 @@ void door_kicked(void)
 void door_pump_lock(void)
 {
     struct door_area *a = door_area;
+    int waits = 0;
     if (!a) return;
     __atomic_store_n( &a->pump_sleeping, 0, __ATOMIC_SEQ_CST );
     for (;;)
     {
+        if (++waits % 5000 == 0)
+            fprintf( stderr, "wineserver: door: the pump has waited %d s for the lock, held by pid %d tid %d (proxy state %d)\n",
+                     waits / 1000, a->owner_pid, a->owner, a->proxy_state );
         int v = 0;
         if (__atomic_compare_exchange_n( &a->lock, &v, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED ))
         {
@@ -258,6 +263,13 @@ unsigned int __wine_door_dispatch( int unix_pid, int unix_tid, long long now, lo
     a->calls++;
     if (now)
     {
+        static int warned;
+        if (!warned && (boot - monotonic_time > 600LL * 10000000 || monotonic_time - boot > 600LL * 10000000))
+        {
+            warned = 1;
+            fprintf( stderr, "wineserver: door: the host's monotonic time %lld is not the server's %lld\n",
+                     boot, (long long)monotonic_time );
+        }
         current_time = now;
         monotonic_time = boot;
     }

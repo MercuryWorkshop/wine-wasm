@@ -315,6 +315,9 @@ static void call_req_handler( struct thread *thread )
         }
         else
         {
+#ifdef __wasm32__
+            fprintf( stderr, "wineserver: thread %04x: request %d without a reply fd: killed\n", current->id, req );
+#endif
             current->exit_code = 1;
             kill_thread( current, 1 );  /* no way to continue without reply fd */
         }
@@ -391,6 +394,9 @@ unsigned int door_run_request( struct thread *thread, char *buf )
     thread->req_data = NULL;
     release_object( thread );
     door_reply = NULL;
+    if (!door_replied)
+        fprintf( stderr, "wineserver: door: thread %04x (unix %d) no reply to request %d\n",
+                 thread->id, thread->unix_tid, thread->req.request_header.req );
     return door_replied ? reply_off : ~1u;
 }
 #endif
