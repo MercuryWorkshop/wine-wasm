@@ -5342,6 +5342,8 @@ static void send_destroy_message( HWND hwnd, BOOL winevent )
 
     if (hwnd == NtUserGetClipboardOwner()) release_clipboard_owner( hwnd );
 
+    win_set_flags( hwnd, WIN_IN_DESTROY, 0 );
+
     if (winevent)
         NtUserNotifyWinEvent( EVENT_OBJECT_DESTROY, hwnd, OBJID_WINDOW, 0 );
 
@@ -6246,6 +6248,9 @@ ULONG_PTR WINAPI NtUserCallHwnd( HWND hwnd, DWORD code )
 
     case NtUserCallHwnd_IsWindowVisible:
         return is_window_visible( hwnd );
+
+    case NtUserCallHwnd_IsWindowInDestroy:
+        return !!(win_get_flags( hwnd ) & WIN_IN_DESTROY);
 
     /* temporary exports */
     case NtUserGetFullWindowHandle:

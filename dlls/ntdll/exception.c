@@ -384,6 +384,28 @@ void DECLSPEC_NORETURN raise_status( NTSTATUS status, EXCEPTION_RECORD *rec )
 }
 
 
+/*******************************************************************
+ *         RtlUnhandledExceptionFilter2   (NTDLL.@)
+ *
+ * The last-chance filter Windows' system components call from their own
+ * top-level handlers. The exception goes on to the process's unhandled
+ * exception handling (the debugger, here winedbg).
+ */
+LONG WINAPI RtlUnhandledExceptionFilter2( EXCEPTION_POINTERS *ptrs, ULONG flags )
+{
+    WARN( "%p %#lx: code %#lx\n", ptrs, flags, ptrs ? ptrs->ExceptionRecord->ExceptionCode : 0 );
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+/*******************************************************************
+ *         RtlUnhandledExceptionFilter   (NTDLL.@)
+ */
+LONG WINAPI RtlUnhandledExceptionFilter( EXCEPTION_POINTERS *ptrs )
+{
+    return RtlUnhandledExceptionFilter2( ptrs, 0 );
+}
+
+
 /***********************************************************************
  *            RtlRaiseStatus  (NTDLL.@)
  *

@@ -1308,6 +1308,7 @@ enum
     NtUserGetFullWindowHandle,
     NtUserIsCurrentProcessWindow,
     NtUserIsCurrentThreadWindow,
+    NtUserCallHwnd_IsWindowInDestroy,
 };
 
 static inline void NtUserActivateOtherWindow( HWND hwnd )

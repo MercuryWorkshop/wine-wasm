@@ -281,6 +281,21 @@ NTSTATUS WINAPI RtlGetThreadPreferredUILanguages( DWORD flags, ULONG *count, WCH
 
 
 /**************************************************************************
+ *      RtlGetThreadLangIdByIndex   (NTDLL.@)
+ *
+ * The thread's index'th UI language, of the count it has. The thread's
+ * languages here are the one UI language.
+ */
+NTSTATUS WINAPI RtlGetThreadLangIdByIndex( ULONG flags, ULONG index, LANGID *lang, ULONG *count )
+{
+    if (flags || !lang) return STATUS_INVALID_PARAMETER;
+    if (count) *count = 1;
+    if (index) return STATUS_NO_MORE_ENTRIES;
+    return NtQueryDefaultUILanguage( lang );
+}
+
+
+/**************************************************************************
  *      RtlGetUserPreferredUILanguages   (NTDLL.@)
  */
 NTSTATUS WINAPI RtlGetUserPreferredUILanguages( DWORD flags, ULONG unknown, ULONG *count,

@@ -784,6 +784,7 @@
 @ stdcall RtlGetSystemPreferredUILanguages(long long ptr ptr ptr)
 @ stdcall -ret64 RtlGetSystemTimePrecise()
 @ stdcall RtlGetThreadErrorMode()
+@ stdcall RtlGetThreadLangIdByIndex(long long ptr ptr)
 @ stdcall RtlGetThreadPreferredUILanguages(long ptr ptr ptr)
 @ stdcall RtlGetUnloadEventTrace()
 @ stdcall RtlGetUnloadEventTraceEx(ptr ptr ptr)
@@ -1084,8 +1085,8 @@
 @ stdcall RtlUTF8ToUnicodeN(ptr long ptr ptr long)
 @ stdcall -fastcall -arch=i386 -norelay RtlUlongByteSwap(long)
 @ stdcall -fastcall -arch=i386 -norelay RtlUlonglongByteSwap(int64)
-# @ stub RtlUnhandledExceptionFilter2
-# @ stub RtlUnhandledExceptionFilter
+@ stdcall RtlUnhandledExceptionFilter2(ptr long)
+@ stdcall RtlUnhandledExceptionFilter(ptr)
 @ stdcall RtlUnicodeStringToAnsiSize(ptr)
 @ stdcall RtlUnicodeStringToAnsiString(ptr ptr long)
 @ stub RtlUnicodeStringToCountedOemString
