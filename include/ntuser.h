@@ -1217,6 +1217,16 @@ enum
     NtUserCallTwoParam_GetVirtualScreenRect,
     /* temporary exports */
     NtUserAllocWinProc,
+    NtUserCallTwoParam_SetUserApiHook,
+    NtUserCallTwoParam_GetUserApiHook,
+};
+
+/* NtUserCallTwoParam_SetUserApiHook/GetUserApiHook: the session's user API hook */
+struct user_api_hook_names
+{
+    unsigned int serial;           /* changes with each (un)registration */
+    WCHAR        dll[MAX_PATH];    /* empty: no hook */
+    WCHAR        func[64];
 };
 
 static inline DLGPROC NtUserGetDialogProc( DLGPROC proc, BOOL ansi )

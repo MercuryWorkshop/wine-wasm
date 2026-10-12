@@ -639,3 +639,74 @@ void WINAPI NtUserNotifyWinEvent( DWORD event, HWND hwnd, LONG object_id, LONG c
     }
     SERVER_END_REQ;
 }
+
+
+/***********************************************************************
+ *           set_user_api_hook
+ *
+ * Register (names) or unregister (NULL) the session's user API hook.
+ * Returns the registration's serial number, 0 on failure.
+ */
+static data_size_t name_len( const WCHAR *name, size_t max )
+{
+    data_size_t len = 0;
+    while (len < max && name[len]) len++;
+    return len;
+}
+
+UINT set_user_api_hook( const struct user_api_hook_names *names )
+{
+    data_size_t dll_len = 0, func_len = 0;
+    UINT serial = 0;
+
+    if (names)
+    {
+        dll_len = name_len( names->dll, ARRAY_SIZE(names->dll) - 1 ) * sizeof(WCHAR);
+        func_len = (name_len( names->func, ARRAY_SIZE(names->func) - 1 ) + 1) * sizeof(WCHAR);
+        if (!dll_len) return 0;
+        dll_len += sizeof(WCHAR);
+    }
+    SERVER_START_REQ( set_user_api_hook )
+    {
+        req->dll_len = dll_len;
+        if (names)
+        {
+            wine_server_add_data( req, names->dll, dll_len );
+            wine_server_add_data( req, names->func, func_len );
+        }
+        if (!wine_server_call_err( req )) serial = reply->serial;
+    }
+    SERVER_END_REQ;
+    return serial;
+}
+
+/***********************************************************************
+ *           get_user_api_hook
+ *
+ * The session's user API hook: names->dll is empty if there is none.
+ */
+BOOL get_user_api_hook( struct user_api_hook_names *names )
+{
+    WCHAR buffer[MAX_PATH + 64 + 2];
+    data_size_t size = 0, dll_len = 0;
+    BOOL ret;
+
+    memset( names, 0, sizeof(*names) );
+    SERVER_START_REQ( get_user_api_hook )
+    {
+        wine_server_set_reply( req, buffer, sizeof(buffer) - sizeof(WCHAR) );
+        if ((ret = !wine_server_call_err( req )))
+        {
+            names->serial = reply->serial;
+            size = wine_server_reply_size( reply );
+            dll_len = reply->dll_len;
+        }
+    }
+    SERVER_END_REQ;
+    if (!ret || !size || dll_len > size || dll_len > sizeof(names->dll)) return ret;
+    memcpy( names->dll, buffer, dll_len );
+    names->dll[ARRAY_SIZE(names->dll) - 1] = 0;
+    size = min( size - dll_len, sizeof(names->func) - sizeof(WCHAR) );
+    memcpy( names->func, (char *)buffer + dll_len, size );
+    return TRUE;
+}

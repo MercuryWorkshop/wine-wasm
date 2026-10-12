@@ -326,6 +326,8 @@ DECL_HANDLER(reply_lpc_message);
 DECL_HANDLER(get_lpc_reply);
 DECL_HANDLER(get_apc_data);
 DECL_HANDLER(set_apc_data);
+DECL_HANDLER(set_user_api_hook);
+DECL_HANDLER(get_user_api_hook);
 
 typedef void (*req_handler)( const void *req, void *reply );
 static const req_handler req_handlers[REQ_NB_REQUESTS] =
@@ -649,6 +651,8 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_get_lpc_reply,
     (req_handler)req_get_apc_data,
     (req_handler)req_set_apc_data,
+    (req_handler)req_set_user_api_hook,
+    (req_handler)req_get_user_api_hook,
 };
 
 C_ASSERT( sizeof(abstime_t) == 8 );
@@ -2467,3 +2471,11 @@ C_ASSERT( sizeof(struct get_apc_data_request) == 16 );
 C_ASSERT( sizeof(struct get_apc_data_reply) == 8 );
 C_ASSERT( offsetof(struct set_apc_data_request, handle) == 12 );
 C_ASSERT( sizeof(struct set_apc_data_request) == 16 );
+C_ASSERT( offsetof(struct set_user_api_hook_request, dll_len) == 12 );
+C_ASSERT( sizeof(struct set_user_api_hook_request) == 16 );
+C_ASSERT( offsetof(struct set_user_api_hook_reply, serial) == 8 );
+C_ASSERT( sizeof(struct set_user_api_hook_reply) == 16 );
+C_ASSERT( sizeof(struct get_user_api_hook_request) == 16 );
+C_ASSERT( offsetof(struct get_user_api_hook_reply, serial) == 8 );
+C_ASSERT( offsetof(struct get_user_api_hook_reply, dll_len) == 12 );
+C_ASSERT( sizeof(struct get_user_api_hook_reply) == 16 );

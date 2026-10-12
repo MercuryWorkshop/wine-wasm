@@ -311,7 +311,7 @@ LRESULT ScrollBarWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
  *  ( if nBar is SB_CTL, GetScrollInfo returns TRUE even if nothing
  *  is filled)
  */
-BOOL WINAPI DECLSPEC_HOTPATCH GetScrollInfo(HWND hwnd, INT nBar, LPSCROLLINFO info)
+BOOL WINAPI real_GetScrollInfo(HWND hwnd, INT nBar, LPSCROLLINFO info)
 {
     TRACE("hwnd=%p nBar=%d info=%p\n", hwnd, nBar, info);
 
@@ -455,4 +455,34 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetScrollRange( HWND hwnd, int bar, int *min, int 
     if (min) *min = info.nMin;
     if (max) *max = info.nMax;
     return TRUE;
+}
+
+
+/*************************************************************************
+ *           GetScrollInfo   (USER32.@)
+ */
+BOOL WINAPI DECLSPEC_HOTPATCH GetScrollInfo( HWND hwnd, INT bar, SCROLLINFO *info )
+{
+    USERAPIHOOK *hook = uah;
+    return hook ? hook->GetScrollInfo( hwnd, bar, info ) : real_GetScrollInfo( hwnd, bar, info );
+}
+
+
+/*************************************************************************
+ *           SetScrollInfo   (USER32.@)
+ */
+INT WINAPI DECLSPEC_HOTPATCH SetScrollInfo( HWND hwnd, INT bar, const SCROLLINFO *info, BOOL redraw )
+{
+    USERAPIHOOK *hook = uah;
+    return hook ? hook->SetScrollInfo( hwnd, bar, info, redraw ) : NtUserSetScrollInfo( hwnd, bar, info, redraw );
+}
+
+
+/*************************************************************************
+ *           EnableScrollBar   (USER32.@)
+ */
+BOOL WINAPI DECLSPEC_HOTPATCH EnableScrollBar( HWND hwnd, UINT bar, UINT flags )
+{
+    USERAPIHOOK *hook = uah;
+    return hook ? hook->EnableScrollBar( hwnd, bar, flags ) : NtUserEnableScrollBar( hwnd, bar, flags );
 }

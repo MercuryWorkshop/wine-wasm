@@ -7659,6 +7659,12 @@ ULONG_PTR WINAPI NtUserCallTwoParam( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code 
     case NtUserAllocWinProc:
         return (UINT_PTR)alloc_winproc( (WNDPROC)arg1, arg2 );
 
+    case NtUserCallTwoParam_SetUserApiHook:
+        return set_user_api_hook( (const struct user_api_hook_names *)arg1 );
+
+    case NtUserCallTwoParam_GetUserApiHook:
+        return get_user_api_hook( (struct user_api_hook_names *)arg1 );
+
     default:
         FIXME( "invalid code %u\n", code );
         return 0;

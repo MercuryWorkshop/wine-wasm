@@ -6428,6 +6428,36 @@ struct set_apc_data_reply
 };
 
 
+
+struct set_user_api_hook_request
+{
+    struct request_header __header;
+    data_size_t         dll_len;
+    /* VARARG(names,bytes); */
+};
+struct set_user_api_hook_reply
+{
+    struct reply_header __header;
+    unsigned int        serial;
+    char __pad_12[4];
+};
+
+
+
+struct get_user_api_hook_request
+{
+    struct request_header __header;
+    char __pad_12[4];
+};
+struct get_user_api_hook_reply
+{
+    struct reply_header __header;
+    unsigned int        serial;
+    data_size_t         dll_len;
+    /* VARARG(names,bytes); */
+};
+
+
 enum request
 {
     REQ_new_process,
@@ -6749,6 +6779,8 @@ enum request
     REQ_get_lpc_reply,
     REQ_get_apc_data,
     REQ_set_apc_data,
+    REQ_set_user_api_hook,
+    REQ_get_user_api_hook,
     REQ_NB_REQUESTS
 };
 
@@ -7075,6 +7107,8 @@ union generic_request
     struct get_lpc_reply_request get_lpc_reply_request;
     struct get_apc_data_request get_apc_data_request;
     struct set_apc_data_request set_apc_data_request;
+    struct set_user_api_hook_request set_user_api_hook_request;
+    struct get_user_api_hook_request get_user_api_hook_request;
 };
 union generic_reply
 {
@@ -7399,6 +7433,8 @@ union generic_reply
     struct get_lpc_reply_reply get_lpc_reply_reply;
     struct get_apc_data_reply get_apc_data_reply;
     struct set_apc_data_reply set_apc_data_reply;
+    struct set_user_api_hook_reply set_user_api_hook_reply;
+    struct get_user_api_hook_reply get_user_api_hook_reply;
 };
 
 #define SERVER_PROTOCOL_VERSION 960

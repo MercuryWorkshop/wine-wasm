@@ -84,7 +84,7 @@ static void default_ime_compositionA( HWND hwnd, WPARAM wparam, LPARAM lparam )
  *
  * See DefWindowProcW.
  */
-LRESULT WINAPI DefWindowProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam )
+LRESULT WINAPI real_DefWindowProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam )
 {
     LRESULT result = 0;
     HWND full_handle;
@@ -146,7 +146,7 @@ LRESULT WINAPI DefWindowProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
  *  RETURNS
  *     Return value is dependent upon the message.
 */
-LRESULT WINAPI DefWindowProcW(
+LRESULT WINAPI real_DefWindowProcW(
     HWND hwnd,      /* [in] window procedure receiving message */
     UINT msg,       /* [in] message identifier */
     WPARAM wParam,  /* [in] first message parameter */
@@ -197,4 +197,32 @@ LRESULT WINAPI DefWindowProcW(
     }
     SPY_ExitMessage( SPY_RESULT_DEFWND, hwnd, msg, result, wParam, lParam );
     return result;
+}
+
+
+/***********************************************************************
+ *              DefWindowProcA (USER32.@)
+ */
+LRESULT WINAPI DefWindowProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam )
+{
+    USERAPIHOOK *hook;
+
+    uah_check( FALSE );
+    if ((hook = uah) && uah_is_override( &hook->DefWndProcArray, msg ))
+        return hook->DefWindowProcA( hwnd, msg, wParam, lParam );
+    return real_DefWindowProcA( hwnd, msg, wParam, lParam );
+}
+
+
+/***********************************************************************
+ *              DefWindowProcW (USER32.@)
+ */
+LRESULT WINAPI DefWindowProcW( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam )
+{
+    USERAPIHOOK *hook;
+
+    uah_check( FALSE );
+    if ((hook = uah) && uah_is_override( &hook->DefWndProcArray, msg ))
+        return hook->DefWindowProcW( hwnd, msg, wParam, lParam );
+    return real_DefWindowProcW( hwnd, msg, wParam, lParam );
 }

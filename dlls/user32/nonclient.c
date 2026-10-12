@@ -28,7 +28,7 @@
 /***********************************************************************
  *		DrawCaption (USER32.@) Draws a caption bar
  */
-BOOL WINAPI DrawCaption( HWND hwnd, HDC hdc, const RECT *rect, UINT flags )
+BOOL WINAPI real_DrawCaption( HWND hwnd, HDC hdc, const RECT *rect, UINT flags )
 {
     return NtUserDrawCaptionTemp( hwnd, hdc, rect, 0, 0, NULL, flags & 0x103f );
 }
@@ -145,4 +145,14 @@ void WINAPI USER_NonClientButtonDraw( HWND hwnd, HDC hdc, enum NONCLIENT_BUTTON_
         user_draw_mdi_button( hdc, type, rect, down, grayed );
         return;
     }
+}
+
+
+/***********************************************************************
+ *		DrawCaption (USER32.@) Draws a caption bar
+ */
+BOOL WINAPI DrawCaption( HWND hwnd, HDC hdc, const RECT *rect, UINT flags )
+{
+    USERAPIHOOK *hook = uah;
+    return hook ? hook->DrawCaption( hwnd, hdc, rect, flags ) : real_DrawCaption( hwnd, hdc, rect, flags );
 }

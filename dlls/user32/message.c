@@ -709,7 +709,9 @@ BOOL WINAPI PostThreadMessageA( DWORD thread, UINT msg, WPARAM wparam, LPARAM lp
  */
 BOOL WINAPI DECLSPEC_HOTPATCH PeekMessageW( MSG *msg_out, HWND hwnd, UINT first, UINT last, UINT flags )
 {
-    return NtUserPeekMessage( msg_out, hwnd, first, last, flags );
+    if (!NtUserPeekMessage( msg_out, hwnd, first, last, flags )) return FALSE;
+    if (msg_out->message == WM_UAHINIT) uah_check( TRUE );
+    return TRUE;
 }
 
 
@@ -730,7 +732,9 @@ BOOL WINAPI DECLSPEC_HOTPATCH PeekMessageA( MSG *msg, HWND hwnd, UINT first, UIN
  */
 BOOL WINAPI DECLSPEC_HOTPATCH GetMessageW( MSG *msg, HWND hwnd, UINT first, UINT last )
 {
-    return NtUserGetMessage( msg, hwnd, first, last );
+    BOOL ret = NtUserGetMessage( msg, hwnd, first, last );
+    if (ret > 0 && msg->message == WM_UAHINIT) uah_check( TRUE );
+    return ret;
 }
 
 
