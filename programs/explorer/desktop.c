@@ -1170,6 +1170,32 @@ static inline BOOL is_whitespace(WCHAR c)
     return c == ' ' || c == '\t';
 }
 
+/* Whether the session's shell (winlogon's Shell) is another program than
+ * this one, Windows' explorer for instance: that shell then owns what
+ * Windows' shell owns (the shell window, the shell windows list, the
+ * appbars and the tray), and the desktop process only runs the desktop
+ * window. "explorer.exe", Wine's default, is found in the system directory:
+ * this program. */
+static BOOL other_shell(void)
+{
+    WCHAR value[MAX_PATH], path[MAX_PATH], self[MAX_PATH], *p;
+    DWORD size = sizeof(value);
+    BOOL quoted;
+
+    if (RegGetValueW( HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon",
+                      L"Shell", RRF_RT_REG_SZ, NULL, value, &size ))
+        return FALSE;
+    /* the program: up to the first blank outside quotes */
+    p = value;
+    if ((quoted = (*p == '"'))) p++;
+    memmove( value, p, (wcslen( p ) + 1) * sizeof(WCHAR) );
+    for (p = value; *p && (quoted ? *p != '"' : !is_whitespace( *p )); p++);
+    *p = 0;
+    if (!SearchPathW( NULL, value, L".exe", ARRAY_SIZE(path), path, NULL )) return FALSE;
+    if (!GetModuleFileNameW( NULL, self, ARRAY_SIZE(self) )) return FALSE;
+    return wcsicmp( path, self ) != 0;
+}
+
 /* Set the shell window if appropriate for the current desktop. We should set
    the shell window on the "Default" desktop on a visible window station, but
    not for other desktops. */
@@ -1208,7 +1234,7 @@ void manage_desktop( WCHAR *arg )
     WCHAR *cmdline = NULL, *driver = NULL;
     WCHAR *p = arg;
     const WCHAR *name = NULL;
-    BOOL enable_shell, enable_launchers, show_systray, no_tray_items;
+    BOOL enable_shell, enable_launchers, show_systray, no_tray_items, native_shell = FALSE;
     void (WINAPI *pShellDDEInit)( BOOL ) = NULL;
     HMODULE shell32;
     HANDLE thread;
@@ -1292,9 +1318,11 @@ void manage_desktop( WCHAR *arg )
         SystemParametersInfoW( SPI_SETDESKWALLPAPER, 0, NULL, FALSE );
         ClipCursor( NULL );
         initialize_display_settings( width, height );
-        initialize_appbar();
+        if (!(native_shell = other_shell())) initialize_appbar();
 
 #ifndef __wasm32__  /* (in the application's process: no shell, which would load DLLs under its loader lock) */
+        if (!native_shell)
+        {
         initialize_systray( using_root, enable_shell, show_systray, no_tray_items );
         if (!using_root && enable_launchers) initialize_launchers( hwnd );
 
@@ -1302,6 +1330,7 @@ void manage_desktop( WCHAR *arg )
             (pShellDDEInit = (void *)GetProcAddress( shell32, (LPCSTR)188)))
         {
             pShellDDEInit( TRUE );
+        }
         }
 #endif
     }
@@ -1325,7 +1354,7 @@ void manage_desktop( WCHAR *arg )
 #ifdef __wasm32__
     /* (as a process of its own, explorer /desktop hosts the shell windows
      * list, which Windows' shell components register their windows with) */
-    if (!desktop_is_thread)
+    if (!desktop_is_thread && !native_shell)
 #endif
     {
         desktopshellbrowserwindow_init();
@@ -1334,7 +1363,7 @@ void manage_desktop( WCHAR *arg )
 
     /* Ideally we would set the window of an IShellView here, but we never
        actually create one, so the desktop window itself will have to do. */
-    set_shell_window( hwnd );
+    if (!native_shell) set_shell_window( hwnd );
 
     /* run the desktop message loop */
     if (hwnd)
