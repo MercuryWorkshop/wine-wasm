@@ -291,6 +291,31 @@ void WINAPI WinSqmAddToStream( HANDLE session, DWORD datapoint_id, DWORD count, 
 }
 
 /******************************************************************************
+ *          WinSqmAddToStreamEx (NTDLL.@)
+ */
+void WINAPI WinSqmAddToStreamEx( HANDLE session, DWORD datapoint_id, DWORD version, DWORD count, void *entries )
+{
+    TRACE( "(%p, %lu, %lu, %lu, %p)\n", session, datapoint_id, version, count, entries );
+}
+
+/******************************************************************************
+ *          WinSqmSetString (NTDLL.@)
+ */
+void WINAPI WinSqmSetString( HANDLE session, DWORD datapoint_id, const WCHAR *value )
+{
+    TRACE( "(%p, %lu, %s)\n", session, datapoint_id, debugstr_w(value) );
+}
+
+/******************************************************************************
+ *          WinSqmEventEnabled (NTDLL.@)
+ */
+BOOL WINAPI WinSqmEventEnabled( DWORD event, const GUID *guid )
+{
+    TRACE( "(%lu, %s)\n", event, debugstr_guid(guid) );
+    return FALSE;
+}
+
+/******************************************************************************
  *          AitLogFeatureUsageByApp (NTDLL.1)
  *
  * Application Impact Telemetry: nothing is collected.
