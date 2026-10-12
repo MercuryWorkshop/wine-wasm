@@ -578,6 +578,63 @@ static int exec_server_child( void *arg )
     _exit( 1 );
 }
 
+/* The Worker of a process that started the server cannot be handed the
+ * server's memory (a busy Worker takes no messages), so it has no door: it
+ * runs its program again as a child, which starts with one, and passes on
+ * its exit (gex: `door_missing`). Not natively, nor in the single-thread
+ * page (no doors there). */
+__attribute__((import_module("gex"), import_name("door_missing")))
+extern int gex_door_missing(void);
+
+struct relaunch { const char *path; int cwd_fd; };
+
+static int relaunch_child( void *arg )
+{
+    struct relaunch *r = arg;
+    if (r->cwd_fd != -1) fchdir( r->cwd_fd );
+    /* as it was run (the loader finds ntdll.so from its own path) */
+    if (strchr( main_argv[0], '/' )) execv( main_argv[0], main_argv );
+    execv( "/proc/self/exe", main_argv );
+    _exit( 127 );
+}
+
+void wineserver_relaunch( int cwd_fd )
+{
+    const size_t stack_size = 64 * 1024;
+    struct relaunch r = { NULL, cwd_fd };
+    char *stack;
+    int status;
+    pid_t pid;
+
+    const char *door = getenv( "WINEGEX_DOOR" );
+
+    if (!wineserver_started || (door && !strcmp( door, "0" )) || !gex_door_missing()) return;
+    stack = mmap( NULL, stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0 );
+    if (stack == MAP_FAILED) return;
+    setenv( "WINEGEX_SERVER_STARTER", "1", 1 );
+    pid = clone( relaunch_child, stack + stack_size, CLONE_VFORK | SIGCHLD, &r );
+    munmap( stack, stack_size );
+    unsetenv( "WINEGEX_SERVER_STARTER" );
+    if (pid == -1) return;  /* carry on without doors */
+    while (waitpid( pid, &status, 0 ) == -1 && errno == EINTR);
+    if (WIFSIGNALED(status))
+    {
+        signal( WTERMSIG(status), SIG_DFL );
+        kill( getpid(), WTERMSIG(status) );
+        _exit( 128 + WTERMSIG(status) );
+    }
+    _exit( WIFEXITED(status) ? WEXITSTATUS(status) : 1 );
+}
+
+/* A relaunched process started the server (for wineserver_flush). Early,
+ * before the environment becomes the Windows one its children inherit. */
+static void wineserver_starter_env(void)
+{
+    if (!getenv( "WINEGEX_SERVER_STARTER" )) return;
+    wineserver_started = TRUE;
+    unsetenv( "WINEGEX_SERVER_STARTER" );
+}
+
 /* Ask the server to save the registry when the process that started it
  * exits (gexc ends the session with it). */
 void wineserver_flush(void)
@@ -2236,6 +2293,9 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
 {
     main_argc = argc;
     main_argv = argv;
+#ifdef __wasm32__
+    wineserver_starter_env();
+#endif
 
     gex_stage( "__wine_main" );
     init_paths();

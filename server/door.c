@@ -121,7 +121,7 @@ static int door_instance_ready( void *arg )
     return 0;
 }
 
-unsigned int __wine_door_dispatch( int unix_pid, int unix_tid );
+unsigned int __wine_door_dispatch( int unix_pid, int unix_tid, long long now, long long boot );
 
 /* proxied system calls, by number, for the census (WINEGEX_DOOR_STATS) */
 static int door_stats[512];
@@ -232,8 +232,11 @@ void door_pump_unlock( long long wake )
 /* Run one request from the door buffer as thread (unix_pid, unix_tid). The
  * caller (the gex host) holds the lock. Returns where the reply is in the
  * buffer, ~0u if no such thread (the client uses its pipes), ~1u if the
- * thread died in the request (no reply, as a closed reply pipe). */
-unsigned int __wine_door_dispatch( int unix_pid, int unix_tid )
+ * thread died in the request (no reply, as a closed reply pipe). `now`
+ * and `boot`, when not 0, are the time (100 ns since 1601) and
+ * CLOCK_BOOTTIME (100 ns) the host read: set_current_time without its two
+ * clock calls out of the door. */
+unsigned int __wine_door_dispatch( int unix_pid, int unix_tid, long long now, long long boot )
 {
     struct door_area *a = door_area;
     struct thread *thread;
@@ -242,7 +245,12 @@ unsigned int __wine_door_dispatch( int unix_pid, int unix_tid )
 
     if (!(thread = door_find_thread( unix_pid, unix_tid ))) return ~0u;
     a->calls++;
-    set_current_time();
+    if (now)
+    {
+        current_time = now;
+        monotonic_time = boot;
+    }
+    else set_current_time();
     ret = door_run_request( thread, (char *)(unsigned long)a->buf );
     /* a timeout earlier than the pump's sleep: the pump must look again */
     deadline = door_earliest_deadline();

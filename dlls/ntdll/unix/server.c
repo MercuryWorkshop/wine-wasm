@@ -1540,6 +1540,14 @@ static int server_connect(void)
         if (st.st_uid != getuid())
             fatal_error( "'%s/%s' is not owned by you\n", server_dir, SOCKETNAME );
 
+#ifdef __wasm32__
+        /* gex: a process that started the server runs its program again as
+         * a child with the door, before it connects (loader.c) */
+        {
+            extern void wineserver_relaunch( int cwd_fd );
+            wineserver_relaunch( initial_cwd );
+        }
+#endif
         /* try to connect to it */
         addr.sun_family = AF_UNIX;
         strcpy( addr.sun_path, SOCKETNAME );
