@@ -6256,6 +6256,136 @@ struct read_session_data_reply
 };
 
 
+
+struct create_lpc_port_request
+{
+    struct request_header __header;
+    data_size_t         max_info;
+    data_size_t         max_msg;
+    /* VARARG(objattr,object_attributes); */
+    char __pad_20[4];
+};
+struct create_lpc_port_reply
+{
+    struct reply_header __header;
+    obj_handle_t        handle;
+    char __pad_12[4];
+};
+
+
+
+struct connect_lpc_port_request
+{
+    struct request_header __header;
+    /* VARARG(objattr,object_attributes); */
+    /* VARARG(info,bytes); */
+    char __pad_12[4];
+};
+struct connect_lpc_port_reply
+{
+    struct reply_header __header;
+    obj_handle_t        wait;
+    data_size_t         max_msg;
+};
+
+
+
+struct listen_lpc_port_request
+{
+    struct request_header __header;
+    obj_handle_t        handle;
+};
+struct listen_lpc_port_reply
+{
+    struct reply_header __header;
+    client_ptr_t        context;
+    unsigned int        type;
+    unsigned int        id;
+    process_id_t        pid;
+    thread_id_t         tid;
+    /* VARARG(data,bytes); */
+};
+
+
+
+struct accept_lpc_port_request
+{
+    struct request_header __header;
+    char __pad_12[4];
+    client_ptr_t        context;
+    unsigned int        id;
+    int                 accept;
+    /* VARARG(info,bytes); */
+};
+struct accept_lpc_port_reply
+{
+    struct reply_header __header;
+    obj_handle_t        handle;
+    char __pad_12[4];
+};
+
+
+
+struct complete_lpc_port_request
+{
+    struct request_header __header;
+    obj_handle_t        handle;
+};
+struct complete_lpc_port_reply
+{
+    struct reply_header __header;
+};
+
+
+
+struct send_lpc_message_request
+{
+    struct request_header __header;
+    obj_handle_t        handle;
+    unsigned int        type;
+    /* VARARG(data,bytes); */
+    char __pad_20[4];
+};
+struct send_lpc_message_reply
+{
+    struct reply_header __header;
+    obj_handle_t        wait;
+    unsigned int        id;
+};
+
+
+
+struct reply_lpc_message_request
+{
+    struct request_header __header;
+    obj_handle_t        handle;
+    unsigned int        id;
+    /* VARARG(data,bytes); */
+    char __pad_20[4];
+};
+struct reply_lpc_message_reply
+{
+    struct reply_header __header;
+};
+
+
+
+struct get_lpc_reply_request
+{
+    struct request_header __header;
+    obj_handle_t        wait;
+};
+struct get_lpc_reply_reply
+{
+    struct reply_header __header;
+    obj_handle_t        port;
+    unsigned int        id;
+    process_id_t        pid;
+    thread_id_t         tid;
+    /* VARARG(data,bytes); */
+};
+
+
 enum request
 {
     REQ_new_process,
@@ -6567,6 +6697,14 @@ enum request
     REQ_d3dkmt_mutex_release,
     REQ_alpc_create_port,
     REQ_read_session_data,
+    REQ_create_lpc_port,
+    REQ_connect_lpc_port,
+    REQ_listen_lpc_port,
+    REQ_accept_lpc_port,
+    REQ_complete_lpc_port,
+    REQ_send_lpc_message,
+    REQ_reply_lpc_message,
+    REQ_get_lpc_reply,
     REQ_NB_REQUESTS
 };
 
@@ -6883,6 +7021,14 @@ union generic_request
     struct d3dkmt_mutex_release_request d3dkmt_mutex_release_request;
     struct alpc_create_port_request alpc_create_port_request;
     struct read_session_data_request read_session_data_request;
+    struct create_lpc_port_request create_lpc_port_request;
+    struct connect_lpc_port_request connect_lpc_port_request;
+    struct listen_lpc_port_request listen_lpc_port_request;
+    struct accept_lpc_port_request accept_lpc_port_request;
+    struct complete_lpc_port_request complete_lpc_port_request;
+    struct send_lpc_message_request send_lpc_message_request;
+    struct reply_lpc_message_request reply_lpc_message_request;
+    struct get_lpc_reply_request get_lpc_reply_request;
 };
 union generic_reply
 {
@@ -7197,8 +7343,16 @@ union generic_reply
     struct d3dkmt_mutex_release_reply d3dkmt_mutex_release_reply;
     struct alpc_create_port_reply alpc_create_port_reply;
     struct read_session_data_reply read_session_data_reply;
+    struct create_lpc_port_reply create_lpc_port_reply;
+    struct connect_lpc_port_reply connect_lpc_port_reply;
+    struct listen_lpc_port_reply listen_lpc_port_reply;
+    struct accept_lpc_port_reply accept_lpc_port_reply;
+    struct complete_lpc_port_reply complete_lpc_port_reply;
+    struct send_lpc_message_reply send_lpc_message_reply;
+    struct reply_lpc_message_reply reply_lpc_message_reply;
+    struct get_lpc_reply_reply get_lpc_reply_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 959
+#define SERVER_PROTOCOL_VERSION 960
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

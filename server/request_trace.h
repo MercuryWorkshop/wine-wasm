@@ -3549,6 +3549,97 @@ static void dump_read_session_data_reply( const struct read_session_data_reply *
     dump_varargs_bytes( " data=", cur_size );
 }
 
+static void dump_create_lpc_port_request( const struct create_lpc_port_request *req )
+{
+    fprintf( stderr, " max_info=%u", req->max_info );
+    fprintf( stderr, ", max_msg=%u", req->max_msg );
+    dump_varargs_object_attributes( ", objattr=", cur_size );
+}
+
+static void dump_create_lpc_port_reply( const struct create_lpc_port_reply *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+}
+
+static void dump_connect_lpc_port_request( const struct connect_lpc_port_request *req )
+{
+    dump_varargs_object_attributes( " objattr=", cur_size );
+    dump_varargs_bytes( ", info=", cur_size );
+}
+
+static void dump_connect_lpc_port_reply( const struct connect_lpc_port_reply *req )
+{
+    fprintf( stderr, " wait=%04x", req->wait );
+    fprintf( stderr, ", max_msg=%u", req->max_msg );
+}
+
+static void dump_listen_lpc_port_request( const struct listen_lpc_port_request *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+}
+
+static void dump_listen_lpc_port_reply( const struct listen_lpc_port_reply *req )
+{
+    dump_uint64( " context=", &req->context );
+    fprintf( stderr, ", type=%08x", req->type );
+    fprintf( stderr, ", id=%08x", req->id );
+    fprintf( stderr, ", pid=%04x", req->pid );
+    fprintf( stderr, ", tid=%04x", req->tid );
+    dump_varargs_bytes( ", data=", cur_size );
+}
+
+static void dump_accept_lpc_port_request( const struct accept_lpc_port_request *req )
+{
+    dump_uint64( " context=", &req->context );
+    fprintf( stderr, ", id=%08x", req->id );
+    fprintf( stderr, ", accept=%d", req->accept );
+    dump_varargs_bytes( ", info=", cur_size );
+}
+
+static void dump_accept_lpc_port_reply( const struct accept_lpc_port_reply *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+}
+
+static void dump_complete_lpc_port_request( const struct complete_lpc_port_request *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+}
+
+static void dump_send_lpc_message_request( const struct send_lpc_message_request *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+    fprintf( stderr, ", type=%08x", req->type );
+    dump_varargs_bytes( ", data=", cur_size );
+}
+
+static void dump_send_lpc_message_reply( const struct send_lpc_message_reply *req )
+{
+    fprintf( stderr, " wait=%04x", req->wait );
+    fprintf( stderr, ", id=%08x", req->id );
+}
+
+static void dump_reply_lpc_message_request( const struct reply_lpc_message_request *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+    fprintf( stderr, ", id=%08x", req->id );
+    dump_varargs_bytes( ", data=", cur_size );
+}
+
+static void dump_get_lpc_reply_request( const struct get_lpc_reply_request *req )
+{
+    fprintf( stderr, " wait=%04x", req->wait );
+}
+
+static void dump_get_lpc_reply_reply( const struct get_lpc_reply_reply *req )
+{
+    fprintf( stderr, " port=%04x", req->port );
+    fprintf( stderr, ", id=%08x", req->id );
+    fprintf( stderr, ", pid=%04x", req->pid );
+    fprintf( stderr, ", tid=%04x", req->tid );
+    dump_varargs_bytes( ", data=", cur_size );
+}
+
 typedef void (*dump_func)( const void *req );
 
 static const dump_func req_dumpers[REQ_NB_REQUESTS] =
@@ -3862,6 +3953,14 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_d3dkmt_mutex_release_request,
     (dump_func)dump_alpc_create_port_request,
     (dump_func)dump_read_session_data_request,
+    (dump_func)dump_create_lpc_port_request,
+    (dump_func)dump_connect_lpc_port_request,
+    (dump_func)dump_listen_lpc_port_request,
+    (dump_func)dump_accept_lpc_port_request,
+    (dump_func)dump_complete_lpc_port_request,
+    (dump_func)dump_send_lpc_message_request,
+    (dump_func)dump_reply_lpc_message_request,
+    (dump_func)dump_get_lpc_reply_request,
 };
 
 static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
@@ -4175,6 +4274,14 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
     NULL,
     (dump_func)dump_alpc_create_port_reply,
     (dump_func)dump_read_session_data_reply,
+    (dump_func)dump_create_lpc_port_reply,
+    (dump_func)dump_connect_lpc_port_reply,
+    (dump_func)dump_listen_lpc_port_reply,
+    (dump_func)dump_accept_lpc_port_reply,
+    NULL,
+    (dump_func)dump_send_lpc_message_reply,
+    NULL,
+    (dump_func)dump_get_lpc_reply_reply,
 };
 
 static const char * const req_names[REQ_NB_REQUESTS] =
@@ -4488,6 +4595,14 @@ static const char * const req_names[REQ_NB_REQUESTS] =
     "d3dkmt_mutex_release",
     "alpc_create_port",
     "read_session_data",
+    "create_lpc_port",
+    "connect_lpc_port",
+    "listen_lpc_port",
+    "accept_lpc_port",
+    "complete_lpc_port",
+    "send_lpc_message",
+    "reply_lpc_message",
+    "get_lpc_reply",
 };
 
 static const struct
@@ -4614,6 +4729,9 @@ static const struct
     { "PIPE_EMPTY",                  STATUS_PIPE_EMPTY },
     { "PIPE_LISTENING",              STATUS_PIPE_LISTENING },
     { "PIPE_NOT_AVAILABLE",          STATUS_PIPE_NOT_AVAILABLE },
+    { "PORT_CONNECTION_REFUSED",     STATUS_PORT_CONNECTION_REFUSED },
+    { "PORT_DISCONNECTED",           STATUS_PORT_DISCONNECTED },
+    { "PORT_MESSAGE_TOO_LONG",       STATUS_PORT_MESSAGE_TOO_LONG },
     { "PORT_NOT_SET",                STATUS_PORT_NOT_SET },
     { "PREDEFINED_HANDLE",           STATUS_PREDEFINED_HANDLE },
     { "PRIVILEGE_NOT_HELD",          STATUS_PRIVILEGE_NOT_HELD },
@@ -4622,6 +4740,7 @@ static const struct
     { "PROCESS_NOT_IN_JOB",          STATUS_PROCESS_NOT_IN_JOB },
     { "RANGE_NOT_LOCKED",            STATUS_RANGE_NOT_LOCKED },
     { "REPARSE_POINT_NOT_RESOLVED",  STATUS_REPARSE_POINT_NOT_RESOLVED },
+    { "REPLY_MESSAGE_MISMATCH",      STATUS_REPLY_MESSAGE_MISMATCH },
     { "SECTION_TOO_BIG",             STATUS_SECTION_TOO_BIG },
     { "SEMAPHORE_LIMIT_EXCEEDED",    STATUS_SEMAPHORE_LIMIT_EXCEEDED },
     { "SHARING_VIOLATION",           STATUS_SHARING_VIOLATION },
