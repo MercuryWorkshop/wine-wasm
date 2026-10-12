@@ -251,6 +251,194 @@ done:
 
 
 /**********************************************************************
+ *  MUI resource modules
+ *
+ * A Windows language-neutral image (one with a "MUI" resource) keeps its
+ * localizable resources in <dir>\<language>\<name>.mui. A resource the
+ * image does not have is looked up there, as Windows' loader does, and an
+ * entry found there is accessed relative to the .mui image.
+ */
+struct mui_module
+{
+    struct mui_module *next;
+    WCHAR             *ln_name;   /* NT name of the language-neutral file */
+    HMODULE            mui;       /* the .mui file mapped as a data file (base | 1), or 0 if none */
+    SIZE_T             size;
+};
+
+static struct mui_module *mui_modules;
+static RTL_CRITICAL_SECTION mui_section;
+static RTL_CRITICAL_SECTION_DEBUG mui_section_debug =
+{
+    0, 0, &mui_section,
+    { &mui_section_debug.ProcessLocksList, &mui_section_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": mui_section") }
+};
+static RTL_CRITICAL_SECTION mui_section = { &mui_section_debug, -1, 0, 0, 0, 0 };
+
+static BOOL has_mui_resource( HMODULE hmod )
+{
+    static const WCHAR muiW[] = {'M','U','I',0};
+    const IMAGE_RESOURCE_DIRECTORY *root;
+    ULONG size;
+
+    if (!(root = RtlImageDirectoryEntryToData( hmod, TRUE, IMAGE_DIRECTORY_ENTRY_RESOURCE, &size )))
+        return FALSE;
+    if (size < sizeof(*root)) return FALSE;
+    return find_entry_by_name( root, muiW, root, TRUE ) != NULL;
+}
+
+static HMODULE map_data_file( const WCHAR *name, SIZE_T *size )
+{
+    UNICODE_STRING str;
+    OBJECT_ATTRIBUTES attr;
+    IO_STATUS_BLOCK io;
+    HANDLE file, mapping;
+    void *base = NULL;
+    NTSTATUS status;
+
+    RtlInitUnicodeString( &str, name );
+    InitializeObjectAttributes( &attr, &str, OBJ_CASE_INSENSITIVE, 0, NULL );
+    if (NtOpenFile( &file, GENERIC_READ | SYNCHRONIZE, &attr, &io, FILE_SHARE_READ | FILE_SHARE_DELETE,
+                    FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE ))
+        return 0;
+    status = NtCreateSection( &mapping, STANDARD_RIGHTS_REQUIRED | SECTION_QUERY | SECTION_MAP_READ,
+                              NULL, NULL, PAGE_READONLY, SEC_COMMIT, file );
+    NtClose( file );
+    if (status) return 0;
+    *size = 0;
+    status = NtMapViewOfSection( mapping, GetCurrentProcess(), &base, 0, 0, NULL, size,
+                                 ViewShare, 0, PAGE_READONLY );
+    NtClose( mapping );
+    if (status) return 0;
+    if (!RtlImageNtHeader( base ))
+    {
+        NtUnmapViewOfSection( GetCurrentProcess(), base );
+        return 0;
+    }
+    return (HMODULE)((ULONG_PTR)base | 1);
+}
+
+/* the .mui file for a language-neutral file, in the first UI language that has one */
+static HMODULE load_mui_file( const WCHAR *ln_name, SIZE_T *size )
+{
+    static const WCHAR muiW[] = {'.','m','u','i',0};
+    LANGID langs[3];
+    const WCHAR *base = wcsrchr( ln_name, '\\' );
+    WCHAR locale[LOCALE_NAME_MAX_LENGTH], *path;
+    UNICODE_STRING str;
+    HMODULE ret = 0;
+    unsigned int i, n = 0;
+    SIZE_T dir_len;
+
+    if (!base) return 0;
+    base++;
+    dir_len = base - ln_name;
+    NtQueryDefaultUILanguage( &langs[n++] );
+    langs[n++] = MAKELANGID( LANG_ENGLISH, SUBLANG_ENGLISH_US );
+
+    if (!(path = RtlAllocateHeap( GetProcessHeap(), 0,
+                                  (dir_len + LOCALE_NAME_MAX_LENGTH + wcslen( base ) + 6) * sizeof(WCHAR) )))
+        return 0;
+    for (i = 0; i < n && !ret; i++)
+    {
+        if (i && langs[i] == langs[0]) continue;
+        str.Buffer = locale;
+        str.MaximumLength = sizeof(locale);
+        if (RtlLcidToLocaleName( langs[i], &str, 0, FALSE )) continue;
+        locale[str.Length / sizeof(WCHAR)] = 0;
+        memcpy( path, ln_name, dir_len * sizeof(WCHAR) );
+        path[dir_len] = 0;
+        wcscat( path, locale );
+        wcscat( path, L"\\" );
+        wcscat( path, base );
+        wcscat( path, muiW );
+        ret = map_data_file( path, size );
+        TRACE( "%s -> %p\n", debugstr_w(path), ret );
+    }
+    RtlFreeHeap( GetProcessHeap(), 0, path );
+    return ret;
+}
+
+/* the .mui module of a language-neutral module, mapped on first use */
+static HMODULE get_mui_module( HMODULE hmod )
+{
+    struct mui_module *mod;
+    MEMORY_SECTION_NAME *name;
+    SIZE_T len = sizeof(*name) + 1024 * sizeof(WCHAR);
+    HMODULE ret = 0;
+
+    if (!has_mui_resource( hmod )) return 0;
+    if (!(name = RtlAllocateHeap( GetProcessHeap(), 0, len ))) return 0;
+    if (NtQueryVirtualMemory( GetCurrentProcess(), (void *)((ULONG_PTR)hmod & ~3),
+                              MemoryMappedFilenameInformation, name, len, NULL ))
+    {
+        RtlFreeHeap( GetProcessHeap(), 0, name );
+        return 0;
+    }
+
+    RtlEnterCriticalSection( &mui_section );
+    for (mod = mui_modules; mod; mod = mod->next)
+        if (!wcsicmp( mod->ln_name, name->SectionFileName.Buffer )) break;
+    if (!mod && (mod = RtlAllocateHeap( GetProcessHeap(), 0, sizeof(*mod) )))
+    {
+        mod->ln_name = RtlAllocateHeap( GetProcessHeap(), 0, name->SectionFileName.Length + sizeof(WCHAR) );
+        if (mod->ln_name)
+        {
+            memcpy( mod->ln_name, name->SectionFileName.Buffer, name->SectionFileName.Length + sizeof(WCHAR) );
+            mod->mui = load_mui_file( mod->ln_name, &mod->size );
+            mod->next = mui_modules;
+            mui_modules = mod;
+        }
+        else
+        {
+            RtlFreeHeap( GetProcessHeap(), 0, mod );
+            mod = NULL;
+        }
+    }
+    if (mod) ret = mod->mui;
+    RtlLeaveCriticalSection( &mui_section );
+    RtlFreeHeap( GetProcessHeap(), 0, name );
+    return ret;
+}
+
+/* the .mui module an entry found by find_resource() is in, if it is in one */
+static HMODULE mui_module_from_entry( const void *entry )
+{
+    struct mui_module *mod;
+    HMODULE ret = 0;
+
+    RtlEnterCriticalSection( &mui_section );
+    for (mod = mui_modules; mod; mod = mod->next)
+    {
+        const char *base = (const char *)((ULONG_PTR)mod->mui & ~3);
+        if (mod->mui && (const char *)entry >= base && (const char *)entry < base + mod->size)
+        {
+            ret = mod->mui;
+            break;
+        }
+    }
+    RtlLeaveCriticalSection( &mui_section );
+    return ret;
+}
+
+/* find_entry(), falling back to the module's .mui file */
+static NTSTATUS find_resource( HMODULE hmod, const LDR_RESOURCE_INFO *info,
+                               ULONG level, const void **ret, int want_dir )
+{
+    NTSTATUS status = find_entry( hmod, info, level, ret, want_dir );
+    HMODULE mui;
+
+    if (status != STATUS_RESOURCE_TYPE_NOT_FOUND && status != STATUS_RESOURCE_NAME_NOT_FOUND &&
+        status != STATUS_RESOURCE_LANG_NOT_FOUND)
+        return status;
+    if (!(mui = get_mui_module( hmod ))) return status;
+    if (find_entry( mui, info, level, ret, want_dir )) return status;
+    return STATUS_SUCCESS;
+}
+
+
+/**********************************************************************
  *	LdrFindResourceDirectory_U  (NTDLL.@)
  */
 NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrFindResourceDirectory_U( HMODULE hmod, const LDR_RESOURCE_INFO *info,
@@ -266,7 +454,7 @@ NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrFindResourceDirectory_U( HMODULE hmod, cons
                      level > 1 ? debugstr_w((LPCWSTR)info->Name) : "",
                      level > 2 ? info->Language : 0, level );
 
-        status = find_entry( hmod, info, level, &res, TRUE );
+        status = find_resource( hmod, info, level, &res, TRUE );
         if (status == STATUS_SUCCESS) *dir = res;
     }
     __EXCEPT_PAGE_FAULT
@@ -294,7 +482,7 @@ NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrFindResource_U( HMODULE hmod, const LDR_RES
                      level > 1 ? debugstr_w((LPCWSTR)info->Name) : "",
                      level > 2 ? info->Language : 0, level );
 
-        status = find_entry( hmod, info, level, &res, FALSE );
+        status = find_resource( hmod, info, level, &res, FALSE );
         if (status == STATUS_SUCCESS) *entry = res;
     }
     __EXCEPT_PAGE_FAULT
@@ -320,7 +508,9 @@ static inline NTSTATUS access_resource( HMODULE hmod, const IMAGE_RESOURCE_DATA_
     __TRY
     {
         ULONG dirsize;
+        HMODULE mui = mui_module_from_entry( entry );
 
+        if (mui) hmod = mui;
         if (!RtlImageDirectoryEntryToData( hmod, TRUE, IMAGE_DIRECTORY_ENTRY_RESOURCE, &dirsize ))
             status = STATUS_RESOURCE_DATA_NOT_FOUND;
         else
