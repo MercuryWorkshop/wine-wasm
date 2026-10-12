@@ -114,6 +114,12 @@ int main( void )
     enable_privilege( process_token, L"SeTcbPrivilege" );
     enable_privilege( process_token, L"SeDebugPrivilege" );
 
+    /* the session's desktop, before anything runs on it (Windows' winlogon
+     * creates it before it starts the shell): a shell starting first raced
+     * this process to start the desktop process, and the loser of two
+     * desktop processes opened a browser window */
+    GetDesktopWindow();
+
     if (*(shell = shell_command_line()))
     {
         STARTUPINFOW si = { sizeof(si) };
