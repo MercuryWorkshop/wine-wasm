@@ -411,15 +411,42 @@ static BOOL is_unix_console_handle( HANDLE handle )
  * (CLONE_VFORK: a copy of the address space) running a function on a stack
  * of its own, which ends in exec or _exit. */
 extern int clone( int (*func)(void *), void *stack, int flags, void *arg, ... );
+/* musl's: hold (-1), release (1), or in the child reset (0) the malloc lock. */
+extern void __malloc_atfork( int who );
 
+struct fork_call_args
+{
+    int (*func)(void *);
+    void *arg;
+};
+
+static int fork_call_child( void *arg )
+{
+    const struct fork_call_args *a = arg;
+
+    __malloc_atfork( 0 );
+    return a->func( a->arg );
+}
+
+/* The child runs Wine code that allocates (putenv, build_argv). fork()
+ * makes the copied heap consistent by holding the malloc lock across the
+ * copy; a clone does not, so the copy could be taken while another thread
+ * of the parent was halfway through malloc, and the child's first
+ * allocation then crashed in mallocng's consistency check (alloc_slot,
+ * from putenv in spawn_grandchild): "could not start ... (731)" in about
+ * half of all session boots, whichever program came first. Hold it here
+ * as fork() does. */
 static pid_t fork_call( int (*func)(void *), void *arg )
 {
     const size_t size = 256 * 1024;
     char *stack = mmap( NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0 );
+    struct fork_call_args a = { func, arg };
     pid_t pid;
 
     if (stack == MAP_FAILED) return -1;
-    pid = clone( func, stack + size, CLONE_VFORK | SIGCHLD, arg );
+    __malloc_atfork( -1 );
+    pid = clone( fork_call_child, stack + size, CLONE_VFORK | SIGCHLD, &a );
+    __malloc_atfork( 1 );
     munmap( stack, size );
     return pid;
 }
