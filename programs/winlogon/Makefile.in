@@ -1,0 +1,7 @@
+MODULE    = winlogon.exe
+IMPORTS   = advapi32
+
+EXTRADLLFLAGS = -mconsole
+
+SOURCES = \
+	main.c
