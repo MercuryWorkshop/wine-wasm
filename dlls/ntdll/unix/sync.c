@@ -3361,9 +3361,15 @@ NTSTATUS WINAPI NtRequestWaitReplyPort( HANDLE handle, LPC_MESSAGE *msg_in, LPC_
     TRACE( "(%p,%p,%p) size %u\n", handle, msg_in, msg_out, msg_in ? msg_in->DataSize : 0 );
     if (!msg_in || !msg_out) return STATUS_INVALID_PARAMETER;
 
+    if (TRACE_ON(sync) && msg_in->DataSize >= 16)
+        TRACE( "data %08x %08x %08x %08x\n", ((UINT *)msg_in->Data)[0], ((UINT *)msg_in->Data)[1],
+               ((UINT *)msg_in->Data)[2], ((UINT *)msg_in->Data)[3] );
     if ((ret = lpc_send( handle, LPC_REQUEST, msg_in, &wait, NULL ))) return ret;
     if (!(ret = lpc_get_answer( wait, NULL, msg_out->Data, LPC_MAX_DATA, &len, &id, &pid, &tid )))
         lpc_fill_header( msg_out, LPC_REPLY, id, pid, tid, len );
+    if (TRACE_ON(sync) && !ret && len >= 12)
+        TRACE( "-> reply %08x %08x %08x\n", ((UINT *)msg_out->Data)[0], ((UINT *)msg_out->Data)[1],
+               ((UINT *)msg_out->Data)[2] );
     TRACE( "-> %#x\n", (int)ret );
     return ret;
 }
