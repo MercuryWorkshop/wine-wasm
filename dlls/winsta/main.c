@@ -145,6 +145,19 @@ BOOLEAN WINAPI WinStationGetConnectionProperty( ULONG session, const GUID *type,
     return FALSE;
 }
 
+/* Whether a session can be used remotely: the console session cannot. */
+BOOLEAN WINAPI WinStationIsSessionRemoteable( HANDLE server, ULONG session, BOOLEAN *remoteable )
+{
+    TRACE( "%p %ld %p\n", server, session, remoteable );
+    if (!remoteable)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    *remoteable = FALSE;
+    return TRUE;
+}
+
 BOOLEAN WINAPI WinStationFreePropertyValue( void *value )
 {
     TRACE( "%p\n", value );

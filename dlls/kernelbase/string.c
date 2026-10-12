@@ -1249,6 +1249,94 @@ INT WINAPI DECLSPEC_HOTPATCH LoadStringW(HINSTANCE instance, UINT resource_id, L
     return i;
 }
 
+/***********************************************************************
+ *           LoadStringByReference   (kernelbase.@)
+ *
+ * Copies source to buffer, or, for an indirect string "@file,-id[;comment]",
+ * the string resource id of file (relative to directory, if given and the
+ * name is relative). out, if not NULL, receives the length copied or, for a
+ * buffer too small, needed (in characters, with the terminator).
+ */
+BOOL WINAPI LoadStringByReference( DWORD flags, const WCHAR *language, const WCHAR *source,
+                                   WCHAR *buffer, ULONG len, const WCHAR *directory, ULONG *out )
+{
+    WCHAR *name, *comma, *path = NULL, *expanded = NULL, *str;
+    HMODULE module = 0;
+    DWORD size;
+    ULONG count;
+    BOOL ret = FALSE;
+    int id;
+
+    TRACE( "%#lx %s %s %p %lu %s %p\n", flags, debugstr_w(language), debugstr_w(source),
+           buffer, len, debugstr_w(directory), out );
+
+    if (!source || (!buffer && len))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    if (source[0] != '@')
+    {
+        count = lstrlenW( source ) + 1;
+        if (out) *out = count;
+        if (count > len)
+        {
+            SetLastError( ERROR_INSUFFICIENT_BUFFER );
+            return FALSE;
+        }
+        memcpy( buffer, source, count * sizeof(WCHAR) );
+        return TRUE;
+    }
+
+    if (!(name = HeapAlloc( GetProcessHeap(), 0, (lstrlenW( source ) + 1) * sizeof(WCHAR) ))) return FALSE;
+    lstrcpyW( name, source + 1 );
+    if ((str = wcschr( name, ';' ))) *str = 0;  /* the comment */
+    if (!(comma = wcsrchr( name, ',' )) || (id = wcstol( comma + 1, NULL, 10 )) >= 0)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        goto done;
+    }
+    *comma = 0;
+
+    size = ExpandEnvironmentStringsW( name, NULL, 0 );
+    if (!size || !(expanded = HeapAlloc( GetProcessHeap(), 0, size * sizeof(WCHAR) ))) goto done;
+    ExpandEnvironmentStringsW( name, expanded, size );
+    if (directory && PathIsRelativeW( expanded ))
+    {
+        size = lstrlenW( directory ) + lstrlenW( expanded ) + 2;
+        if (!(path = HeapAlloc( GetProcessHeap(), 0, size * sizeof(WCHAR) ))) goto done;
+        lstrcpyW( path, directory );
+        if (*path && path[lstrlenW( path ) - 1] != '\\') lstrcatW( path, L"\\" );
+        lstrcatW( path, expanded );
+    }
+
+    if (!(module = LoadLibraryExW( path ? path : expanded, 0,
+                                   LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE )))
+        goto done;
+    if (!(count = LoadStringW( module, -id, (WCHAR *)&str, 0 )))
+    {
+        SetLastError( ERROR_RESOURCE_NAME_NOT_FOUND );
+        goto done;
+    }
+    if (out) *out = count + 1;
+    if (count + 1 > len)
+    {
+        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+        goto done;
+    }
+    memcpy( buffer, str, count * sizeof(WCHAR) );
+    buffer[count] = 0;
+    ret = TRUE;
+
+done:
+    TRACE( "-> %d %s\n", ret, ret ? debugstr_w(buffer) : "" );
+    if (module) FreeLibrary( module );
+    HeapFree( GetProcessHeap(), 0, path );
+    HeapFree( GetProcessHeap(), 0, expanded );
+    HeapFree( GetProcessHeap(), 0, name );
+    return ret;
+}
+
 INT WINAPI DECLSPEC_HOTPATCH LoadStringA(HINSTANCE instance, UINT resource_id, LPSTR buffer, INT buflen)
 {
     DWORD retval = 0;

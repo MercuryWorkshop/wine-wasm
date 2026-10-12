@@ -1199,6 +1199,35 @@ BOOL WINAPI IsWindowInDestroy( HWND hwnd )
 
 
 /*******************************************************************
+ *		PaintMonitor (USER32.@)
+ *
+ * Paint the desktop's background on a monitor's part of a DC.
+ */
+BOOL WINAPI PaintMonitor( HMONITOR monitor, HDC hdc, const RECT *rect )
+{
+    TRACE( "%p %p %s\n", monitor, hdc, wine_dbgstr_rect( rect ));
+    return PaintDesktop( hdc );
+}
+
+/*******************************************************************
+ *		IsSETEnabled (USER32.@)
+ */
+BOOL WINAPI IsSETEnabled(void)
+{
+    return FALSE;
+}
+
+/*****************************************************************
+ *		DesktopHasWatermarkText (USER32.2000)
+ *
+ * Whether the desktop shows a build or licensing watermark: never.
+ */
+BOOL WINAPI DesktopHasWatermarkText(void)
+{
+    return FALSE;
+}
+
+/*******************************************************************
  *		IsServerSideWindow (USER32.@)
  *
  * Whether the window procedure runs in the kernel. None does here: every

@@ -973,7 +973,7 @@
 @ stdcall LoadResource(long long)
 @ stdcall LoadStringA(long long ptr long)
 @ stub LoadStringBaseExW
-@ stub LoadStringByReference
+@ stdcall LoadStringByReference(long wstr wstr ptr long wstr ptr)
 @ stdcall LoadStringW(long long ptr long)
 @ stdcall LocalAlloc(long long)
 @ stdcall LocalFileTimeToFileTime(ptr ptr)
