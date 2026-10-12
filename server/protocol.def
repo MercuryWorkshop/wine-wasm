@@ -4457,3 +4457,21 @@ enum inproc_sync_type
     obj_handle_t        handle;         /* the APC (the target's handle) */
     VARARG(data,bytes);
 @END
+
+
+/* Register the session's user API hook, as RegisterUserApiHook (no names: unregister) */
+@REQ(set_user_api_hook)
+    data_size_t         dll_len;        /* bytes of the DLL path; the function name follows */
+    VARARG(names,bytes);
+@REPLY
+    unsigned int        serial;         /* the registration's serial number */
+@END
+
+
+/* Get the session's user API hook */
+@REQ(get_user_api_hook)
+@REPLY
+    unsigned int        serial;         /* changes with each (un)registration */
+    data_size_t         dll_len;        /* bytes of the DLL path; the function name follows */
+    VARARG(names,bytes);                /* nothing if no hook is registered */
+@END

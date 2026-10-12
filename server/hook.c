@@ -571,3 +571,43 @@ DECL_HANDLER(get_hook_info)
     }
     reply->proc = hook->proc;
 }
+
+
+/* the user API hook (RegisterUserApiHook): the DLL every GUI process of the
+ * session loads and the function it calls there, which replaces parts of
+ * user32 (Windows 7's visual styles) */
+static struct
+{
+    unsigned int serial;
+    data_size_t  dll_len;
+    data_size_t  size;
+    void        *names;
+} user_api_hook;
+
+DECL_HANDLER(set_user_api_hook)
+{
+    data_size_t size = get_req_data_size();
+    void *names = NULL;
+
+    if (req->dll_len > size || (req->dll_len % sizeof(WCHAR)) || (size % sizeof(WCHAR)))
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        return;
+    }
+    if (size && !(names = memdup( get_req_data(), size ))) return;
+    free( user_api_hook.names );
+    user_api_hook.names   = names;
+    user_api_hook.size    = size;
+    user_api_hook.dll_len = req->dll_len;
+    reply->serial = ++user_api_hook.serial;
+}
+
+DECL_HANDLER(get_user_api_hook)
+{
+    reply->serial  = user_api_hook.serial;
+    reply->dll_len = user_api_hook.dll_len;
+    if (user_api_hook.size <= get_reply_max_size())
+        set_reply_data( user_api_hook.names, user_api_hook.size );
+    else
+        set_error( STATUS_BUFFER_OVERFLOW );
+}

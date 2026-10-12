@@ -541,8 +541,8 @@ BOOL WINAPI IsWinEventHookInstalled(DWORD dwEvent)
     return TRUE;
 }
 
-/* Undocumented RegisterUserApiHook() */
-BOOL WINAPI RegisterUserApiHook(const struct user_api_hook *new_hook, struct user_api_hook *old_hook)
+/* Wine's own user API hook, for its builtin uxtheme */
+BOOL WINAPI __wine_register_user_api_hook(const struct user_api_hook *new_hook, struct user_api_hook *old_hook)
 {
     if (!new_hook)
         return FALSE;
@@ -556,8 +556,241 @@ BOOL WINAPI RegisterUserApiHook(const struct user_api_hook *new_hook, struct use
     return TRUE;
 }
 
-/* Undocumented UnregisterUserApiHook() */
-void WINAPI UnregisterUserApiHook(void)
+void WINAPI __wine_unregister_user_api_hook(void)
 {
     InterlockedExchangePointer((void **)&user_api, &original_user_api);
+}
+
+
+/***********************************************************************
+ * Windows' user API hook
+ *
+ * RegisterUserApiHook names a DLL and a function in it. Every GUI process
+ * of the session loads that DLL, here when it first creates a window or
+ * calls DefWindowProc, and again when it gets WM_UAHINIT (which the hook's
+ * owner posts after changing it). The function gets a USERAPIHOOK holding
+ * user32's own functions and replaces those it wants; the hook then
+ * stays in place until it is unregistered.
+ */
+
+typedef struct
+{
+    DWORD        size;
+    const WCHAR *dll1;
+    const WCHAR *func1;
+    const WCHAR *dll2;
+    const WCHAR *func2;
+} USERAPIHOOKINFO;
+
+enum uah_state { UAH_LOAD_INIT, UAH_STOP, UAH_SHUTDOWN };
+typedef BOOL (CALLBACK *uah_init_func)( enum uah_state, USERAPIHOOK * );
+
+USERAPIHOOK *uah;
+static USERAPIHOOK uah_table;
+static uah_init_func uah_init;
+static HMODULE uah_module;
+static unsigned int uah_serial;
+static BOOL uah_checked;
+static DWORD uah_thread;    /* the thread loading the hook */
+
+static CRITICAL_SECTION uah_cs;
+static CRITICAL_SECTION_DEBUG uah_cs_debug =
+{
+    0, 0, &uah_cs,
+    { &uah_cs_debug.ProcessLocksList, &uah_cs_debug.ProcessLocksList },
+    0, 0, { (DWORD_PTR)(__FILE__ ": uah_cs") }
+};
+static CRITICAL_SECTION uah_cs = { &uah_cs_debug, -1, 0, 0, 0, 0 };
+
+static INT WINAPI real_SetWindowRgn( HWND hwnd, HRGN rgn, BOOL redraw )
+{
+    return NtUserSetWindowRgn( hwnd, rgn, redraw );
+}
+
+static INT WINAPI real_SetScrollInfo( HWND hwnd, INT bar, const SCROLLINFO *info, BOOL redraw )
+{
+    return NtUserSetScrollInfo( hwnd, bar, info, redraw );
+}
+
+static BOOL WINAPI real_EnableScrollBar( HWND hwnd, UINT bar, UINT flags )
+{
+    return NtUserEnableScrollBar( hwnd, bar, flags );
+}
+
+static void WINAPI real_MDIRedrawFrame( HWND hwnd, DWORD flags )
+{
+    NtUserSetWindowPos( hwnd, 0, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOSIZE | SWP_NOMOVE |
+                        SWP_NOACTIVATE | SWP_NOZORDER );
+}
+
+static HWND WINAPI real_GetRealWindowOwner( HWND hwnd )
+{
+    return GetWindow( hwnd, GW_OWNER );
+}
+
+/* stop the hook in this process; uah_cs held */
+static void uah_stop(void)
+{
+    uah_init_func init = uah_init;
+
+    uah = NULL;
+    uah_init = NULL;
+    uah_module = 0;   /* never unloaded: other threads may still be in it */
+    if (init) init( UAH_STOP, NULL );
+}
+
+static BOOL WINAPI real_ForceResetUserApiHook( HINSTANCE module )
+{
+    BOOL ret = FALSE;
+
+    EnterCriticalSection( &uah_cs );
+    if (uah_module && uah_module == module)
+    {
+        uah_stop();
+        ret = TRUE;
+    }
+    LeaveCriticalSection( &uah_cs );
+    return ret;
+}
+
+static void uah_fill_table( USERAPIHOOK *table )
+{
+    memset( table, 0, sizeof(*table) );
+    table->size                  = sizeof(*table);
+    table->DefWindowProcA        = real_DefWindowProcA;
+    table->DefWindowProcW        = real_DefWindowProcW;
+    table->GetScrollInfo         = real_GetScrollInfo;
+    table->SetScrollInfo         = real_SetScrollInfo;
+    table->EnableScrollBar       = real_EnableScrollBar;
+    table->AdjustWindowRectEx    = real_AdjustWindowRectEx;
+    table->SetWindowRgn          = real_SetWindowRgn;
+    table->GetSystemMetrics      = real_GetSystemMetrics;
+    table->SystemParametersInfoA = real_SystemParametersInfoA;
+    table->SystemParametersInfoW = real_SystemParametersInfoW;
+    table->ForceResetUserApiHook = real_ForceResetUserApiHook;
+    table->DrawFrameControl      = real_DrawFrameControl;
+    table->DrawCaption           = real_DrawCaption;
+    table->MDIRedrawFrame        = real_MDIRedrawFrame;
+    table->GetRealWindowOwner    = real_GetRealWindowOwner;
+}
+
+/* load the hook DLL and start the hook; uah_cs held */
+static void uah_load( const struct user_api_hook_names *names )
+{
+    char func[ARRAY_SIZE(names->func)];
+    uah_init_func init;
+    HMODULE module;
+
+    if (!WideCharToMultiByte( CP_ACP, 0, names->func, -1, func, sizeof(func), NULL, NULL )) return;
+    if (!(module = LoadLibraryW( names->dll )))
+    {
+        WARN( "could not load %s (%lu)\n", debugstr_w(names->dll), GetLastError() );
+        return;
+    }
+    if (!(init = (uah_init_func)GetProcAddress( module, func )))
+    {
+        WARN( "no %s in %s\n", debugstr_a(func), debugstr_w(names->dll) );
+        FreeLibrary( module );
+        return;
+    }
+    uah_fill_table( &uah_table );
+    if (!init( UAH_LOAD_INIT, &uah_table ))
+    {
+        WARN( "%s!%s failed\n", debugstr_w(names->dll), debugstr_a(func) );
+        FreeLibrary( module );
+        return;
+    }
+    TRACE( "%s!%s installed\n", debugstr_w(names->dll), debugstr_a(func) );
+    uah_module = module;
+    uah_init = init;
+    uah = &uah_table;
+}
+
+/***********************************************************************
+ *		uah_check
+ *
+ * Bring this process up to date with the session's user API hook: once
+ * (force FALSE), or whenever the hook may have changed (force TRUE).
+ */
+void uah_check( BOOL force )
+{
+    struct user_api_hook_names names;
+
+    if (!force && uah_checked) return;
+    if (uah_thread == GetCurrentThreadId()) return;   /* the hook DLL itself, while loading */
+    if (!TryEnterCriticalSection( &uah_cs )) return;  /* another thread is loading it */
+    if (force || !uah_checked)
+    {
+        uah_checked = TRUE;
+        uah_thread = GetCurrentThreadId();
+        if (NtUserCallTwoParam( (UINT_PTR)&names, 0, NtUserCallTwoParam_GetUserApiHook ) &&
+            names.serial != uah_serial)
+        {
+            uah_serial = names.serial;
+            if (uah_init) uah_stop();
+            if (names.dll[0]) uah_load( &names );
+        }
+        uah_thread = 0;
+    }
+    LeaveCriticalSection( &uah_cs );
+}
+
+/***********************************************************************
+ *		uah_call_owp
+ *
+ * Call a window or dialog procedure through the hook's procedures for the
+ * messages it wants to see: pre may handle the message itself, post sees
+ * the procedure's result.
+ */
+LRESULT uah_call_owp( UAH_OWP pre, UAH_OWP post, const struct uah_msg_array *array,
+                      HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
+                      LRESULT (*call)( HWND, UINT, WPARAM, LPARAM, void * ), void *arg )
+{
+    LRESULT result = 0;
+    void *data = NULL;
+
+    if (!pre || !uah_is_override( array, msg )) return call( hwnd, msg, wp, lp, arg );
+    if (pre( hwnd, msg, wp, lp, &result, &data )) return result;
+    result = call( hwnd, msg, wp, lp, arg );
+    if (post) post( hwnd, msg, wp, lp, &result, &data );
+    return result;
+}
+
+/***********************************************************************
+ *		RegisterUserApiHook (USER32.@)
+ */
+BOOL WINAPI RegisterUserApiHook( const USERAPIHOOKINFO *info )
+{
+    struct user_api_hook_names names;
+
+    TRACE( "%p\n", info );
+    if (!info || info->size < sizeof(*info) || !info->dll1 || !info->func1 ||
+        wcslen( info->dll1 ) >= ARRAY_SIZE(names.dll) || wcslen( info->func1 ) >= ARRAY_SIZE(names.func))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    memset( &names, 0, sizeof(names) );
+    wcscpy( names.dll, info->dll1 );
+    wcscpy( names.func, info->func1 );
+    TRACE( "%s!%s\n", debugstr_w(names.dll), debugstr_w(names.func) );
+    return NtUserCallTwoParam( (UINT_PTR)&names, 0, NtUserCallTwoParam_SetUserApiHook ) != 0;
+}
+
+/***********************************************************************
+ *		UnregisterUserApiHook (USER32.@)
+ */
+BOOL WINAPI UnregisterUserApiHook(void)
+{
+    TRACE( "\n" );
+    return NtUserCallTwoParam( 0, 0, NtUserCallTwoParam_SetUserApiHook ) != 0;
+}
+
+/***********************************************************************
+ *		SetWindowRgn (USER32.@)
+ */
+INT WINAPI SetWindowRgn( HWND hwnd, HRGN rgn, BOOL redraw )
+{
+    USERAPIHOOK *hook = uah;
+    return hook ? hook->SetWindowRgn( hwnd, rgn, redraw ) : NtUserSetWindowRgn( hwnd, rgn, redraw );
 }

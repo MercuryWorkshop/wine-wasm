@@ -268,6 +268,7 @@ HWND WIN_CreateWindowEx( CREATESTRUCTW *cs, LPCWSTR className, HINSTANCE module,
     WCHAR name_buf[8];
     HMENU menu;
 
+    uah_check( FALSE );
     init_class_name( &class, className );
     get_class_version( &class, &version, TRUE );
 

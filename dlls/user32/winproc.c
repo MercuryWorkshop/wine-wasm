@@ -695,7 +695,7 @@ static LRESULT WINPROC_CallProcWtoA( winproc_callback_t callback, HWND hwnd, UIN
 }
 
 
-LRESULT dispatch_win_proc_params( struct win_proc_params *params )
+static LRESULT call_win_proc_params( struct win_proc_params *params )
 {
     DPI_AWARENESS_CONTEXT context = SetThreadDpiAwarenessContext( ULongToHandle( params->dpi_context ) );
     LRESULT result = 0;
@@ -727,6 +727,23 @@ LRESULT dispatch_win_proc_params( struct win_proc_params *params )
 
     SetThreadDpiAwarenessContext( context );
     return result;
+}
+
+static LRESULT call_win_proc_owp( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, void *arg )
+{
+    struct win_proc_params *params = arg;
+    return call_win_proc_params( params );
+}
+
+/* call a window procedure for a message user32 dispatches (not CallWindowProc),
+ * through the user API hook if it wants the message */
+LRESULT dispatch_win_proc_params( struct win_proc_params *params )
+{
+    USERAPIHOOK *hook = uah;
+
+    if (!hook) return call_win_proc_params( params );
+    return uah_call_owp( hook->PreWndProc, hook->PostWndProc, &hook->WndProcArray, params->hwnd,
+                         params->msg, params->wparam, params->lparam, call_win_proc_owp, params );
 }
 
 static size_t string_size( const void *str, BOOL ansi )
@@ -872,7 +889,7 @@ LRESULT WINAPI DECLSPEC_HOTPATCH CallWindowProcA( WNDPROC func, HWND hwnd, UINT 
     params.func = func;
     if (!NtUserMessageCall( hwnd, msg, wParam, lParam, &params, NtUserCallWindowProc, TRUE ))
         return 0;
-    return dispatch_win_proc_params( &params );
+    return call_win_proc_params( &params );
 }
 
 
@@ -888,7 +905,7 @@ LRESULT WINAPI CallWindowProcW( WNDPROC func, HWND hwnd, UINT msg, WPARAM wParam
     params.func = func;
     if (!NtUserMessageCall( hwnd, msg, wParam, lParam, &params, NtUserCallWindowProc, FALSE ))
         return 0;
-    return dispatch_win_proc_params( &params );
+    return call_win_proc_params( &params );
 }
 
 

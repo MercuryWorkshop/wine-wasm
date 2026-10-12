@@ -162,6 +162,68 @@ extern int bitmap_info_size( const BITMAPINFO * info, WORD coloruse );
 extern BOOL get_icon_size( HICON handle, SIZE *size );
 
 extern struct user_api_hook *user_api;
+
+/* Windows' user API hook (RegisterUserApiHook), as Windows 7's uxtheme.dll
+ * fills it in: a hook DLL replaces some of user32's functions and sees some
+ * window and dialog procedure messages before and after the procedure */
+typedef BOOL (CALLBACK *UAH_OWP)( HWND, UINT, WPARAM, LPARAM, LRESULT *, void ** );
+
+struct uah_msg_array
+{
+    BYTE  *bits;    /* one bit per message */
+    DWORD  size;    /* bytes */
+};
+
+typedef struct
+{
+    DWORD size;
+    WNDPROC DefWindowProcA;
+    WNDPROC DefWindowProcW;
+    struct uah_msg_array DefWndProcArray;
+    BOOL (WINAPI *GetScrollInfo)( HWND, INT, SCROLLINFO * );
+    INT (WINAPI *SetScrollInfo)( HWND, INT, const SCROLLINFO *, BOOL );
+    BOOL (WINAPI *EnableScrollBar)( HWND, UINT, UINT );
+    BOOL (WINAPI *AdjustWindowRectEx)( RECT *, DWORD, BOOL, DWORD );
+    INT (WINAPI *SetWindowRgn)( HWND, HRGN, BOOL );
+    UAH_OWP PreWndProc;
+    UAH_OWP PostWndProc;
+    struct uah_msg_array WndProcArray;
+    UAH_OWP PreDefDlgProc;
+    UAH_OWP PostDefDlgProc;
+    struct uah_msg_array DlgProcArray;
+    INT (WINAPI *GetSystemMetrics)( INT );
+    BOOL (WINAPI *SystemParametersInfoA)( UINT, UINT, void *, UINT );
+    BOOL (WINAPI *SystemParametersInfoW)( UINT, UINT, void *, UINT );
+    BOOL (WINAPI *ForceResetUserApiHook)( HINSTANCE );
+    BOOL (WINAPI *DrawFrameControl)( HDC, RECT *, UINT, UINT );
+    BOOL (WINAPI *DrawCaption)( HWND, HDC, const RECT *, UINT );
+    void (WINAPI *MDIRedrawFrame)( HWND, DWORD );
+    HWND (WINAPI *GetRealWindowOwner)( HWND );
+} USERAPIHOOK;
+
+#define WM_UAHINIT 0x031b
+
+extern USERAPIHOOK *uah;
+extern void uah_check( BOOL force );
+
+static inline BOOL uah_is_override( const struct uah_msg_array *array, UINT msg )
+{
+    return msg / 8 < array->size && (array->bits[msg / 8] & (1 << (msg & 7)));
+}
+
+extern LRESULT uah_call_owp( UAH_OWP pre, UAH_OWP post, const struct uah_msg_array *array,
+                             HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
+                             LRESULT (*call)( HWND, UINT, WPARAM, LPARAM, void * ), void *arg );
+
+extern LRESULT WINAPI real_DefWindowProcA( HWND, UINT, WPARAM, LPARAM );
+extern LRESULT WINAPI real_DefWindowProcW( HWND, UINT, WPARAM, LPARAM );
+extern BOOL WINAPI real_GetScrollInfo( HWND, INT, SCROLLINFO * );
+extern BOOL WINAPI real_AdjustWindowRectEx( RECT *, DWORD, BOOL, DWORD );
+extern INT WINAPI real_GetSystemMetrics( INT );
+extern BOOL WINAPI real_SystemParametersInfoA( UINT, UINT, void *, UINT );
+extern BOOL WINAPI real_SystemParametersInfoW( UINT, UINT, void *, UINT );
+extern BOOL WINAPI real_DrawFrameControl( HDC, RECT *, UINT, UINT );
+extern BOOL WINAPI real_DrawCaption( HWND, HDC, const RECT *, UINT );
 LRESULT WINAPI USER_DefDlgProc(HWND, UINT, WPARAM, LPARAM, BOOL);
 LRESULT WINAPI USER_ScrollBarProc(HWND, UINT, WPARAM, LPARAM, BOOL);
 void WINAPI USER_NonClientButtonDraw(HWND, HDC, enum NONCLIENT_BUTTON_TYPE, RECT, BOOL, BOOL);

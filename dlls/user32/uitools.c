@@ -1216,7 +1216,7 @@ static BOOL UITOOLS95_DrawFrameMenu(HDC dc, LPRECT r, UINT uFlags)
 /**********************************************************************
  *          DrawFrameControl  (USER32.@)
  */
-BOOL WINAPI DrawFrameControl( HDC hdc, LPRECT rc, UINT uType,
+BOOL WINAPI real_DrawFrameControl( HDC hdc, LPRECT rc, UINT uType,
                                   UINT uState )
 {
     switch(uType)
@@ -1749,4 +1749,14 @@ BOOL WINAPI DrawStateW(HDC hdc, HBRUSH hbr,
                    INT x, INT y, INT cx, INT cy, UINT flags)
 {
     return UITOOLS_DrawState(hdc, hbr, func, ldata, wdata, x, y, cx, cy, flags, TRUE);
+}
+
+
+/**********************************************************************
+ *          DrawFrameControl  (USER32.@)
+ */
+BOOL WINAPI DrawFrameControl( HDC hdc, RECT *rect, UINT type, UINT state )
+{
+    USERAPIHOOK *hook = uah;
+    return hook ? hook->DrawFrameControl( hdc, rect, type, state ) : real_DrawFrameControl( hdc, rect, type, state );
 }

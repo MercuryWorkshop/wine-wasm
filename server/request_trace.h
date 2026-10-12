@@ -3657,6 +3657,28 @@ static void dump_set_apc_data_request( const struct set_apc_data_request *req )
     dump_varargs_bytes( ", data=", cur_size );
 }
 
+static void dump_set_user_api_hook_request( const struct set_user_api_hook_request *req )
+{
+    fprintf( stderr, " dll_len=%u", req->dll_len );
+    dump_varargs_bytes( ", names=", cur_size );
+}
+
+static void dump_set_user_api_hook_reply( const struct set_user_api_hook_reply *req )
+{
+    fprintf( stderr, " serial=%08x", req->serial );
+}
+
+static void dump_get_user_api_hook_request( const struct get_user_api_hook_request *req )
+{
+}
+
+static void dump_get_user_api_hook_reply( const struct get_user_api_hook_reply *req )
+{
+    fprintf( stderr, " serial=%08x", req->serial );
+    fprintf( stderr, ", dll_len=%u", req->dll_len );
+    dump_varargs_bytes( ", names=", cur_size );
+}
+
 typedef void (*dump_func)( const void *req );
 
 static const dump_func req_dumpers[REQ_NB_REQUESTS] =
@@ -3980,6 +4002,8 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_get_lpc_reply_request,
     (dump_func)dump_get_apc_data_request,
     (dump_func)dump_set_apc_data_request,
+    (dump_func)dump_set_user_api_hook_request,
+    (dump_func)dump_get_user_api_hook_request,
 };
 
 static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
@@ -4303,6 +4327,8 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_get_lpc_reply_reply,
     (dump_func)dump_get_apc_data_reply,
     NULL,
+    (dump_func)dump_set_user_api_hook_reply,
+    (dump_func)dump_get_user_api_hook_reply,
 };
 
 static const char * const req_names[REQ_NB_REQUESTS] =
@@ -4626,6 +4652,8 @@ static const char * const req_names[REQ_NB_REQUESTS] =
     "get_lpc_reply",
     "get_apc_data",
     "set_apc_data",
+    "set_user_api_hook",
+    "get_user_api_hook",
 };
 
 static const struct

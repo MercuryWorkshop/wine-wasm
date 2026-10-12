@@ -311,6 +311,22 @@ DIALOGINFO *DIALOG_get_info( HWND hwnd, BOOL create )
     return dlgInfo;
 }
 
+static LRESULT call_dlg_proc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, void *unicode )
+{
+    return unicode ? WINPROC_CallDlgProcW( hwnd, msg, wp, lp ) : WINPROC_CallDlgProcA( hwnd, msg, wp, lp );
+}
+
+/* call the dialog procedure, through the user API hook if it wants the message */
+static LRESULT call_dlg_proc_owp( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, BOOL unicode )
+{
+    USERAPIHOOK *hook = uah;
+    void *arg = unicode ? (void *)1 : NULL;
+
+    if (!hook) return call_dlg_proc( hwnd, msg, wp, lp, arg );
+    return uah_call_owp( hook->PreDefDlgProc, hook->PostDefDlgProc, &hook->DlgProcArray,
+                         hwnd, msg, wp, lp, call_dlg_proc, arg );
+}
+
 static LRESULT USER_DefDlgProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam )
 {
     DIALOGINFO *dlgInfo;
@@ -323,7 +339,7 @@ static LRESULT USER_DefDlgProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 
     SetWindowLongPtrW( hwnd, DWLP_MSGRESULT, 0 );
 
-    result = WINPROC_CallDlgProcA( hwnd, msg, wParam, lParam );
+    result = call_dlg_proc_owp( hwnd, msg, wParam, lParam, FALSE );
 
     if (!result && IsWindow(hwnd))
     {
@@ -376,7 +392,7 @@ static LRESULT USER_DefDlgProcW( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
     if(!(dlgInfo = DIALOG_get_info( hwnd, TRUE ))) return 0;
 
     SetWindowLongPtrW( hwnd, DWLP_MSGRESULT, 0 );
-    result = WINPROC_CallDlgProcW( hwnd, msg, wParam, lParam );
+    result = call_dlg_proc_owp( hwnd, msg, wParam, lParam, TRUE );
 
     if (!result && IsWindow(hwnd))
     {

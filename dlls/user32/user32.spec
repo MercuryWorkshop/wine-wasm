@@ -455,7 +455,7 @@
 @ stdcall EnableMouseInPointer(long) NtUserEnableMouseInPointer
 @ stdcall EnableNonClientDpiScaling(long)
 # @ stub EnableOneCoreTransformMode
-@ stdcall -import EnableScrollBar(long long long) NtUserEnableScrollBar
+@ stdcall EnableScrollBar(long long long)
 # @ stub EnableSessionForMMCSS
 @ stdcall EnableWindow(long long) NtUserEnableWindow
 @ stdcall EndDeferWindowPos(long)
@@ -979,7 +979,7 @@
 @ stdcall RegisterTasklist(long)
 @ stdcall RegisterTouchHitTestingWindow(long long)
 @ stdcall RegisterTouchWindow(long long)
-@ stdcall RegisterUserApiHook(ptr ptr)
+@ stdcall RegisterUserApiHook(ptr)
 @ stdcall RegisterWindowMessageA(str)
 @ stdcall RegisterWindowMessageW(wstr)
 @ stdcall ReleaseCapture() NtUserReleaseCapture
@@ -1082,7 +1082,7 @@
 @ stdcall SetPropW(long wstr long)
 @ stdcall SetRect(ptr long long long long)
 @ stdcall SetRectEmpty(ptr)
-@ stdcall -import SetScrollInfo(long long ptr long) NtUserSetScrollInfo
+@ stdcall SetScrollInfo(long long ptr long)
 @ stdcall SetScrollPos(long long long long)
 @ stdcall SetScrollRange(long long long long long)
 # @ stub SetShellChangeNotifyWindow
@@ -1115,7 +1115,7 @@
 @ stdcall SetWindowLongW(long long long)
 @ stdcall SetWindowPlacement(long ptr) NtUserSetWindowPlacement
 @ stdcall SetWindowPos(long long long long long long long) NtUserSetWindowPos
-@ stdcall SetWindowRgn(long long long) NtUserSetWindowRgn
+@ stdcall SetWindowRgn(long long long)
 # @ stub SetWindowRgnEx
 @ stdcall SetWindowStationUser(long long)
 @ stdcall SetWindowTextA(long str)
@@ -1186,6 +1186,8 @@
 @ stdcall UnregisterSuspendResumeNotification(ptr)
 @ stdcall UnregisterTouchWindow(long)
 @ stdcall UnregisterUserApiHook()
+@ stdcall __wine_register_user_api_hook(ptr ptr)
+@ stdcall __wine_unregister_user_api_hook()
 # @ stub UpdateDefaultDesktopThumbnail
 @ stdcall UpdateLayeredWindow(long long ptr ptr long ptr long ptr long)
 @ stdcall UpdateLayeredWindowIndirect(long ptr)

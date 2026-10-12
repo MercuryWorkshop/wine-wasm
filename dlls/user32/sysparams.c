@@ -245,7 +245,7 @@ BOOL WINAPI SystemParametersInfoForDpi( UINT action, UINT val, PVOID ptr, UINT w
 /***********************************************************************
  *		SystemParametersInfoW (USER32.@)
  */
-BOOL WINAPI SystemParametersInfoW( UINT action, UINT val, void *ptr, UINT winini )
+BOOL WINAPI real_SystemParametersInfoW( UINT action, UINT val, void *ptr, UINT winini )
 {
     BOOL ret = NtUserSystemParametersInfo( action, val, ptr, winini );
     if (ret && (action == SPI_SETDESKWALLPAPER || action == SPI_SETDESKPATTERN))
@@ -257,7 +257,7 @@ BOOL WINAPI SystemParametersInfoW( UINT action, UINT val, void *ptr, UINT winini
 /***********************************************************************
  *		SystemParametersInfoA (USER32.@)
  */
-BOOL WINAPI SystemParametersInfoA( UINT uiAction, UINT uiParam,
+BOOL WINAPI real_SystemParametersInfoA( UINT uiAction, UINT uiParam,
 				   PVOID pvParam, UINT fuWinIni )
 {
     BOOL ret;
@@ -273,14 +273,14 @@ BOOL WINAPI SystemParametersInfoA( UINT uiAction, UINT uiParam,
 	if (pvParam)
             if (!MultiByteToWideChar( CP_ACP, 0, pvParam, -1, buffer, ARRAY_SIZE( buffer )))
                 buffer[ARRAY_SIZE(buffer)-1] = 0;
-	ret = SystemParametersInfoW( uiAction, uiParam, pvParam ? buffer : NULL, fuWinIni );
+	ret = real_SystemParametersInfoW( uiAction, uiParam, pvParam ? buffer : NULL, fuWinIni );
 	break;
     }
 
     case SPI_GETICONTITLELOGFONT:		/*     31 */
     {
 	LOGFONTW tmp;
-	ret = SystemParametersInfoW( uiAction, uiParam, pvParam ? &tmp : NULL, fuWinIni );
+	ret = real_SystemParametersInfoW( uiAction, uiParam, pvParam ? &tmp : NULL, fuWinIni );
 	if (ret && pvParam)
             SYSPARAMS_LogFont32WTo32A( &tmp, pvParam );
 	break;
@@ -294,7 +294,7 @@ BOOL WINAPI SystemParametersInfoA( UINT uiAction, UINT uiParam,
                       lpnmA->cbSize == FIELD_OFFSET(NONCLIENTMETRICSA, iPaddedBorderWidth)))
 	{
 	    tmp.cbSize = sizeof(NONCLIENTMETRICSW);
-	    ret = SystemParametersInfoW( uiAction, uiParam, &tmp, fuWinIni );
+	    ret = real_SystemParametersInfoW( uiAction, uiParam, &tmp, fuWinIni );
 	    if (ret)
 		SYSPARAMS_NonClientMetrics32WTo32A( &tmp, lpnmA );
 	}
@@ -312,7 +312,7 @@ BOOL WINAPI SystemParametersInfoA( UINT uiAction, UINT uiParam,
         {
             tmp.cbSize = sizeof(NONCLIENTMETRICSW);
             SYSPARAMS_NonClientMetrics32ATo32W( lpnmA, &tmp );
-            ret = SystemParametersInfoW( uiAction, uiParam, &tmp, fuWinIni );
+            ret = real_SystemParametersInfoW( uiAction, uiParam, &tmp, fuWinIni );
         }
         else
             ret = FALSE;
@@ -326,7 +326,7 @@ BOOL WINAPI SystemParametersInfoA( UINT uiAction, UINT uiParam,
 	if (lpimA && lpimA->cbSize == sizeof(ICONMETRICSA))
 	{
 	    tmp.cbSize = sizeof(ICONMETRICSW);
-	    ret = SystemParametersInfoW( uiAction, uiParam, &tmp, fuWinIni );
+	    ret = real_SystemParametersInfoW( uiAction, uiParam, &tmp, fuWinIni );
 	    if (ret)
 	    {
 		lpimA->iHorzSpacing = tmp.iHorzSpacing;
@@ -351,7 +351,7 @@ BOOL WINAPI SystemParametersInfoA( UINT uiAction, UINT uiParam,
             tmp.iVertSpacing = lpimA->iVertSpacing;
             tmp.iTitleWrap = lpimA->iTitleWrap;
             SYSPARAMS_LogFont32ATo32W(  &lpimA->lfFont, &tmp.lfFont);
-            ret = SystemParametersInfoW( uiAction, uiParam, &tmp, fuWinIni );
+            ret = real_SystemParametersInfoW( uiAction, uiParam, &tmp, fuWinIni );
         }
         else
             ret = FALSE;
@@ -365,7 +365,7 @@ BOOL WINAPI SystemParametersInfoA( UINT uiAction, UINT uiParam,
 	if (lphcA && lphcA->cbSize == sizeof(HIGHCONTRASTA))
 	{
 	    tmp.cbSize = sizeof(HIGHCONTRASTW);
-	    ret = SystemParametersInfoW( uiAction, uiParam, &tmp, fuWinIni );
+	    ret = real_SystemParametersInfoW( uiAction, uiParam, &tmp, fuWinIni );
 	    if (ret)
 	    {
 		lphcA->dwFlags = tmp.dwFlags;
@@ -380,13 +380,13 @@ BOOL WINAPI SystemParametersInfoA( UINT uiAction, UINT uiParam,
     case SPI_GETDESKWALLPAPER:                  /*     115 */
     {
         WCHAR buffer[MAX_PATH];
-        ret = (SystemParametersInfoW( SPI_GETDESKWALLPAPER, uiParam, buffer, fuWinIni ) &&
+        ret = (real_SystemParametersInfoW( SPI_GETDESKWALLPAPER, uiParam, buffer, fuWinIni ) &&
                WideCharToMultiByte(CP_ACP, 0, buffer, -1, pvParam, uiParam, NULL, NULL));
         break;
     }
 
     default:
-        ret = SystemParametersInfoW( uiAction, uiParam, pvParam, fuWinIni );
+        ret = real_SystemParametersInfoW( uiAction, uiParam, pvParam, fuWinIni );
         break;
     }
     return ret;
@@ -396,7 +396,7 @@ BOOL WINAPI SystemParametersInfoA( UINT uiAction, UINT uiParam,
 /***********************************************************************
  *		GetSystemMetrics (USER32.@)
  */
-INT WINAPI GetSystemMetrics( INT index )
+INT WINAPI real_GetSystemMetrics( INT index )
 {
     return NtUserGetSystemMetrics( index );
 }
@@ -1097,7 +1097,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH AdjustWindowRect( RECT *rect, DWORD style, BOOL me
 /***********************************************************************
  *      AdjustWindowRectEx (USER32.@)
  */
-BOOL WINAPI DECLSPEC_HOTPATCH AdjustWindowRectEx( RECT *rect, DWORD style, BOOL menu, DWORD ex_style )
+BOOL WINAPI real_AdjustWindowRectEx( RECT *rect, DWORD style, BOOL menu, DWORD ex_style )
 {
     TRACE( "(%s) %08lx %d %08lx\n", wine_dbgstr_rect( rect ), style, menu, ex_style );
     return NtUserAdjustWindowRect( rect, style, menu, ex_style, GetDpiForSystem() );
@@ -1111,4 +1111,47 @@ BOOL WINAPI DECLSPEC_HOTPATCH AdjustWindowRectExForDpi( RECT *rect, DWORD style,
 {
     TRACE( "(%s) %08lx %d %08lx %u\n", wine_dbgstr_rect( rect ), style, menu, ex_style, dpi );
     return NtUserAdjustWindowRect( rect, style, menu, ex_style, dpi );
+}
+
+
+/***********************************************************************
+ *		SystemParametersInfoW (USER32.@)
+ */
+BOOL WINAPI SystemParametersInfoW( UINT action, UINT val, void *ptr, UINT winini )
+{
+    USERAPIHOOK *hook = uah;
+    return hook ? hook->SystemParametersInfoW( action, val, ptr, winini )
+                : real_SystemParametersInfoW( action, val, ptr, winini );
+}
+
+
+/***********************************************************************
+ *		SystemParametersInfoA (USER32.@)
+ */
+BOOL WINAPI SystemParametersInfoA( UINT action, UINT val, void *ptr, UINT winini )
+{
+    USERAPIHOOK *hook = uah;
+    return hook ? hook->SystemParametersInfoA( action, val, ptr, winini )
+                : real_SystemParametersInfoA( action, val, ptr, winini );
+}
+
+
+/***********************************************************************
+ *		GetSystemMetrics (USER32.@)
+ */
+INT WINAPI GetSystemMetrics( INT index )
+{
+    USERAPIHOOK *hook = uah;
+    return hook ? hook->GetSystemMetrics( index ) : real_GetSystemMetrics( index );
+}
+
+
+/***********************************************************************
+ *      AdjustWindowRectEx (USER32.@)
+ */
+BOOL WINAPI DECLSPEC_HOTPATCH AdjustWindowRectEx( RECT *rect, DWORD style, BOOL menu, DWORD ex_style )
+{
+    USERAPIHOOK *hook = uah;
+    return hook ? hook->AdjustWindowRectEx( rect, style, menu, ex_style )
+                : real_AdjustWindowRectEx( rect, style, menu, ex_style );
 }
