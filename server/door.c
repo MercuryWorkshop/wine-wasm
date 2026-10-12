@@ -70,6 +70,8 @@ struct door_area
     unsigned int stats;    /* 96: door_stats */
     int proxies;           /* 100: syscalls proxied, all time */
     int calls;             /* 104: door calls served, all time */
+    unsigned int thread_start; /* 108: table index of __gex_thread_start */
+    int pid;               /* 112: this process's pid */
 };
 
 #define DOOR_VERSION 1
@@ -86,6 +88,9 @@ __attribute__((import_module("gex"), import_name("door_publish")))
 extern void gex_door_publish( struct door_area *area );
 
 void __gex_set_tp( unsigned long );
+/* musl's thread entry (gex_thread.s), with gex's F_body signature: a door
+ * instance starts through it */
+int __gex_thread_start( int ctx, int depth, int need, long long ret );
 
 int wineserver_no_fork(void)
 {
@@ -158,6 +163,8 @@ void door_init(void)
     a->ctx = (unsigned int)(unsigned long)ctx;
     ctx[4] = a->frame;  /* ESP */
     a->stats = (unsigned int)(unsigned long)door_stats;
+    a->thread_start = (unsigned int)(unsigned long)__gex_thread_start;
+    a->pid = getpid();
     a->pump_wake = -1;
     a->version = DOOR_VERSION;
     door_area = a;
