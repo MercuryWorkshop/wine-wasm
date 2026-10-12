@@ -2357,6 +2357,7 @@ static LRESULT call_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 
     if (!is_current_thread_window( hwnd )) return 0;
     if (!thread_info->client_info) return 0;
+    if (msg == WM_SYSCOLORCHANGE && type == MSG_OTHER_PROCESS) refresh_sys_colors();
 
     prev_source = thread_info->client_info->msg_source;
     thread_info->client_info->msg_source = msg_source_unavailable;

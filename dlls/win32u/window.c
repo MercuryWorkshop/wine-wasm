@@ -6396,6 +6396,13 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
         return set_window_long_internal( hwnd, params->offset, params->size, params->value, FALSE, TRUE );
     }
 
+    case NtUserCallHwndParam_CalcMenuBar:
+    {
+        /* the menu bar's origin and extent, in window coordinates */
+        const RECT *bar = (const RECT *)param;
+        return get_menu_bar_height( hwnd, max( bar->right - bar->left, 0 ), bar->left, bar->top );
+    }
+
     default:
         FIXME( "invalid code %u\n", code );
         return 0;

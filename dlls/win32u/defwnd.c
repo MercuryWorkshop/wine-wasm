@@ -265,7 +265,8 @@ BOOL adjust_window_rect( RECT *rect, DWORD style, BOOL menu, DWORD ex_style, UIN
         adjust = 2; /* outer */
 
     if (style & WS_THICKFRAME)
-        adjust += ncm.iBorderWidth + ncm.iPaddedBorderWidth; /* The resize border */
+        adjust += ncm.iBorderWidth + /* the resize border, padded for applications built for Vista on */
+                  NtUserGetSystemMetricsForDpi( SM_CXPADDEDBORDER, dpi );
 
     if ((style & (WS_BORDER|WS_DLGFRAME)) || (ex_style & WS_EX_DLGMODALFRAME))
         adjust++; /* The other border */
@@ -1846,6 +1847,37 @@ static LRESULT handle_nc_paint( HWND hwnd , HRGN clip )
     return 0;
 }
 
+/* the user API hook messages for the non-client area (undocumented) */
+#define WM_NCUAHDRAWCAPTION 0x00ae
+#define WM_NCUAHDRAWFRAME   0x00af
+
+/* set once user32 has loaded the session's user API hook in this process */
+BOOL user_api_hooked = FALSE;
+
+/* Repaints the caption after its text or icon changed (DC_TEXT, DC_ICON).
+ * As on Windows, in a process with a user API hook (a theme) this is a
+ * WM_NCUAHDRAWCAPTION to the window, which the hook draws for a themed
+ * window, and which DefWindowProc draws as below otherwise. */
+static void repaint_caption( HWND hwnd, UINT flags )
+{
+    DWORD style = get_window_long( hwnd, GWL_STYLE );
+    WND *win;
+
+    if ((style & WS_CAPTION) != WS_CAPTION) return;
+    if (!user_api_hooked)
+    {
+        handle_nc_paint( hwnd, (HRGN)1 );
+        return;
+    }
+    if (!(style & WS_VISIBLE)) return;
+    if ((win = get_win_ptr( hwnd )) && win != WND_OTHER_PROCESS && win != WND_DESKTOP)
+    {
+        if (win->flags & WIN_NCACTIVATED) flags |= DC_ACTIVE;
+        release_win_ptr( win );
+    }
+    send_message( hwnd, WM_NCUAHDRAWCAPTION, flags, 0 );
+}
+
 static LRESULT handle_nc_activate( HWND hwnd, WPARAM wparam, LPARAM lparam )
 {
     /* Lotus Notes draws menu descriptions in the caption of its main
@@ -2461,6 +2493,11 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, 
     case WM_NCACTIVATE:
         return handle_nc_activate( hwnd, wparam, lparam );
 
+    case WM_NCUAHDRAWCAPTION:  /* wparam: DC_* flags; not themed, so drawn as without the hook */
+    case WM_NCUAHDRAWFRAME:    /* wparam: the window DC; lparam: active (1) */
+        if (get_window_long( hwnd, GWL_STYLE ) & WS_VISIBLE) nc_paint( hwnd, (HRGN)1 );
+        break;
+
     case WM_NCLBUTTONDOWN:
         return handle_nc_lbutton_down( hwnd, wparam, lparam );
 
@@ -2633,8 +2670,7 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, 
         result = set_window_text( hwnd, (void *)lparam, ansi );
         if (result)
             NtUserNotifyWinEvent( EVENT_OBJECT_NAMECHANGE, hwnd, OBJID_WINDOW, CHILDID_SELF );
-        if (result && (get_window_long( hwnd, GWL_STYLE ) & WS_CAPTION) == WS_CAPTION)
-            handle_nc_paint( hwnd , (HRGN)1 );  /* repaint caption */
+        if (result) repaint_caption( hwnd, DC_TEXT );
         break;
 
     case WM_GETTEXTLENGTH:
@@ -2687,8 +2723,7 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, 
 
     case WM_SETICON:
         result = (LRESULT)set_window_icon( hwnd, wparam, (HICON)lparam );
-        if ((get_window_long( hwnd, GWL_STYLE ) & WS_CAPTION) == WS_CAPTION)
-            handle_nc_paint( hwnd , (HRGN)1 );  /* repaint caption */
+        repaint_caption( hwnd, DC_ICON );
         break;
 
     case WM_GETICON:

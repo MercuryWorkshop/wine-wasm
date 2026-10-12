@@ -5667,7 +5667,7 @@ static TWIPS_ENTRY( ICONHORIZONTALSPACING, -1125, METRICS_KEY, "IconSpacing" );
 static TWIPS_ENTRY( ICONVERTICALSPACING, -1125, METRICS_KEY, "IconVerticalSpacing" );
 static TWIPS_ENTRY( MENUHEIGHT, -270, METRICS_KEY, "MenuHeight" );
 static TWIPS_ENTRY( MENUWIDTH, -270, METRICS_KEY, "MenuWidth" );
-static TWIPS_ENTRY( PADDEDBORDERWIDTH, 0, METRICS_KEY, "PaddedBorderWidth" );
+static TWIPS_ENTRY( PADDEDBORDERWIDTH, -60, METRICS_KEY, "PaddedBorderWidth" );  /* Windows 7's 4 pixels */
 static TWIPS_ENTRY( SCROLLHEIGHT, -240, METRICS_KEY, "ScrollHeight" );
 static TWIPS_ENTRY( SCROLLWIDTH, -240, METRICS_KEY, "ScrollWidth" );
 static TWIPS_ENTRY( SMCAPTIONHEIGHT, -225, METRICS_KEY, "SmCaptionHeight" );
@@ -6278,11 +6278,8 @@ BOOL WINAPI NtUserSystemParametersInfo( UINT action, UINT val, void *ptr, UINT w
               get_entry( &entry_MENULOGFONT, 0, &nm->lfMenuFont ) &&
               get_entry( &entry_STATUSLOGFONT, 0, &nm->lfStatusFont ) &&
               get_entry( &entry_MESSAGELOGFONT, 0, &nm->lfMessageFont );
-        if (ret)
-        {
-            nm->iBorderWidth += padded_border;
-            if (nm->cbSize == sizeof(NONCLIENTMETRICSW)) nm->iPaddedBorderWidth = 0;
-        }
+        /* as on Windows (Vista on), the padded border is reported on its own */
+        if (ret && nm->cbSize == sizeof(NONCLIENTMETRICSW)) nm->iPaddedBorderWidth = padded_border;
         normalize_nonclientmetrics( nm );
         break;
     }
@@ -6294,9 +6291,11 @@ BOOL WINAPI NtUserSystemParametersInfo( UINT action, UINT val, void *ptr, UINT w
         if (nm && (nm->cbSize == sizeof(NONCLIENTMETRICSW) ||
                      nm->cbSize == FIELD_OFFSET(NONCLIENTMETRICSW, iPaddedBorderWidth)))
         {
-            get_entry( &entry_PADDEDBORDERWIDTH, 0, &padded_border );
+            if (nm->cbSize == sizeof(NONCLIENTMETRICSW)) padded_border = nm->iPaddedBorderWidth;
+            else get_entry( &entry_PADDEDBORDERWIDTH, 0, &padded_border );
 
-            ret = set_entry( &entry_BORDER, nm->iBorderWidth - padded_border, NULL, winini ) &&
+            ret = set_entry( &entry_BORDER, nm->iBorderWidth, NULL, winini ) &&
+                  set_entry( &entry_PADDEDBORDERWIDTH, padded_border, NULL, winini ) &&
                   set_entry( &entry_SCROLLWIDTH, nm->iScrollWidth, NULL, winini ) &&
                   set_entry( &entry_SCROLLHEIGHT, nm->iScrollHeight, NULL, winini ) &&
                   set_entry( &entry_CAPTIONWIDTH, nm->iCaptionWidth, NULL, winini ) &&
@@ -6949,6 +6948,23 @@ BOOL WINAPI NtUserSystemParametersInfo( UINT action, UINT val, void *ptr, UINT w
 #undef WINE_SPI_WARN
 }
 
+/* Windows gives the frames of the windows of an application built for
+ * Windows Vista or later (subsystem version 6 on) a padded border; older
+ * applications keep the frame they were designed for */
+static BOOL padded_border_app(void)
+{
+    static int app = -1;
+
+    if (app == -1)
+    {
+        SECTION_IMAGE_INFORMATION info;
+
+        app = !NtQueryInformationProcess( GetCurrentProcess(), ProcessImageInformation, &info, sizeof(info), NULL ) &&
+              info.MajorSubsystemVersion >= 6;
+    }
+    return app;
+}
+
 int get_system_metrics( int index )
 {
     NONCLIENTMETRICSW ncm;
@@ -7036,11 +7052,15 @@ int get_system_metrics( int index )
     case SM_CXFRAME:
         get_entry( &entry_BORDER, 0, &ret );
         ret = max( ret, 1 );
-        return get_system_metrics( SM_CXDLGFRAME ) + ret;
+        return get_system_metrics( SM_CXDLGFRAME ) + ret + get_system_metrics( SM_CXPADDEDBORDER );
     case SM_CYFRAME:
         get_entry( &entry_BORDER, 0, &ret );
         ret = max( ret, 1 );
-        return get_system_metrics( SM_CYDLGFRAME ) + ret;
+        return get_system_metrics( SM_CYDLGFRAME ) + ret + get_system_metrics( SM_CXPADDEDBORDER );
+    case SM_CXPADDEDBORDER:
+        if (!padded_border_app()) return 0;
+        get_entry( &entry_PADDEDBORDERWIDTH, 0, &ret );
+        return ret;
     case SM_CXMINTRACK:
         return get_system_metrics( SM_CXMIN );
     case SM_CYMINTRACK:
@@ -7242,11 +7262,17 @@ static int get_system_metrics_for_dpi( int index, unsigned int dpi )
     case SM_CXFRAME:
         get_entry_dpi( &entry_BORDER, 0, &ret, dpi );
         ret = max( ret, 1 );
-        return get_system_metrics_for_dpi( SM_CXDLGFRAME, dpi ) + ret;
+        return get_system_metrics_for_dpi( SM_CXDLGFRAME, dpi ) + ret +
+               get_system_metrics_for_dpi( SM_CXPADDEDBORDER, dpi );
     case SM_CYFRAME:
         get_entry_dpi( &entry_BORDER, 0, &ret, dpi );
         ret = max( ret, 1 );
-        return get_system_metrics_for_dpi( SM_CYDLGFRAME, dpi ) + ret;
+        return get_system_metrics_for_dpi( SM_CYDLGFRAME, dpi ) + ret +
+               get_system_metrics_for_dpi( SM_CXPADDEDBORDER, dpi );
+    case SM_CXPADDEDBORDER:
+        if (!padded_border_app()) return 0;
+        get_entry_dpi( &entry_PADDEDBORDERWIDTH, 0, &ret, dpi );
+        return ret;
     case SM_CXICONSPACING:
         im.cbSize = sizeof(im);
         NtUserSystemParametersInfoForDpi( SPI_GETICONMETRICS, sizeof(im), &im, 0, dpi );
@@ -7371,6 +7397,42 @@ UINT WINAPI NtUserGetDoubleClickTime(void)
 /*************************************************************************
  *	     NtUserSetSysColors    (win32u.@)
  */
+/***********************************************************************
+ *	     refresh_sys_colors
+ *
+ * Another process changed the session's system colors (WM_SYSCOLORCHANGE):
+ * take the colors it stored.
+ */
+void refresh_sys_colors(void)
+{
+    unsigned int i;
+
+    for (i = 0; i < ARRAY_SIZE( system_colors ); i++)
+    {
+        struct sysparam_rgb_entry *entry = &system_colors[i];
+        COLORREF old = entry->val, val;
+        HBRUSH brush;
+        HPEN pen;
+
+        if (!entry->hdr.loaded) continue;
+        entry->hdr.loaded = FALSE;
+        get_rgb_entry( (union sysparam_all_entry *)entry, 0, &val, 0 );
+        entry->hdr.loaded = TRUE;
+        if (val == old) continue;
+        TRACE( "color %u: %06x -> %06x\n", i, (int)old, (int)val );
+        if ((brush = InterlockedExchangePointer( (void **)&entry->brush, 0 )))
+        {
+            make_gdi_object_system( brush, FALSE );
+            NtGdiDeleteObjectApp( brush );
+        }
+        if ((pen = InterlockedExchangePointer( (void **)&entry->pen, 0 )))
+        {
+            make_gdi_object_system( pen, FALSE );
+            NtGdiDeleteObjectApp( pen );
+        }
+    }
+}
+
 BOOL WINAPI NtUserSetSysColors( INT count, const INT *colors, const COLORREF *values )
 {
     int i;
@@ -7606,6 +7668,10 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
 
     case NtUserCallOneParam_GetAsyncKeyboardState:
         return get_async_keyboard_state( (void *)arg );
+
+    case NtUserCallOneParam_SetUserApiHooked:
+        user_api_hooked = arg;
+        return 1;
 
     /* temporary exports */
     case NtUserGetDeskPattern:

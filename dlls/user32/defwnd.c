@@ -24,6 +24,7 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(win);
+WINE_DECLARE_DEBUG_CHANNEL(hook);
 
 static void default_ime_compositionW( HWND hwnd, WPARAM wparam, LPARAM lparam )
 {
@@ -209,7 +210,10 @@ LRESULT WINAPI DefWindowProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 
     uah_check( FALSE );
     if ((hook = uah) && uah_is_override( &hook->DefWndProcArray, msg ))
+    {
+        TRACE_(hook)( "hooked %p %x\n", hwnd, msg );
         return hook->DefWindowProcA( hwnd, msg, wParam, lParam );
+    }
     return real_DefWindowProcA( hwnd, msg, wParam, lParam );
 }
 
@@ -223,6 +227,9 @@ LRESULT WINAPI DefWindowProcW( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 
     uah_check( FALSE );
     if ((hook = uah) && uah_is_override( &hook->DefWndProcArray, msg ))
+    {
+        TRACE_(hook)( "hooked %p %x\n", hwnd, msg );
         return hook->DefWindowProcW( hwnd, msg, wParam, lParam );
+    }
     return real_DefWindowProcW( hwnd, msg, wParam, lParam );
 }

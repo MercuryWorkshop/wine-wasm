@@ -590,7 +590,7 @@ static USERAPIHOOK uah_table;
 static uah_init_func uah_init;
 static HMODULE uah_module;
 static unsigned int uah_serial;
-static BOOL uah_checked;
+static volatile BOOL uah_checked;  /* set once the hook is loaded (or there is none) */
 static DWORD uah_thread;    /* the thread loading the hook */
 
 static CRITICAL_SECTION uah_cs;
@@ -623,9 +623,11 @@ static void WINAPI real_MDIRedrawFrame( HWND hwnd, DWORD flags )
                         SWP_NOACTIVATE | SWP_NOZORDER );
 }
 
-static HWND WINAPI real_GetRealWindowOwner( HWND hwnd )
+static DWORD WINAPI real_GetWindowProcessId( HWND hwnd )
 {
-    return GetWindow( hwnd, GW_OWNER );
+    DWORD pid = 0;
+    GetWindowThreadProcessId( hwnd, &pid );
+    return pid;
 }
 
 /* stop the hook in this process; uah_cs held */
@@ -634,6 +636,7 @@ static void uah_stop(void)
     uah_init_func init = uah_init;
 
     uah = NULL;
+    NtUserCallOneParam( FALSE, NtUserCallOneParam_SetUserApiHooked );
     uah_init = NULL;
     uah_module = 0;   /* never unloaded: other threads may still be in it */
     if (init) init( UAH_STOP, NULL );
@@ -671,7 +674,7 @@ static void uah_fill_table( USERAPIHOOK *table )
     table->DrawFrameControl      = real_DrawFrameControl;
     table->DrawCaption           = real_DrawCaption;
     table->MDIRedrawFrame        = real_MDIRedrawFrame;
-    table->GetRealWindowOwner    = real_GetRealWindowOwner;
+    table->GetWindowProcessId    = real_GetWindowProcessId;
 }
 
 /* load the hook DLL and start the hook; uah_cs held */
@@ -701,9 +704,22 @@ static void uah_load( const struct user_api_hook_names *names )
         return;
     }
     TRACE( "%s!%s installed\n", debugstr_w(names->dll), debugstr_a(func) );
+    if (TRACE_ON(hook))
+    {
+        const struct uah_msg_array *arrays[3] = { &uah_table.DefWndProcArray, &uah_table.WndProcArray, &uah_table.DlgProcArray };
+        UINT i, msg;
+        for (i = 0; i < 3; i++)
+        {
+            char buf[1024]; int pos = 0;
+            for (msg = 0; msg < arrays[i]->size * 8 && pos < sizeof(buf) - 8; msg++)
+                if (uah_is_override( arrays[i], msg )) pos += sprintf( buf + pos, " %x", msg );
+            TRACE( "array %u (%lu bytes):%s\n", i, arrays[i]->size, buf );
+        }
+    }
     uah_module = module;
     uah_init = init;
     uah = &uah_table;
+    NtUserCallOneParam( TRUE, NtUserCallOneParam_SetUserApiHooked );
 }
 
 /***********************************************************************
@@ -718,18 +734,30 @@ void uah_check( BOOL force )
 
     if (!force && uah_checked) return;
     if (uah_thread == GetCurrentThreadId()) return;   /* the hook DLL itself, while loading */
-    if (!TryEnterCriticalSection( &uah_cs )) return;  /* another thread is loading it */
+    /* as on Windows, a thread finds the hook loaded once it starts using
+     * windows: it waits for another thread that is loading it, unless it
+     * holds the loader lock, which the loading thread needs */
+    if (RtlIsCriticalSectionLockedByThread( NtCurrentTeb()->Peb->LoaderLock ))
+    {
+        if (!TryEnterCriticalSection( &uah_cs ))
+        {
+            TRACE( "busy\n" );
+            return;
+        }
+    }
+    else EnterCriticalSection( &uah_cs );
     if (force || !uah_checked)
     {
-        uah_checked = TRUE;
         uah_thread = GetCurrentThreadId();
         if (NtUserCallTwoParam( (UINT_PTR)&names, 0, NtUserCallTwoParam_GetUserApiHook ) &&
             names.serial != uah_serial)
         {
+            TRACE( "serial %u, %s\n", (int)names.serial, debugstr_w(names.dll) );
             uah_serial = names.serial;
             if (uah_init) uah_stop();
             if (names.dll[0]) uah_load( &names );
         }
+        uah_checked = TRUE;
         uah_thread = 0;
     }
     LeaveCriticalSection( &uah_cs );
@@ -750,6 +778,7 @@ LRESULT uah_call_owp( UAH_OWP pre, UAH_OWP post, const struct uah_msg_array *arr
     void *data = NULL;
 
     if (!pre || !uah_is_override( array, msg )) return call( hwnd, msg, wp, lp, arg );
+    TRACE( "owp %p %x\n", hwnd, msg );
     if (pre( hwnd, msg, wp, lp, &result, &data )) return result;
     result = call( hwnd, msg, wp, lp, arg );
     if (post) post( hwnd, msg, wp, lp, &result, &data );
