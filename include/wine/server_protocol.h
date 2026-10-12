@@ -6458,6 +6458,38 @@ struct get_user_api_hook_reply
 };
 
 
+
+struct add_session_bitmap_request
+{
+    struct request_header __header;
+    int                 width;
+    int                 height;
+    /* VARARG(bits,bytes); */
+    char __pad_20[4];
+};
+struct add_session_bitmap_reply
+{
+    struct reply_header __header;
+    unsigned int        index;
+    char __pad_12[4];
+};
+
+
+
+struct get_session_bitmap_request
+{
+    struct request_header __header;
+    unsigned int        index;
+};
+struct get_session_bitmap_reply
+{
+    struct reply_header __header;
+    int                 width;
+    int                 height;
+    /* VARARG(bits,bytes); */
+};
+
+
 enum request
 {
     REQ_new_process,
@@ -6781,6 +6813,8 @@ enum request
     REQ_set_apc_data,
     REQ_set_user_api_hook,
     REQ_get_user_api_hook,
+    REQ_add_session_bitmap,
+    REQ_get_session_bitmap,
     REQ_NB_REQUESTS
 };
 
@@ -7109,6 +7143,8 @@ union generic_request
     struct set_apc_data_request set_apc_data_request;
     struct set_user_api_hook_request set_user_api_hook_request;
     struct get_user_api_hook_request get_user_api_hook_request;
+    struct add_session_bitmap_request add_session_bitmap_request;
+    struct get_session_bitmap_request get_session_bitmap_request;
 };
 union generic_reply
 {
@@ -7435,6 +7471,8 @@ union generic_reply
     struct set_apc_data_reply set_apc_data_reply;
     struct set_user_api_hook_reply set_user_api_hook_reply;
     struct get_user_api_hook_reply get_user_api_hook_reply;
+    struct add_session_bitmap_reply add_session_bitmap_reply;
+    struct get_session_bitmap_reply get_session_bitmap_reply;
 };
 
 #define SERVER_PROTOCOL_VERSION 960

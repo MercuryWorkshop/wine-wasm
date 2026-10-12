@@ -3679,6 +3679,30 @@ static void dump_get_user_api_hook_reply( const struct get_user_api_hook_reply *
     dump_varargs_bytes( ", names=", cur_size );
 }
 
+static void dump_add_session_bitmap_request( const struct add_session_bitmap_request *req )
+{
+    fprintf( stderr, " width=%d", req->width );
+    fprintf( stderr, ", height=%d", req->height );
+    dump_varargs_bytes( ", bits=", cur_size );
+}
+
+static void dump_add_session_bitmap_reply( const struct add_session_bitmap_reply *req )
+{
+    fprintf( stderr, " index=%08x", req->index );
+}
+
+static void dump_get_session_bitmap_request( const struct get_session_bitmap_request *req )
+{
+    fprintf( stderr, " index=%08x", req->index );
+}
+
+static void dump_get_session_bitmap_reply( const struct get_session_bitmap_reply *req )
+{
+    fprintf( stderr, " width=%d", req->width );
+    fprintf( stderr, ", height=%d", req->height );
+    dump_varargs_bytes( ", bits=", cur_size );
+}
+
 typedef void (*dump_func)( const void *req );
 
 static const dump_func req_dumpers[REQ_NB_REQUESTS] =
@@ -4004,6 +4028,8 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_set_apc_data_request,
     (dump_func)dump_set_user_api_hook_request,
     (dump_func)dump_get_user_api_hook_request,
+    (dump_func)dump_add_session_bitmap_request,
+    (dump_func)dump_get_session_bitmap_request,
 };
 
 static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
@@ -4329,6 +4355,8 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
     NULL,
     (dump_func)dump_set_user_api_hook_reply,
     (dump_func)dump_get_user_api_hook_reply,
+    (dump_func)dump_add_session_bitmap_reply,
+    (dump_func)dump_get_session_bitmap_reply,
 };
 
 static const char * const req_names[REQ_NB_REQUESTS] =
@@ -4654,6 +4682,8 @@ static const char * const req_names[REQ_NB_REQUESTS] =
     "set_apc_data",
     "set_user_api_hook",
     "get_user_api_hook",
+    "add_session_bitmap",
+    "get_session_bitmap",
 };
 
 static const struct

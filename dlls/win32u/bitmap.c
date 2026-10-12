@@ -27,6 +27,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
@@ -525,4 +527,111 @@ BOOL WINAPI NtGdiSetBitmapDimension(
     bmp->size.cy = y;
     GDI_ReleaseObj( hbitmap );
     return TRUE;
+}
+
+
+#define SBA_STOCK 0x00000001
+
+static pthread_mutex_t session_bitmap_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/***********************************************************************
+ *           load_session_bitmap
+ *
+ * Make this process's copy of the session's stock bitmap number index.
+ */
+void load_session_bitmap( unsigned int index )
+{
+    int width = 0, height = 0;
+    HBITMAP bitmap;
+    void *bits;
+    NTSTATUS status;
+
+    pthread_mutex_lock( &session_bitmap_lock );
+    if (session_handle_used( index )) goto done;
+
+    SERVER_START_REQ( get_session_bitmap )
+    {
+        req->index = index;
+        status = wine_server_call( req );
+        width = reply->width;
+        height = reply->height;
+    }
+    SERVER_END_REQ;
+    if (status != STATUS_BUFFER_TOO_SMALL || width <= 0 || height <= 0) goto done;
+    if (!(bits = malloc( (size_t)width * height * 4 ))) goto done;
+    SERVER_START_REQ( get_session_bitmap )
+    {
+        req->index = index;
+        wine_server_set_reply( req, bits, (size_t)width * height * 4 );
+        status = wine_server_call( req );
+    }
+    SERVER_END_REQ;
+    if (!status && (bitmap = NtGdiCreateBitmap( width, height, 1, 32, bits )))
+    {
+        if (!make_session_handle( bitmap, index )) NtGdiDeleteObjectApp( bitmap );
+        TRACE( "loaded session bitmap %u (%dx%d)\n", index, width, height );
+    }
+    free( bits );
+done:
+    pthread_mutex_unlock( &session_bitmap_lock );
+}
+
+/***********************************************************************
+ *           NtGdiSetBitmapAttributes   (win32u.@)
+ *
+ * SBA_STOCK: make the bitmap a stock object of the session, at a handle
+ * every process can use.
+ */
+HBITMAP WINAPI NtGdiSetBitmapAttributes( HBITMAP hbitmap, DWORD flags )
+{
+    BITMAPINFO info;
+    HBITMAP ret = 0;
+    BITMAP bm;
+    void *bits;
+    HDC hdc;
+    UINT index = 0;
+    NTSTATUS status;
+
+    TRACE( "%p %#x\n", hbitmap, (int)flags );
+    if (flags != SBA_STOCK || get_gdi_object_type( hbitmap ) != NTGDI_OBJ_BITMAP) return 0;
+    if (LOWORD( hbitmap ) >= FIRST_SESSION_GDI_HANDLE) return hbitmap;
+    if (!NtGdiExtGetObjectW( hbitmap, sizeof(bm), &bm ) || bm.bmWidth <= 0 || bm.bmHeight <= 0) return 0;
+
+    memset( &info, 0, sizeof(info) );
+    info.bmiHeader.biSize = sizeof(info.bmiHeader);
+    info.bmiHeader.biWidth = bm.bmWidth;
+    info.bmiHeader.biHeight = -bm.bmHeight;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    if (!(bits = malloc( (size_t)bm.bmWidth * bm.bmHeight * 4 ))) return 0;
+    if ((hdc = NtGdiCreateCompatibleDC( 0 )))
+    {
+        if (NtGdiGetDIBitsInternal( hdc, hbitmap, 0, bm.bmHeight, bits, &info, DIB_RGB_COLORS, 0, 0 ) == bm.bmHeight)
+        {
+            SERVER_START_REQ( add_session_bitmap )
+            {
+                req->width = bm.bmWidth;
+                req->height = bm.bmHeight;
+                wine_server_add_data( req, bits, (size_t)bm.bmWidth * bm.bmHeight * 4 );
+                status = wine_server_call( req );
+                index = reply->index;
+            }
+            SERVER_END_REQ;
+            if (!status) ret = make_session_handle( hbitmap, index );
+        }
+        NtGdiDeleteObjectApp( hdc );
+    }
+    free( bits );
+    return ret;
+}
+
+/***********************************************************************
+ *           NtGdiClearBitmapAttributes   (win32u.@)
+ */
+HBITMAP WINAPI NtGdiClearBitmapAttributes( HBITMAP hbitmap, DWORD flags )
+{
+    TRACE( "%p %#x\n", hbitmap, (int)flags );
+    if (flags != SBA_STOCK || get_gdi_object_type( hbitmap ) != NTGDI_OBJ_BITMAP) return 0;
+    return clear_session_handle( hbitmap );
 }

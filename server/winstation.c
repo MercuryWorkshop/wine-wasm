@@ -982,3 +982,60 @@ DECL_HANDLER(enum_winstation)
         set_error( STATUS_BUFFER_TOO_SMALL );
     }
 }
+
+
+/* the session's stock bitmaps (SetBitmapAttributes( SBA_STOCK )): GDI objects
+ * are per process here, so every process that uses one makes its own copy
+ * from these bits, at the same handle */
+#define MAX_SESSION_BITMAPS 0x2000
+
+struct session_bitmap
+{
+    int          width;
+    int          height;
+    data_size_t  size;
+    void        *bits;
+};
+
+static struct session_bitmap *session_bitmaps;
+static unsigned int session_bitmap_count;
+
+DECL_HANDLER(add_session_bitmap)
+{
+    data_size_t size = get_req_data_size();
+    struct session_bitmap *bitmap;
+
+    if (req->width <= 0 || req->height <= 0 || size != (data_size_t)req->width * req->height * 4)
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        return;
+    }
+    if (session_bitmap_count >= MAX_SESSION_BITMAPS)
+    {
+        set_error( STATUS_NO_MEMORY );
+        return;
+    }
+    if (!session_bitmaps && !(session_bitmaps = mem_alloc( MAX_SESSION_BITMAPS * sizeof(*session_bitmaps) ))) return;
+    bitmap = &session_bitmaps[session_bitmap_count];
+    if (!(bitmap->bits = memdup( get_req_data(), size ))) return;
+    bitmap->width  = req->width;
+    bitmap->height = req->height;
+    bitmap->size   = size;
+    reply->index = session_bitmap_count++;
+}
+
+DECL_HANDLER(get_session_bitmap)
+{
+    struct session_bitmap *bitmap;
+
+    if (req->index >= session_bitmap_count)
+    {
+        set_error( STATUS_INVALID_HANDLE );
+        return;
+    }
+    bitmap = &session_bitmaps[req->index];
+    reply->width  = bitmap->width;
+    reply->height = bitmap->height;
+    if (bitmap->size <= get_reply_max_size()) set_reply_data( bitmap->bits, bitmap->size );
+    else set_error( STATUS_BUFFER_TOO_SMALL );
+}

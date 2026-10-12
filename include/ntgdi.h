@@ -340,6 +340,7 @@ W32KAPI INT      WINAPI NtGdiDescribePixelFormat( HDC hdc, INT format, UINT size
                                                   PIXELFORMATDESCRIPTOR *descr );
 W32KAPI LONG     WINAPI NtGdiDoPalette( HGDIOBJ handle, WORD start, WORD count, void *entries,
                                         DWORD func, BOOL inbound );
+W32KAPI HBITMAP  WINAPI NtGdiClearBitmapAttributes( HBITMAP bitmap, DWORD flags );
 W32KAPI BOOL     WINAPI NtGdiDrawStream( HDC hdc, ULONG in, void *pvin );
 W32KAPI BOOL     WINAPI NtGdiEllipse( HDC hdc, INT left, INT top, INT right, INT bottom );
 W32KAPI INT      WINAPI NtGdiEndDoc( HDC hdc );
@@ -467,6 +468,7 @@ W32KAPI BOOL     WINAPI NtGdiScaleViewportExtEx( HDC hdc, INT x_num, INT x_denom
 W32KAPI BOOL     WINAPI NtGdiScaleWindowExtEx( HDC hdc, INT x_num, INT x_denom,
                                                INT y_num, INT y_denom, SIZE *size );
 W32KAPI HGDIOBJ  WINAPI NtGdiSelectBitmap( HDC hdc, HGDIOBJ handle );
+W32KAPI HBITMAP  WINAPI NtGdiSetBitmapAttributes( HBITMAP bitmap, DWORD flags );
 W32KAPI HGDIOBJ  WINAPI NtGdiSelectBrush( HDC hdc, HGDIOBJ handle );
 W32KAPI BOOL     WINAPI NtGdiSelectClipPath( HDC hdc, INT mode );
 W32KAPI HGDIOBJ  WINAPI NtGdiSelectFont( HDC hdc, HGDIOBJ handle );

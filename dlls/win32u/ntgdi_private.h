@@ -387,6 +387,14 @@ extern UINT GDI_get_ref_count( HGDIOBJ handle );
 extern HGDIOBJ GDI_inc_ref_count( HGDIOBJ handle );
 extern BOOL GDI_dec_ref_count( HGDIOBJ handle );
 extern DWORD get_gdi_object_type( HGDIOBJ obj );
+
+/* the session's stock bitmaps take the same handles in every process */
+#define FIRST_SESSION_GDI_HANDLE 0xe000
+#define MAX_SESSION_GDI_HANDLES  (GDI_MAX_HANDLE_COUNT - FIRST_SESSION_GDI_HANDLE)
+extern HGDIOBJ make_session_handle( HGDIOBJ handle, unsigned int index );
+extern HGDIOBJ clear_session_handle( HGDIOBJ handle );
+extern void load_session_bitmap( unsigned int index );
+extern BOOL session_handle_used( unsigned int index );
 extern void make_gdi_object_system( HGDIOBJ handle, BOOL set );
 
 /* mapping.c */

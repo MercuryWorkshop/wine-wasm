@@ -157,7 +157,7 @@
 @ stdcall -syscall NtGdiCancelDC(long)
 @ stub -syscall NtGdiChangeGhostFont
 @ stub -syscall NtGdiCheckBitmapBits
-@ stub -syscall NtGdiClearBitmapAttributes
+@ stdcall -syscall NtGdiClearBitmapAttributes(long long)
 @ stub -syscall NtGdiClearBrushAttributes
 @ stdcall -syscall NtGdiCloseFigure(long)
 @ stub -syscall NtGdiColorCorrectPalette
@@ -623,7 +623,7 @@
 @ stdcall -syscall NtGdiSelectClipPath(long long)
 @ stdcall -syscall NtGdiSelectFont(long long)
 @ stdcall -syscall NtGdiSelectPen(long long)
-@ stub -syscall NtGdiSetBitmapAttributes
+@ stdcall -syscall NtGdiSetBitmapAttributes(long long)
 @ stdcall -syscall NtGdiSetBitmapBits(long long ptr)
 @ stdcall -syscall NtGdiSetBitmapDimension(long long long ptr)
 @ stdcall -syscall NtGdiSetBoundsRect(long ptr long)

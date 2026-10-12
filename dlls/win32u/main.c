@@ -471,6 +471,11 @@ LONG SYSCALL_API NtGdiDoPalette( HGDIOBJ handle, WORD start, WORD count, void *e
     SYSCALL_FUNC( NtGdiDoPalette );
 }
 
+HBITMAP SYSCALL_API NtGdiClearBitmapAttributes( HBITMAP bitmap, DWORD flags )
+{
+    SYSCALL_FUNC( NtGdiClearBitmapAttributes );
+}
+
 BOOL SYSCALL_API NtGdiDrawStream( HDC hdc, ULONG in, void *pvin )
 {
     SYSCALL_FUNC( NtGdiDrawStream );
@@ -971,6 +976,11 @@ BOOL SYSCALL_API NtGdiScaleWindowExtEx( HDC hdc, INT x_num, INT x_denom,
                                         INT y_num, INT y_denom, SIZE *size )
 {
     SYSCALL_FUNC( NtGdiScaleWindowExtEx );
+}
+
+HBITMAP SYSCALL_API NtGdiSetBitmapAttributes( HBITMAP bitmap, DWORD flags )
+{
+    SYSCALL_FUNC( NtGdiSetBitmapAttributes );
 }
 
 HGDIOBJ SYSCALL_API NtGdiSelectBitmap( HDC hdc, HGDIOBJ handle )

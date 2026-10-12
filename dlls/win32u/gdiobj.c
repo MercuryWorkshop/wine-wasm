@@ -726,7 +726,7 @@ HGDIOBJ alloc_gdi_handle( struct gdi_obj_header *obj, DWORD type, const struct g
     entry = next_free;
     if (entry)
         next_free = (GDI_HANDLE_ENTRY *)(UINT_PTR)entry->Object;
-    else if (next_unused < gdi_shared->Handles + GDI_MAX_HANDLE_COUNT)
+    else if (next_unused < gdi_shared->Handles + FIRST_SESSION_GDI_HANDLE)
         entry = next_unused++;
     else
     {
@@ -768,16 +768,94 @@ void *free_gdi_handle( HGDIOBJ handle )
                handle, InterlockedDecrement( &debug_count ) + 1, GDI_MAX_HANDLE_COUNT );
         object = entry_obj( entry );
         entry->Type = 0;
-        entry->Object = (UINT_PTR)next_free;
-        next_free = entry;
+        if (entry >= gdi_shared->Handles + FIRST_SESSION_GDI_HANDLE)
+            entry->Object = 0;  /* a session handle: never reused for anything else */
+        else
+        {
+            entry->Object = (UINT_PTR)next_free;
+            next_free = entry;
+        }
     }
     pthread_mutex_unlock( &gdi_lock );
     return object;
 }
 
+/***********************************************************************
+ *           make_session_handle
+ *
+ * Move an object to the handle of the session's stock object number index,
+ * the same handle in every process. Returns the new handle.
+ */
+HGDIOBJ make_session_handle( HGDIOBJ handle, unsigned int index )
+{
+    GDI_HANDLE_ENTRY *entry, *session;
+    HGDIOBJ ret = 0;
+
+    if (index >= MAX_SESSION_GDI_HANDLES) return 0;
+    pthread_mutex_lock( &gdi_lock );
+    session = &gdi_shared->Handles[FIRST_SESSION_GDI_HANDLE + index];
+    if ((entry = handle_entry( handle )) && !session->Type && entry < gdi_shared->Handles + FIRST_SESSION_GDI_HANDLE)
+    {
+        *session = *entry;
+        session->Generation = 1;
+        session->StockFlag = 1;
+        entry_obj( session )->system = TRUE;
+        entry->Type = 0;
+        entry->Object = (UINT_PTR)next_free;
+        next_free = entry;
+        ret = entry_to_handle( session );
+    }
+    pthread_mutex_unlock( &gdi_lock );
+    TRACE( "%p -> %p\n", handle, ret );
+    return ret;
+}
+
+/***********************************************************************
+ *           clear_session_handle
+ *
+ * Make a session stock object an ordinary object of this process again.
+ */
+HGDIOBJ clear_session_handle( HGDIOBJ handle )
+{
+    GDI_HANDLE_ENTRY *entry;
+    HGDIOBJ ret = 0;
+
+    pthread_mutex_lock( &gdi_lock );
+    if ((entry = handle_entry( handle )))
+    {
+        if (entry >= gdi_shared->Handles + FIRST_SESSION_GDI_HANDLE)
+        {
+            entry->StockFlag = 0;
+            entry_obj( entry )->system = FALSE;
+        }
+        ret = entry_to_handle( entry );
+    }
+    pthread_mutex_unlock( &gdi_lock );
+    return ret;
+}
+
+BOOL session_handle_used( unsigned int index )
+{
+    return index < MAX_SESSION_GDI_HANDLES && gdi_shared->Handles[FIRST_SESSION_GDI_HANDLE + index].Type;
+}
+
+/* a session stock object this process has not used yet: make its copy */
+static void check_session_handle( HGDIOBJ handle )
+{
+    unsigned int idx = LOWORD( handle );
+
+    if (idx < FIRST_SESSION_GDI_HANDLE || !gdi_shared || gdi_shared->Handles[idx].Type) return;
+    if ((HIWORD( handle ) >> 8) != 1 || !(HIWORD( handle ) & 0x80)) return;  /* generation 1, stock */
+    if (((HIWORD( handle ) & 0x7f) << NTGDI_HANDLE_TYPE_SHIFT) == NTGDI_OBJ_BITMAP)
+        load_session_bitmap( idx - FIRST_SESSION_GDI_HANDLE );
+}
+
 DWORD get_gdi_object_type( HGDIOBJ obj )
 {
-    GDI_HANDLE_ENTRY *entry = handle_entry( obj );
+    GDI_HANDLE_ENTRY *entry;
+
+    check_session_handle( obj );
+    entry = handle_entry( obj );
     return entry ? entry->ExtType << NTGDI_HANDLE_TYPE_SHIFT : 0;
 }
 
@@ -799,6 +877,7 @@ void *get_any_obj_ptr( HGDIOBJ handle, DWORD *type )
     void *ptr = NULL;
     GDI_HANDLE_ENTRY *entry;
 
+    check_session_handle( handle );
     pthread_mutex_lock( &gdi_lock );
 
     if ((entry = handle_entry( handle )))
