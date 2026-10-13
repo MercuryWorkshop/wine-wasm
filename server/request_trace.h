@@ -3724,6 +3724,23 @@ static void dump_get_shell_hook_windows_reply( const struct get_shell_hook_windo
     dump_varargs_user_handles( ", windows=", cur_size );
 }
 
+static void dump_set_icon_image_request( const struct set_icon_image_request *req )
+{
+    fprintf( stderr, " handle=%08x", req->handle );
+    dump_varargs_bytes( ", data=", cur_size );
+}
+
+static void dump_get_icon_image_request( const struct get_icon_image_request *req )
+{
+    fprintf( stderr, " handle=%08x", req->handle );
+}
+
+static void dump_get_icon_image_reply( const struct get_icon_image_reply *req )
+{
+    fprintf( stderr, " total=%u", req->total );
+    dump_varargs_bytes( ", data=", cur_size );
+}
+
 typedef void (*dump_func)( const void *req );
 
 static const dump_func req_dumpers[REQ_NB_REQUESTS] =
@@ -4053,6 +4070,8 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_get_session_bitmap_request,
     (dump_func)dump_set_shell_hook_window_request,
     (dump_func)dump_get_shell_hook_windows_request,
+    (dump_func)dump_set_icon_image_request,
+    (dump_func)dump_get_icon_image_request,
 };
 
 static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
@@ -4382,6 +4401,8 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_get_session_bitmap_reply,
     (dump_func)dump_set_shell_hook_window_reply,
     (dump_func)dump_get_shell_hook_windows_reply,
+    NULL,
+    (dump_func)dump_get_icon_image_reply,
 };
 
 static const char * const req_names[REQ_NB_REQUESTS] =
@@ -4711,6 +4732,8 @@ static const char * const req_names[REQ_NB_REQUESTS] =
     "get_session_bitmap",
     "set_shell_hook_window",
     "get_shell_hook_windows",
+    "set_icon_image",
+    "get_icon_image",
 };
 
 static const struct

@@ -225,6 +225,7 @@ extern struct vulkan_instance *vulkan_instance_create( const struct vulkan_insta
 HANDLE alloc_user_handle( void *ptr, unsigned short type );
 void *free_user_handle( HANDLE handle, unsigned short type );
 void *get_user_handle_ptr( HANDLE handle, unsigned short type );
+HANDLE get_user_handle_full( HANDLE handle, unsigned short type );
 void release_user_handle_ptr( void *ptr );
 void *next_thread_user_object( UINT tid, HANDLE *handle, unsigned short type );
 UINT win_set_flags( HWND hwnd, UINT set_mask, UINT clear_mask );

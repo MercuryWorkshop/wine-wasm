@@ -424,6 +424,12 @@ static HICON set_window_icon( HWND hwnd, WPARAM type, HICON icon )
     icon_small = win->hIconSmall2 ? win->hIconSmall2 : win->hIconSmall;
     win->has_icons = !is_child;
     release_win_ptr( win );
+    /* the taskbar, another process, draws them */
+    if (!is_child)
+    {
+        publish_icon( icon );
+        publish_icon( icon_small );
+    }
 
     if (!is_child && (icon = get_window_icon_info( hwnd, ICON_BIG, icon, &ii )))
     {

@@ -621,6 +621,9 @@ ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *nam
 
     /* Other non-null values must be set by caller */
     icon_internal = wc->hIconSm ? 0 : create_small_icon( wc->hIcon );
+    /* the taskbar, another process, draws them (GCLP_HICON, GCLP_HICONSM) */
+    publish_icon( wc->hIcon );
+    publish_icon( wc->hIconSm );
 
     user_lock();
     SERVER_START_REQ( create_class )
@@ -958,6 +961,8 @@ static ULONG_PTR set_class_long_size( HWND hwnd, INT offset, LONG_PTR newval, UI
 
         NtUserDestroyCursor( class->icon_internal, 0 );
         class->icon_internal = icon_small ? 0 : create_small_icon( icon );
+        publish_icon( icon );
+        publish_icon( icon_small );
     }
 
     release_class_ptr( class );

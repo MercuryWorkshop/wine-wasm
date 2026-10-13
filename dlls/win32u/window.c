@@ -213,6 +213,16 @@ WNDPROC get_window_wndproc_handle( HWND hwnd, BOOL *ansi )
     return wndproc;
 }
 
+/* the full handle of a user object of a type, of any process, or 0 */
+HANDLE get_user_handle_full( HANDLE handle, unsigned short type )
+{
+    struct user_entry entry;
+    HANDLE full;
+
+    if (!get_user_entry( handle, type, &entry, &full )) return 0;
+    return full;
+}
+
 /***********************************************************************
  *           get_user_handle_ptr
  */

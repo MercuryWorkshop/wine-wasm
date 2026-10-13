@@ -962,9 +962,6 @@ static BOOL unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lpa
     case WM_PAINTCLIPBOARD:
     case WM_SIZECLIPBOARD:
     /* these contain HICON */
-    case WM_GETICON:
-    case WM_SETICON:
-    case WM_QUERYDRAGICON:
     case WM_QUERYPARKICON:
     /* these contain pointers */
     case WM_DROPOBJECT:
@@ -1315,9 +1312,6 @@ static size_t pack_message( HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
     case WM_PAINTCLIPBOARD:
     case WM_SIZECLIPBOARD:
     /* these contain HICON */
-    case WM_GETICON:
-    case WM_SETICON:
-    case WM_QUERYDRAGICON:
     case WM_QUERYPARKICON:
     /* these contain pointers */
     case WM_DROPOBJECT:
@@ -2126,6 +2120,10 @@ static void reply_message( struct received_message_info *info, LRESULT result, M
         if (!msg) msg = &info->msg;
         pack_reply( msg->hwnd, msg->message, msg->wParam, msg->lParam, result, &data );
     }
+    /* an icon handle returned to another thread, likely the taskbar of another
+     * process: it can draw it once its image is published (cursoricon.c) */
+    if (result && !replied && (info->msg.message == WM_GETICON || info->msg.message == WM_QUERYDRAGICON))
+        publish_icon( (HICON)result );
 
     SERVER_START_REQ( reply_message )
     {
