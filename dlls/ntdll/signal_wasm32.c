@@ -165,7 +165,16 @@ static int qpc_fast(void)
 
 NTSTATUS WINAPI NtQueryPerformanceCounter( LARGE_INTEGER *counter, LARGE_INTEGER *frequency )
 {
-    if (!qpc_fast())
+    /* One call in QPC_SAFEPOINT still makes the system call: a thread that
+     * spins on the counter alone (a loading thread waiting for another)
+     * would otherwise never reach gex (no unit installs, no signals, no
+     * stop) and could hold up the process for minutes. The counter is
+     * shared and racy on purpose: a spinning thread still lands on a
+     * multiple of QPC_SAFEPOINT about once in QPC_SAFEPOINT of its calls. */
+    enum { QPC_SAFEPOINT = 64 };
+    static unsigned int calls;
+
+    if (!qpc_fast() || !(++calls % QPC_SAFEPOINT))
     {
         UINT w[2] = { PtrToUlong( counter ), PtrToUlong( frequency ) };
         return __gexw_syscall( __id_NtQueryPerformanceCounter, w, 2 );
