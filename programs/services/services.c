@@ -1281,7 +1281,7 @@ int __cdecl main(int argc, char *argv[])
     static const WCHAR svcctl_started_event[] = SVCCTL_STARTED_EVENT;
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION job_limit;
     JOBOBJECT_ASSOCIATE_COMPLETION_PORT port_info;
-    HANDLE started_event, process_monitor_thread;
+    HANDLE started_event, scm_created_event, process_monitor_thread;
     DWORD err;
 
     job_object = CreateJobObjectW(NULL, NULL);
@@ -1320,6 +1320,11 @@ int __cdecl main(int argc, char *argv[])
         scmdatabase_autostart_services(active_database);
         process_monitor_thread = CreateThread(NULL, 0, process_monitor_thread_proc, NULL, 0, NULL);
         SetEvent(started_event);
+        /* Windows' SCM names this event once its database is up; Windows 7's
+         * explorer waits up to 60 s for it before it starts the desktop.
+         * Kept open (and so alive) for the session. */
+        if ((scm_created_event = CreateEventW(NULL, TRUE, TRUE, L"Global\\ScmCreatedEvent")))
+            SetEvent(scm_created_event);
         WaitForSingleObject(exit_event, INFINITE);
         PostQueuedCompletionStatus(job_completion_port, 0, 0, NULL);
         WaitForSingleObject(process_monitor_thread, INFINITE);
