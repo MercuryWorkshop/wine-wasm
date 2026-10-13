@@ -291,6 +291,21 @@ DWORD WINAPI CommandLineFromMsiDescriptor( WCHAR *szDescriptor,
 }
 
 /***********************************************************************
+ *      InstallApplication (ADVAPI32.@)
+ *
+ * Installs an application that Group Policy software installation
+ * publishes for a file extension, ProgID, COM class or name (the shell
+ * asks for one when it finds no handler for a file). Nothing is published
+ * without a domain's software installation policy: the Application
+ * Management service then reports no package.
+ */
+DWORD WINAPI InstallApplication( void *install_data )
+{
+    TRACE( "%p\n", install_data );
+    return CS_E_PACKAGE_NOTFOUND;
+}
+
+/***********************************************************************
  *      RegisterWaitChainCOMCallback (ole32.@)
  */
 void WINAPI RegisterWaitChainCOMCallback(PCOGETCALLSTATE call_state_cb,
