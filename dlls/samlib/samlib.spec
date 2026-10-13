@@ -4,8 +4,8 @@
 @ stub SamChangePasswordUser2
 @ stub SamChangePasswordUser3
 @ stub SamChangePasswordUser
-@ stub SamCloseHandle
-@ stub SamConnect
+@ stdcall SamCloseHandle(ptr)
+@ stdcall SamConnect(ptr ptr long ptr)
 @ stub SamConnectWithCreds
 @ stub SamCreateAliasInDomain
 @ stub SamCreateGroupInDomain
@@ -14,35 +14,35 @@
 @ stub SamDeleteAlias
 @ stub SamDeleteGroup
 @ stub SamDeleteUser
-@ stub SamEnumerateAliasesInDomain
+@ stdcall SamEnumerateAliasesInDomain(ptr ptr ptr long ptr)
 @ stub SamEnumerateDomainsInSamServer
 @ stub SamEnumerateGroupsInDomain
-@ stub SamEnumerateUsersInDomain
-@ stub SamFreeMemory
+@ stdcall SamEnumerateUsersInDomain(ptr ptr long ptr long ptr)
+@ stdcall SamFreeMemory(ptr)
 @ stub SamGetAliasMembership
 @ stub SamGetCompatibilityMode
 @ stub SamGetDisplayEnumerationIndex
 @ stub SamGetGroupsForUser
-@ stub SamGetMembersInAlias
+@ stdcall SamGetMembersInAlias(ptr ptr ptr)
 @ stub SamGetMembersInGroup
-@ stub SamLookupDomainInSamServer
-@ stub SamLookupIdsInDomain
-@ stub SamLookupNamesInDomain
-@ stub SamOpenAlias
-@ stub SamOpenDomain
+@ stdcall SamLookupDomainInSamServer(ptr ptr ptr)
+@ stdcall SamLookupIdsInDomain(ptr long ptr ptr ptr)
+@ stdcall SamLookupNamesInDomain(ptr long ptr ptr ptr)
+@ stdcall SamOpenAlias(ptr long long ptr)
+@ stdcall SamOpenDomain(ptr long ptr ptr)
 @ stub SamOpenGroup
-@ stub SamOpenUser
+@ stdcall SamOpenUser(ptr long long ptr)
 @ stub SamQueryDisplayInformation
-@ stub SamQueryInformationAlias
+@ stdcall SamQueryInformationAlias(ptr long ptr)
 @ stub SamQueryInformationDomain
 @ stub SamQueryInformationGroup
-@ stub SamQueryInformationUser
+@ stdcall SamQueryInformationUser(ptr long ptr)
 @ stub SamQuerySecurityObject
 @ stub SamRemoveMemberFromAlias
 @ stub SamRemoveMemberFromForeignDomain
 @ stub SamRemoveMemberFromGroup
 @ stub SamRemoveMultipleMembersFromAlias
-@ stub SamRidToSid
+@ stdcall SamRidToSid(ptr long ptr)
 @ stub SamSetInformationAlias
 @ stub SamSetInformationDomain
 @ stub SamSetInformationGroup
@@ -63,3 +63,5 @@
 @ stub SamiSetBootKeyInformation
 @ stub SamiSetDSRMPassword
 @ stub SamiSetDSRMPasswordOWF
+@ stdcall SamRegisterObjectChangeNotification(long ptr)
+@ stdcall SamUnregisterObjectChangeNotification(long ptr)

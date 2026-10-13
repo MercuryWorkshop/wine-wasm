@@ -1,3 +1,7 @@
 MODULE    = samlib.dll
+IMPORTS   = advapi32
 
 EXTRADLLFLAGS = -Wb,--prefer-native
+
+SOURCES = \
+	samlib.c
