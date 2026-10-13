@@ -145,15 +145,15 @@ static const RTL_OSVERSIONINFOEXW VersionData[NB_WINDOWS_VERSIONS] =
         sizeof(RTL_OSVERSIONINFOEXW), 6, 0, 6002, VER_PLATFORM_WIN32_NT,
         L"Service Pack 2", 2, 0, VER_SUITE_SINGLEUSERTS, VER_NT_SERVER, 0
     },
-    /* WIN7 */
-    {
-        sizeof(RTL_OSVERSIONINFOEXW), 6, 1, 7601, VER_PLATFORM_WIN32_NT,
-        L"Service Pack 1", 1, 0, VER_SUITE_SINGLEUSERTS, VER_NT_WORKSTATION, 0
-    },
     /* WIN2K8R2 */
     {
         sizeof(RTL_OSVERSIONINFOEXW), 6, 1, 7601, VER_PLATFORM_WIN32_NT,
         L"Service Pack 1", 1, 0, VER_SUITE_SINGLEUSERTS, VER_NT_SERVER, 0
+    },
+    /* WIN7 */
+    {
+        sizeof(RTL_OSVERSIONINFOEXW), 6, 1, 7601, VER_PLATFORM_WIN32_NT,
+        L"Service Pack 1", 1, 0, VER_SUITE_SINGLEUSERTS, VER_NT_WORKSTATION, 0
     },
     /* WIN8 */
     {
