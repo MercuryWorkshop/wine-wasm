@@ -1003,11 +1003,19 @@ static void result_timeout( void *private )
     if (result->msg)  /* not received yet */
     {
         struct message *msg = result->msg;
+        struct msg_queue *receiver = result->receiver;
 
         result->msg = NULL;
         msg->result = NULL;
-        remove_queue_message( result->receiver, msg, SEND_MESSAGE );
         result->receiver = NULL;
+        /* As on Windows, the sender only stops waiting: the receiver still gets
+         * the message, with nobody waiting for its result, so a thread that
+         * was busy when a broadcast timed out (WM_THEMECHANGED, WM_SETTINGCHANGE)
+         * still hears of the change. A message from another process carries
+         * its data, so it becomes a notification; one from this process may
+         * point into the sender's memory, which may be gone, and is dropped. */
+        if (msg->type == MSG_OTHER_PROCESS) msg->type = MSG_NOTIFY;
+        else remove_queue_message( receiver, msg, SEND_MESSAGE );
     }
     store_message_result( result, 0, STATUS_TIMEOUT );
 }
