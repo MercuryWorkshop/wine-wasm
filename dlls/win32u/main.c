@@ -1372,6 +1372,11 @@ BOOL SYSCALL_API NtUserDeleteMenu( HMENU handle, UINT id, UINT flags )
     SYSCALL_FUNC( NtUserDeleteMenu );
 }
 
+BOOL SYSCALL_API NtUserDeregisterShellHookWindow( HWND hwnd )
+{
+    SYSCALL_FUNC( NtUserDeregisterShellHookWindow );
+}
+
 BOOL SYSCALL_API NtUserDestroyAcceleratorTable( HACCEL handle )
 {
     SYSCALL_FUNC( NtUserDestroyAcceleratorTable );
@@ -2113,6 +2118,11 @@ BOOL SYSCALL_API NtUserRegisterHotKey( HWND hwnd, INT id, UINT modifiers, UINT v
 BOOL SYSCALL_API NtUserRegisterRawInputDevices( const RAWINPUTDEVICE *devices, UINT device_count, UINT device_size )
 {
     SYSCALL_FUNC( NtUserRegisterRawInputDevices );
+}
+
+BOOL SYSCALL_API NtUserRegisterShellHookWindow( HWND hwnd )
+{
+    SYSCALL_FUNC( NtUserRegisterShellHookWindow );
 }
 
 BOOL SYSCALL_API NtUserRegisterTouchPadCapable( BOOL capable )

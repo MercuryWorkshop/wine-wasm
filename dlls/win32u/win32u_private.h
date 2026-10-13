@@ -303,6 +303,8 @@ extern BOOL is_window_drawable( HWND hwnd, BOOL icon );
 extern BOOL is_window_enabled( HWND hwnd );
 extern BOOL is_window_unicode( HWND hwnd );
 extern BOOL is_window_visible( HWND hwnd );
+extern BOOL is_shell_hook_window( HWND hwnd );
+extern void shell_hook_notify( WPARAM code, LPARAM lparam );
 extern BOOL is_zoomed( HWND hwnd );
 extern BOOL set_window_pixel_format( HWND hwnd, int format, BOOL internal );
 extern int get_window_pixel_format( HWND hwnd );

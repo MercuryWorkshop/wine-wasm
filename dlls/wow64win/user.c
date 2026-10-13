@@ -1997,6 +1997,13 @@ NTSTATUS WINAPI wow64_NtUserDeleteMenu( UINT *args )
     return NtUserDeleteMenu( menu, id, flags );
 }
 
+NTSTATUS WINAPI wow64_NtUserDeregisterShellHookWindow( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+
+    return NtUserDeregisterShellHookWindow( hwnd );
+}
+
 NTSTATUS WINAPI wow64_NtUserDestroyAcceleratorTable( UINT *args )
 {
     HACCEL handle = get_handle( &args );
@@ -4065,6 +4072,13 @@ NTSTATUS WINAPI wow64_NtUserRegisterRawInputDevices( UINT *args )
     }
 
     return NtUserRegisterRawInputDevices( devices64, count, sizeof(*devices64) );
+}
+
+NTSTATUS WINAPI wow64_NtUserRegisterShellHookWindow( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+
+    return NtUserRegisterShellHookWindow( hwnd );
 }
 
 NTSTATUS WINAPI wow64_NtUserRegisterTouchPadCapable( UINT *args )

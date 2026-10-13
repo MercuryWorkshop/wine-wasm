@@ -2139,6 +2139,9 @@ BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus, DWORD new
     if (hwnd)
     {
         NtUserNotifyWinEvent( EVENT_SYSTEM_FOREGROUND, hwnd, 0, 0 );
+        /* Windows (Vista on) tells the taskbar of every activation this way */
+        if (NtUserGetAncestor( hwnd, GA_PARENT ) == get_desktop_window())
+            shell_hook_notify( HSHELL_RUDEAPPACTIVATED, (LPARAM)hwnd );
 
         /* send palette messages */
         if (send_message( hwnd, WM_QUERYNEWPALETTE, 0, 0 ))

@@ -4111,12 +4111,16 @@ BOOL set_window_pos( WINDOWPOS *winpos, int parent_x, int parent_y )
     if (winpos->flags & SWP_HIDEWINDOW)
     {
         NtUserNotifyWinEvent( EVENT_OBJECT_HIDE, winpos->hwnd, 0, 0 );
+        if (is_shell_hook_window( winpos->hwnd ))
+            shell_hook_notify( HSHELL_WINDOWDESTROYED, (LPARAM)winpos->hwnd );
 
         NtUserHideCaret( winpos->hwnd );
     }
     else if (winpos->flags & SWP_SHOWWINDOW)
     {
         NtUserNotifyWinEvent( EVENT_OBJECT_SHOW, winpos->hwnd, 0, 0 );
+        if (is_shell_hook_window( winpos->hwnd ))
+            shell_hook_notify( HSHELL_WINDOWCREATED, (LPARAM)winpos->hwnd );
 
         NtUserShowCaret( winpos->hwnd );
     }
@@ -5202,6 +5206,12 @@ BOOL WINAPI NtUserFlashWindowEx( FLASHWINFO *info )
         return FALSE;
     }
     FIXME( "%p - semi-stub\n", info );
+
+    /* the taskbar flashes the window's button, and stops on a redraw */
+    if (info->dwFlags & FLASHW_TRAY)
+        shell_hook_notify( HSHELL_FLASH, (LPARAM)info->hwnd );
+    else if (!info->dwFlags && is_shell_hook_window( info->hwnd ))
+        shell_hook_notify( HSHELL_REDRAW, (LPARAM)info->hwnd );
 
     if (is_iconic( info->hwnd ))
     {
@@ -6644,6 +6654,94 @@ HWND WINAPI NtUserSetTaskmanWindow( HWND hwnd )
     }
     SERVER_END_REQ;
     return hwnd;
+}
+
+static BOOL set_shell_hook_window( HWND hwnd, BOOL add )
+{
+    BOOL ret;
+
+    SERVER_START_REQ( set_shell_hook_window )
+    {
+        req->window = wine_server_user_handle( hwnd );
+        req->add    = add;
+        ret = !wine_server_call_err( req ) && (add || reply->found);
+    }
+    SERVER_END_REQ;
+    return ret;
+}
+
+/***********************************************************************
+ *            NtUserRegisterShellHookWindow (win32u.@)
+ *
+ * The shell's taskbar learns of the windows it shows buttons for through
+ * the "SHELLHOOK" message posted to the windows registered here.
+ */
+BOOL WINAPI NtUserRegisterShellHookWindow( HWND hwnd )
+{
+    TRACE( "%p\n", hwnd );
+    return set_shell_hook_window( hwnd, TRUE );
+}
+
+/***********************************************************************
+ *            NtUserDeregisterShellHookWindow (win32u.@)
+ */
+BOOL WINAPI NtUserDeregisterShellHookWindow( HWND hwnd )
+{
+    TRACE( "%p\n", hwnd );
+    return set_shell_hook_window( hwnd, FALSE );
+}
+
+/* post a shell hook message (wparam: the HSHELL_ code) to the desktop's
+ * registered windows, as Windows does for the window events the taskbar
+ * follows; the WH_SHELL hooks are called separately */
+void shell_hook_notify( WPARAM code, LPARAM lparam )
+{
+    static UINT message;
+    user_handle_t buffer[16], *handles = buffer;
+    unsigned int i, count = ARRAY_SIZE(buffer);
+    BOOL ret;
+
+    for (;;)
+    {
+        SERVER_START_REQ( get_shell_hook_windows )
+        {
+            wine_server_set_reply( req, handles, count * sizeof(*handles) );
+            if ((ret = !wine_server_call( req )))
+            {
+                if (reply->count > count) count = reply->count;
+                else { count = reply->count; ret = 2; }
+            }
+        }
+        SERVER_END_REQ;
+        if (ret != 1) break;
+        if (handles != buffer) free( handles );
+        if (!(handles = malloc( count * sizeof(*handles) ))) return;
+    }
+    if (ret && count)
+    {
+        if (!message)
+        {
+            UNICODE_STRING name = RTL_CONSTANT_STRING( L"SHELLHOOK" );
+            message = NtUserRegisterWindowMessage( &name );
+        }
+        TRACE( "code %#lx, lparam %#lx, %u window(s)\n", (long)code, (long)lparam, count );
+        for (i = 0; i < count; i++)
+            NtUserPostMessage( wine_server_ptr_handle( handles[i] ), message, code, lparam );
+    }
+    if (handles != buffer) free( handles );
+}
+
+/* whether the taskbar shows a button for a top-level window: an unowned
+ * one, or one that asks for it, that is not a tool window */
+BOOL is_shell_hook_window( HWND hwnd )
+{
+    DWORD style = get_window_long( hwnd, GWL_STYLE ), ex_style = get_window_long( hwnd, GWL_EXSTYLE );
+
+    if (style & WS_CHILD) return FALSE;
+    if (NtUserGetAncestor( hwnd, GA_PARENT ) != get_desktop_window()) return FALSE;
+    if (ex_style & WS_EX_APPWINDOW) return TRUE;
+    if (ex_style & WS_EX_TOOLWINDOW) return FALSE;
+    return !get_window_relative( hwnd, GW_OWNER );
 }
 
 /***********************************************************************

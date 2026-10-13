@@ -243,8 +243,7 @@ void WINAPI RegisterSystemThread(DWORD flags, DWORD reserved)
  */
 BOOL WINAPI RegisterShellHookWindow(HWND hWnd)
 {
-    FIXME("(%p): stub\n", hWnd);
-    return FALSE;
+    return NtUserRegisterShellHookWindow( hWnd );
 }
 
 
@@ -253,8 +252,7 @@ BOOL WINAPI RegisterShellHookWindow(HWND hWnd)
  */
 BOOL WINAPI DeregisterShellHookWindow(HWND hWnd)
 {
-    FIXME("(%p): stub\n", hWnd);
-    return FALSE;
+    return NtUserDeregisterShellHookWindow( hWnd );
 }
 
 
