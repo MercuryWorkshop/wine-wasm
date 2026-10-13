@@ -508,6 +508,16 @@ static ULONG_PTR allocate_stub( const char *dll, const char *name )
     return (ULONG_PTR)stub;
 }
 
+#elif defined(__wasm32__)
+/* wasm32 has no executable stubs, so a missing import still resolves to
+ * 0xdeadbeef; name it here, since a call through it otherwise faults with
+ * nothing to say which import it was. */
+static ULONG_PTR allocate_stub( const char *dll, const char *name )
+{
+    if ((ULONG_PTR)name >> 16) ERR( "missing import %s!%s resolves to 0xdeadbeef\n", dll, name );
+    else ERR( "missing import %s!#%u resolves to 0xdeadbeef\n", dll, (unsigned int)(ULONG_PTR)name );
+    return 0xdeadbeef;
+}
 #else  /* __i386__ */
 static inline ULONG_PTR allocate_stub( const char *dll, const char *name ) { return 0xdeadbeef; }
 #endif  /* __i386__ */
