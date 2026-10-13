@@ -236,6 +236,21 @@ extern void *create_startup_info( const UNICODE_STRING *nt_image, ULONG process_
                                   const struct pe_image_info *pe_info, DWORD *info_size );
 extern char *get_alternate_wineloader( WORD machine );
 extern NTSTATUS exec_wineloader( char **argv, int socketfd, const struct pe_image_info *pe_info );
+#ifdef __wasm32__
+struct wineloader_exec_plan
+{
+    char  *loader[2];      /* the alternate loader (or NULL), then the loader */
+    char  *preloader[2];   /* their preloaders */
+    char **argv;           /* the caller's, first two entries reserved */
+    char **envp;
+    char **strings;        /* the variables set, owned */
+    unsigned int nstrings;
+};
+extern NTSTATUS prepare_wineloader_exec( struct wineloader_exec_plan *plan, char **argv, int socketfd,
+                                         const struct pe_image_info *pe_info, const char *winedebug );
+extern void wineloader_exec_plan( const struct wineloader_exec_plan *plan );
+extern void free_wineloader_exec( struct wineloader_exec_plan *plan );
+#endif
 extern NTSTATUS load_builtin( struct pe_mapping_info *pe_mapping, USHORT machine,
                               SECTION_IMAGE_INFORMATION *info, void **module, SIZE_T *size,
                               ULONG_PTR limit_low, ULONG_PTR limit_high, off_t offset );

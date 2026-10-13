@@ -412,6 +412,17 @@ static BOOL is_unix_console_handle( HANDLE handle )
  * of its own, which ends in exec or _exit. */
 extern int clone( int (*func)(void *), void *stack, int flags, void *arg, ... );
 
+/* The child keeps the vfork contract: between the clone and its exec or
+ * _exit it neither allocates nor takes a lock, only system calls on memory
+ * the parent prepared (arguments, environment, paths). The address space
+ * is copied while the parent's other threads run, so the copy can hold
+ * malloc's lock or a heap halfway through an update: the child's first
+ * allocation (putenv, build_argv) crashed in mallocng's consistency check
+ * in about half of all session boots ("could not start ... (731)"). Holding
+ * the lock across the clone instead, as fork() does, hung multi-process
+ * boots: the parent stays suspended until the child execs, and its other
+ * threads (the in-process wineserver among them), which the child's
+ * start-up waits on, blocked in malloc. */
 static pid_t fork_call( int (*func)(void *), void *arg )
 {
     const size_t size = 256 * 1024;
@@ -433,13 +444,14 @@ struct spawn_args
     const char *unix_name;
     char * const *argv;
     int wait;
+    char **exec_argv;                      /* exec_grandchild's, built by the parent */
+    struct wineloader_exec_plan *plan;     /* spawn_grandchild's, made by the parent */
 };
 
 static int spawn_grandchild( void *arg )
 {
     const struct spawn_args *a = arg;
     const RTL_USER_PROCESS_PARAMETERS *params = a->params;
-    char **argv;
 
     if ((peb->ProcessParameters && params->ProcessGroupId != peb->ProcessParameters->ProcessGroupId) ||
         params->ConsoleHandle == CONSOLE_HANDLE_ALLOC ||
@@ -454,16 +466,13 @@ static int spawn_grandchild( void *arg )
     if (a->stdin_fd != -1 && a->stdin_fd != 0) close( a->stdin_fd );
     if (a->stdout_fd != -1 && a->stdout_fd != 1) close( a->stdout_fd );
 
-    if (a->winedebug) putenv( a->winedebug );
     if (a->unixdir != -1)
     {
         fchdir( a->unixdir );
         close( a->unixdir );
     }
-    argv = build_argv( &params->CommandLine, 2 );
-
-    gex_stage( "child exec" );
-    exec_wineloader( argv, a->socketfd, a->pe_info );
+    signal( SIGPIPE, SIG_DFL );
+    wineloader_exec_plan( a->plan );
     _exit(1);
 }
 
@@ -471,7 +480,6 @@ static int exec_grandchild( void *arg )
 {
     const struct spawn_args *a = arg;
     const RTL_USER_PROCESS_PARAMETERS *params = a->params;
-    char **argv;
     unsigned int status;
 
     close( a->rdfd );
@@ -488,13 +496,13 @@ static int exec_grandchild( void *arg )
     if (a->stdin_fd != -1 && a->stdin_fd != 0) close( a->stdin_fd );
     if (a->stdout_fd != -1 && a->stdout_fd != 1) close( a->stdout_fd );
     signal( SIGPIPE, SIG_DFL );
-    argv = build_argv( &params->CommandLine, 0 );
     if (a->unixdir != -1)
     {
         fchdir( a->unixdir );
         close( a->unixdir );
     }
-    execv( a->unix_name, argv );
+    if (a->exec_argv) execv( a->unix_name, a->exec_argv );
+    else errno = ENOMEM;
     switch (errno)
     {
     case EPERM:
@@ -557,6 +565,7 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
 #ifdef __wasm32__
     {
         struct spawn_args a = { params, socketfd, unixdir, stdin_fd, stdout_fd, -1, -1, winedebug, pe_info };
+        struct wineloader_exec_plan plan;
         /* One clone, which execs, rather than a child that clones the
          * grandchild and exits so the parent can reap it at once: in the
          * page each clone is a copy of the address space and a Worker (about
@@ -564,9 +573,20 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
          * intermediate's life on the parent's path), paid twice per Windows
          * process. Nothing is lost by not reparenting: an orphan here goes
          * to pid 1, which is Wine too and reaps nothing either. */
+        if (!(argv = build_argv( &params->CommandLine, 2 )) ||
+            prepare_wineloader_exec( &plan, argv, socketfd, pe_info, winedebug ))
+        {
+            free( argv );
+            if (stdin_fd != -1 && stdin_fd != 0) close( stdin_fd );
+            if (stdout_fd != -1 && stdout_fd != 1) close( stdout_fd );
+            return STATUS_NO_MEMORY;
+        }
+        a.plan = &plan;
         gex_stage( "spawn clone" );
         pid = fork_call( spawn_grandchild, &a );
         gex_stage( "spawn clone returned" );
+        free_wineloader_exec( &plan );
+        free( argv );
         if (pid == -1) status = STATUS_NO_MEMORY;
         if (stdin_fd != -1 && stdin_fd != 0) close( stdin_fd );
         if (stdout_fd != -1 && stdout_fd != 1) close( stdout_fd );
@@ -755,7 +775,9 @@ static NTSTATUS fork_and_exec( OBJECT_ATTRIBUTES *attr, const char *unix_name, i
 #ifdef __wasm32__
     {
         struct spawn_args a = { params, -1, unixdir, stdin_fd, stdout_fd, fd[1], fd[0], NULL, NULL, unix_name };
+        a.exec_argv = build_argv( &params->CommandLine, 0 );
         pid = fork_call( exec_child, &a );
+        free( a.exec_argv );
     }
     if (0)
 #else

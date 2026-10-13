@@ -515,6 +515,119 @@ NTSTATUS exec_wineloader( char **argv, int socketfd, const struct pe_image_info 
 }
 
 
+#ifdef __wasm32__
+/***********************************************************************
+ *           prepare_wineloader_exec
+ *
+ * What exec_wineloader does, split in two for the child of a CLONE_VFORK
+ * clone, which must not allocate or take a lock between the clone and the
+ * exec (a lock another thread of the parent held when the address space
+ * was copied stays held in the child, and the parent may need the child's
+ * start-up before it lets go of its own): the paths, the arguments and the
+ * environment, with the variables exec_wineloader would putenv, are made
+ * here in the parent, and the child only calls wineloader_exec_plan.
+ * argv's first two entries are reserved, as for exec_wineloader; winedebug
+ * is a "WINEDEBUG=..." to set too, or NULL.
+ */
+NTSTATUS prepare_wineloader_exec( struct wineloader_exec_plan *plan, char **argv, int socketfd,
+                                  const struct pe_image_info *pe_info, const char *winedebug )
+{
+    WORD machine = pe_info->machine;
+    ULONGLONG res_start = pe_info->base;
+    ULONGLONG res_end = pe_info->base + pe_info->map_size;
+    char *set[4];
+    unsigned int i, j, k, count = 0, nset = 0;
+
+    memset( plan, 0, sizeof(*plan) );
+    if (pe_info->wine_fakedll) res_start = res_end = 0;
+    if (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady)
+        machine = is_machine_64bit( native_machine ) ? IMAGE_FILE_MACHINE_AMD64 : native_machine;
+
+    plan->loader[0] = get_alternate_wineloader( machine );
+    plan->loader[1] = strdup( wineloader );
+    for (i = 0; i < 2; i++)
+        if (plan->loader[i] && asprintf( &plan->preloader[i], "%s-preloader", plan->loader[i] ) == -1)
+            plan->preloader[i] = NULL;
+
+    if (asprintf( &set[nset++], "WINESERVERSOCKET=%u", socketfd ) == -1) set[nset - 1] = NULL;
+    if (asprintf( &set[nset++], "WINEPRELOADRESERVE=%x%08x-%x%08x",
+              (UINT)(res_start >> 32), (UINT)res_start, (UINT)(res_end >> 32), (UINT)res_end ) == -1)
+        set[nset - 1] = NULL;
+    set[nset++] = strdup( "WINELOADERNOEXEC=1" );
+    if (winedebug) set[nset++] = strdup( winedebug );
+    plan->strings = malloc( sizeof(set) );
+    if (plan->strings) memcpy( plan->strings, set, sizeof(set) );
+    else for (j = 0; j < nset; j++) free( set[j] );
+    plan->nstrings = plan->strings ? nset : 0;
+    for (j = 0; j < nset; j++) if (!set[j]) break;
+    if (!plan->strings || !plan->loader[1] || j < nset)
+    {
+        free_wineloader_exec( plan );
+        return STATUS_NO_MEMORY;
+    }
+
+    while (environ[count]) count++;
+    if (!(plan->envp = malloc( (count + nset + 1) * sizeof(char *) )))
+    {
+        free_wineloader_exec( plan );
+        return STATUS_NO_MEMORY;
+    }
+    /* the environment, each variable set here replacing the one it names */
+    for (i = k = 0; i < count; i++)
+    {
+        for (j = 0; j < nset; j++)
+        {
+            size_t len = strchr( set[j], '=' ) - set[j] + 1;
+            if (!strncmp( environ[i], set[j], len )) break;
+        }
+        if (j == nset) plan->envp[k++] = environ[i];
+    }
+    for (j = 0; j < nset; j++) plan->envp[k++] = set[j];
+    plan->envp[k] = NULL;
+    plan->argv = argv;
+    return STATUS_SUCCESS;
+}
+
+/***********************************************************************
+ *           wineloader_exec_plan
+ *
+ * The child's half: exec only, as preloader_exec would, with the
+ * prepared environment. Returns if every exec failed.
+ */
+void wineloader_exec_plan( const struct wineloader_exec_plan *plan )
+{
+    unsigned int i;
+
+    for (i = 0; i < 2; i++)
+    {
+        if (!plan->loader[i]) continue;
+        plan->argv[1] = plan->loader[i];
+        if (plan->preloader[i])
+        {
+            plan->argv[0] = plan->preloader[i];
+            execve( plan->preloader[i], plan->argv, plan->envp );
+        }
+        execve( plan->loader[i], plan->argv + 1, plan->envp );
+    }
+}
+
+void free_wineloader_exec( struct wineloader_exec_plan *plan )
+{
+    unsigned int i;
+
+    for (i = 0; i < 2; i++)
+    {
+        free( plan->loader[i] );
+        free( plan->preloader[i] );
+    }
+    for (i = 0; plan->strings && i < plan->nstrings; i++) free( plan->strings[i] );
+    free( plan->strings );
+    free( plan->envp );
+    memset( plan, 0, sizeof(*plan) );
+}
+#endif
+
+
 /***********************************************************************
  *           exec_wineserver
  *
