@@ -6710,7 +6710,8 @@ void shell_hook_notify( WPARAM code, LPARAM lparam )
     {
         if (!message)
         {
-            UNICODE_STRING name = RTL_CONSTANT_STRING( L"SHELLHOOK" );
+            static const WCHAR shellhookW[] = {'S','H','E','L','L','H','O','O','K'};
+            UNICODE_STRING name = { sizeof(shellhookW), sizeof(shellhookW), (WCHAR *)shellhookW };
             message = NtUserRegisterWindowMessage( &name );
         }
         TRACE( "code %#lx, lparam %#lx, %u window(s)\n", (long)code, (long)lparam, count );
