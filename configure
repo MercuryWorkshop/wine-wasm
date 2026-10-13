@@ -1430,6 +1430,7 @@ enable_rstrtmgr
 enable_rtscom
 enable_rtutils
 enable_rtworkq
+enable_samcli
 enable_samlib
 enable_sane_ds
 enable_sapi
@@ -22902,6 +22903,7 @@ wine_fn_config_makefile dlls/rtscom enable_rtscom
 wine_fn_config_makefile dlls/rtutils enable_rtutils
 wine_fn_config_makefile dlls/rtworkq enable_rtworkq
 wine_fn_config_makefile dlls/rtworkq/tests enable_tests
+wine_fn_config_makefile dlls/samcli enable_samcli
 wine_fn_config_makefile dlls/samlib enable_samlib
 wine_fn_config_makefile dlls/sane.ds enable_sane_ds
 wine_fn_config_makefile dlls/sapi enable_sapi
