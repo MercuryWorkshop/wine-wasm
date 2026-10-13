@@ -4535,7 +4535,16 @@ static const WCHAR shared_data_nameW[] = {'\\','K','e','r','n','e','l','O','b','
                                           '\\','_','_','w','i','n','e','_','u','s','e','r','_','s','h','a','r','e','d','_','d','a','t','a',0};
 
 #ifdef __wasm32__
-/* a child process's own USD clocks (virtual_map_user_shared_data) */
+/* gex door calls (docs/wineserver-kernel.md §6.2): the USD is a page of the
+ * server's memory, which no process can map; each copies it at start
+ * (usd_copy), and the first boot's fill is written back to it (usd_publish).
+ * Both return the bytes copied, or -1 without a door session. */
+__attribute__((import_module("gex"), import_name("usd_copy")))
+extern int gex_usd_copy( void *dst, unsigned int size );
+__attribute__((import_module("gex"), import_name("usd_publish")))
+extern int gex_usd_publish( const void *src, unsigned int size );
+
+/* a process's own USD clocks (virtual_map_user_shared_data) */
 static void usd_store( volatile KSYSTEM_TIME *t, ULONGLONG v )
 {
     __atomic_store_n( &t->High2Time, (LONG)(v >> 32), __ATOMIC_SEQ_CST );
@@ -4613,7 +4622,10 @@ void virtual_map_user_shared_data(void)
 
         if ((copy = malloc( page_size )))
         {
-            memcpy( copy, (void *)user_shared_data, page_size );
+            /* the server's own page if there is a door; else what the
+             * mapping held (the file, which the server's writes never reach) */
+            if (gex_usd_copy( copy, page_size ) != page_size)
+                memcpy( copy, (void *)user_shared_data, page_size );
             if (mmap( user_shared_data, page_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0 ) == user_shared_data)
             {
                 memcpy( (void *)user_shared_data, copy, page_size );
@@ -4675,6 +4687,48 @@ void virtual_init_user_shared_data(void)
     }
 
     init_shared_data_cpuinfo( data );
+#ifdef __wasm32__
+    /* The mapping is a copy here (gex has no cross-process MAP_SHARED): the
+     * fill goes to the server's page through the door, wineboot's version
+     * fields with it (its own write, create_user_shared_data, goes to a copy
+     * too), and into this process's own page, mapped before this ran. */
+    {
+        KUSER_SHARED_DATA *mine = (KUSER_SHARED_DATA *)user_shared_data;
+        KUSER_SHARED_DATA *server = malloc( sizeof(*server) );
+
+        /* init_peb's version (the PEB is not set up yet here); wineboot's
+         * RtlGetVersion would give the prefix's configured one */
+        data->NtBuildNumber      = 19045;
+        data->NtProductType      = VER_NT_WORKSTATION;
+        data->ProductTypeIsValid = TRUE;
+        data->NtMajorVersion     = 10;
+        data->NtMinorVersion     = 0;
+        data->SuiteMask          = VER_SUITE_SINGLEUSERTS;
+        {
+            static const WCHAR rootW[] = {'C',':','\\','w','i','n','d','o','w','s',0};
+            memcpy( data->NtSystemRoot, rootW, sizeof(rootW) );
+        }
+        /* keep the server's clocks: only the fields filled here move */
+        if (server && gex_usd_copy( server, sizeof(*server) ) == sizeof(*server))
+        {
+            data->InterruptTime = server->InterruptTime;
+            data->SystemTime    = server->SystemTime;
+            data->TickCount     = server->TickCount;
+            data->TimeZoneBias  = server->TimeZoneBias;
+            data->TimeZoneId    = server->TimeZoneId;
+            gex_usd_publish( data, sizeof(*data) );
+        }
+        free( server );
+        if (mine)
+        {
+            KSYSTEM_TIME it = mine->InterruptTime, st = mine->SystemTime, tc = mine->TickCount;
+            memcpy( mine, data, sizeof(*data) );
+            mine->InterruptTime = it;
+            mine->SystemTime = st;
+            mine->TickCount = tc;
+        }
+    }
+#endif
     munmap( data, sizeof(*data) );
 }
 

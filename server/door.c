@@ -79,6 +79,9 @@ struct door_area
     unsigned int session;  /* 128: the session mapping (one block, never grown): clients
                             * copy from it (win32u, docs/wineserver-kernel.md §6.1) */
     unsigned int session_size; /* 132 */
+    unsigned int ctx_size; /* 136: the door context's bytes (the host checks it holds gex's whole context) */
+    unsigned int usd;      /* 140: the user shared data (one page): processes copy it at start and
+                            * ntdll's first-boot fill is written to it (gex.usd_copy, usd_publish) */
 };
 
 #define DOOR_VERSION 1
@@ -167,7 +170,9 @@ void door_init(void)
      * i386), not just the syscall slots: the kernel writes past them (the
      * last system call's number at 45 * 8), which with 34 slots landed in
      * the next heap block (a process's handle table) */
-    if (!(ctx = calloc( 1, 4096 ))) return;
+#define DOOR_CTX_SIZE 4096
+    if (!(ctx = calloc( 1, DOOR_CTX_SIZE ))) return;
+    a->ctx_size = DOOR_CTX_SIZE;
 
     kick_rfd = fds[0];
     a->kick_fd = fds[1];
@@ -221,6 +226,12 @@ int door_wake_write( int id, const void *buf, unsigned int len )
 void door_wake_close( int id )
 {
     if (id >= 0) gex_wake_close( id );
+}
+
+/* The user shared data, in this memory (create_user_data_mapping) */
+void door_set_usd( void *data )
+{
+    __atomic_store_n( &door_area_storage.usd, (unsigned int)(unsigned long)data, __ATOMIC_RELEASE );
 }
 
 /* door calls served so far (the pump: did any run while it waited?) */

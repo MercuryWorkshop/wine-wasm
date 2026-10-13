@@ -1525,7 +1525,16 @@ struct object *create_user_data_mapping( struct object *root, struct unicode_str
 
     if (!(mapping = create_named_object( &params ))) return NULL;
     ptr = mmap( NULL, mapping->size, PROT_WRITE, MAP_SHARED, get_unix_fd( mapping->fd ), 0 );
-    if (ptr != MAP_FAILED) user_shared_data = ptr;
+    if (ptr != MAP_FAILED)
+    {
+        user_shared_data = ptr;
+#ifdef __wasm32__
+        {
+            extern void door_set_usd( void *data );
+            door_set_usd( ptr );
+        }
+#endif
+    }
     return &mapping->obj;
 }
 
