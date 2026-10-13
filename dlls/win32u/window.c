@@ -1304,6 +1304,13 @@ static LONG_PTR get_window_long_size( HWND hwnd, INT offset, UINT size, BOOL ans
             return retval;
         case GWL_EXSTYLE:
             return 0;
+        case -1:  /* GWLP_WOWWORDS */
+        {
+            static UINT desktop_words[20];
+            desktop_words[3] = WS_POPUP | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+            if (get_full_window_handle( hwnd ) == get_desktop_window()) desktop_words[3] |= WS_VISIBLE;
+            return (ULONG_PTR)desktop_words;
+        }
         }
         RtlSetLastWin32Error( ERROR_INVALID_INDEX );
         return 0;
@@ -1328,6 +1335,10 @@ static LONG_PTR get_window_long_size( HWND hwnd, INT offset, UINT size, BOOL ans
     {
     case GWL_STYLE:      retval = win->dwStyle; break;
     case GWL_EXSTYLE:    retval = win->dwExStyle; break;
+    /* GWLP_WOWWORDS: Windows returns the address of the window's WND state in
+     * the desktop heap, which user mode reads. Native comctl32 6.10 reads the
+     * styles through it (see WND). Only windows of this process have one. */
+    case -1:             retval = (ULONG_PTR)&win->wow_state; break;
     }
     release_win_ptr( win );
     return retval;
