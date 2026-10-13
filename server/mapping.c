@@ -1366,6 +1366,12 @@ void set_session_mapping( struct mapping *mapping )
     block->used_size = sizeof(*shared_session);
     block->block_size = size;
 
+#ifdef __wasm32__
+    {
+        extern void door_set_session( void *data, size_t size );
+        door_set_session( tmp, size );
+    }
+#endif
     shared_session = tmp;
     session_mapping = mapping;
     list_add_tail( &session.blocks, &block->entry );

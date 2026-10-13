@@ -124,16 +124,37 @@ static ULONGLONG session_ttl_us(void)
     return ttl;
 }
 
+/* gex door calls (docs/wineserver-kernel.md §6.1): the session is a block of
+ * the server's memory, which this process's host copies from directly.
+ * gex_session_copy returns the bytes copied, -1 without a door session (and
+ * the session's size for a size of 0); gex_session_seq reads a live 64-bit
+ * word of it (a seqlock's release). */
+__attribute__((import_module("gex"), import_name("session_copy")))
+extern int gex_session_copy( void *dst, unsigned int offset, unsigned int size );
+__attribute__((import_module("gex"), import_name("session_seq")))
+extern UINT64 gex_session_seq( unsigned int offset );
+static int session_door;
+
+/* once seen, for good (the door's session never goes); not seen, asked again */
+static BOOL session_by_door(void)
+{
+    if (!session_door) session_door = gex_session_copy( NULL, 0, 0 ) >= (int)SESSION_MIRROR_SIZE;
+    return session_door;
+}
+
 void session_mirror_refresh( const volatile void *ptr, SIZE_T size )
 {
     extern LONG __wine_session_writes;
     SIZE_T offset = (const char *)ptr - session_mirror;
-    LONG writes = __atomic_load_n( &__wine_session_writes, __ATOMIC_SEQ_CST );
+    LONG writes;
     ULONGLONG now;
     unsigned int i;
 
     if (!session_mirror || offset >= SESSION_MIRROR_SIZE) return;
     size = min( size, SESSION_MIRROR_SIZE - offset );
+    /* a copy of the live bytes: coherent under the seqlock, no request, no TTL */
+    if (session_by_door() && gex_session_copy( session_mirror + offset, offset, size ) >= 0) return;
+    writes = __atomic_load_n( &__wine_session_writes, __ATOMIC_SEQ_CST );
     now = session_now_us();
     for (i = 0; i < ARRAY_SIZE(session_reads); i++)
     {
@@ -187,6 +208,12 @@ void shared_object_acquire_seqlock( const shared_object_t *object, UINT64 *seq )
 BOOL shared_object_release_seqlock( const shared_object_t *object, UINT64 seq )
 {
     __SHARED_READ_FENCE;
+#ifdef __wasm32__
+    /* the live seq, not the copy's: the copy was taken at the acquire */
+    if (session_mirror && session_by_door() && (const char *)object >= session_mirror &&
+        (const char *)object < session_mirror + SESSION_MIRROR_SIZE)
+        return gex_session_seq( (const char *)&object->seq - session_mirror ) == seq;
+#endif
     return ReadNoFence64( &object->seq ) == seq;
 }
 

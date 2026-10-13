@@ -76,6 +76,9 @@ struct door_area
     int owner_pid;         /* 120: and its pid (the host: a Worker ended inside a door) */
     int poisoned;          /* 124: a door call died midway (a trap, a Worker stopped
                             * inside one): the server's state cannot be trusted */
+    unsigned int session;  /* 128: the session mapping (one block, never grown): clients
+                            * copy from it (win32u, docs/wineserver-kernel.md §6.1) */
+    unsigned int session_size; /* 132 */
 };
 
 #define DOOR_VERSION 1
@@ -176,6 +179,14 @@ void door_init(void)
     a->version = DOOR_VERSION;
     door_area = a;
     gex_door_publish( a );
+}
+
+/* The session mapping, in this memory: published in the area whether or not
+ * the door is (it is made before door_init), read by clients' win32u. */
+void door_set_session( void *data, size_t size )
+{
+    door_area_storage.session_size = size;
+    __atomic_store_n( &door_area_storage.session, (unsigned int)(unsigned long)data, __ATOMIC_RELEASE );
 }
 
 /* door calls served so far (the pump: did any run while it waited?) */
