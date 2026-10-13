@@ -1194,6 +1194,14 @@ static void set_shell_window( HWND hwnd )
 }
 
 /* main desktop management function */
+#ifdef __wasm32__
+/* manage_desktop runs as gexp_desktop_thread, a thread of the application,
+ * rather than as explorer.exe /desktop (which wineboot still starts as a
+ * process, and which must end as upstream's does: carrying on into
+ * wWinMain made a file-browser window). */
+static BOOL desktop_is_thread;
+#endif
+
 void manage_desktop( WCHAR *arg )
 {
     HDESK desktop = 0;
@@ -1338,8 +1346,11 @@ void manage_desktop( WCHAR *arg )
     if (pShellDDEInit) pShellDDEInit( FALSE );
 
 #ifdef __wasm32__
-    TRACE( "desktop thread exiting (hwnd %p)\n", hwnd );
-    return;  /* a thread of the application: the process is not ours to end */
+    if (desktop_is_thread)
+    {
+        TRACE( "desktop thread exiting (hwnd %p)\n", hwnd );
+        return;  /* a thread of the application: the process is not ours to end */
+    }
 #endif
     ExitProcess( 0 );
 }
@@ -1352,6 +1363,7 @@ void manage_desktop( WCHAR *arg )
 DWORD WINAPI gexp_desktop_thread( void *arg )
 {
     static WCHAR none[] = L"";
+    desktop_is_thread = TRUE;
     manage_desktop( none );
     return 0;
 }
