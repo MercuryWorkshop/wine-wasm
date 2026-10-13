@@ -13,8 +13,11 @@
  *   process in the SYSTEM logon session: this process becomes a system
  *   process once it has a copy of the user's token.
  * - Starting the user's shell, with the user's token (the command line, if
- *   any, or nothing). It is started first: a session whose only process is
- *   a system process ends.
+ *   any, or nothing), once the theme is loaded, as Windows' winlogon starts
+ *   it only after ThemesOnLogon: the shell's controls then open their theme
+ *   data from their first paint. The shell's process is created first and
+ *   runs once the theme is loaded, since a session whose only process is a
+ *   system process ends.
  *
  * It then stays until the session ends (wineserver's shutdown event).
  *
@@ -93,6 +96,7 @@ int main( void )
     HANDLE process_token, user_token = 0, shell_token = 0, shutdown = 0;
     set_info_fn set_info;
     HMODULE uxinit;
+    HANDLE shell_thread = 0;
     const WCHAR *shell;
     NTSTATUS status;
 
@@ -126,10 +130,11 @@ int main( void )
         PROCESS_INFORMATION pi;
         WCHAR *cmd = _wcsdup( shell );
 
-        if (CreateProcessAsUserW( shell_token, NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi ))
+        if (CreateProcessAsUserW( shell_token, NULL, cmd, NULL, NULL, FALSE, CREATE_SUSPENDED,
+                                  NULL, NULL, &si, &pi ))
         {
-            trace( "started %ls\n", cmd );
-            CloseHandle( pi.hThread );
+            trace( "created %ls\n", cmd );
+            shell_thread = pi.hThread;
             CloseHandle( pi.hProcess );
         }
         else fprintf( stderr, "winlogon: could not start %ls (%lu)\n", cmd, GetLastError() );
@@ -158,6 +163,14 @@ int main( void )
         }
     }
     else trace( "no UXInit.dll (%lu)\n", GetLastError() );
+
+    /* the theme is loaded: the shell runs */
+    if (shell_thread)
+    {
+        trace( "starting the shell\n" );
+        ResumeThread( shell_thread );
+        CloseHandle( shell_thread );
+    }
 
     /* threads the Themes service injects run here until the session ends */
     if (shutdown) WaitForSingleObject( shutdown, INFINITE );
