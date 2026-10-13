@@ -224,7 +224,16 @@ static inline mem_size_t round_size( mem_size_t size, mem_size_t mask )
 void init_memory(void)
 {
     host_page_mask = sysconf( _SC_PAGESIZE ) - 1;
+#ifdef __wasm32__
+    /* W3's i386 builtins have fixed bases (gex tools/wine-wasm/rebase.py,
+     * w3-bases.txt: 0x20000000-0x7b000000 less 0x60000000-0x70000000), so
+     * the pool for a program's own DYNAMIC_BASE DLLs keeps out of their
+     * slots: the 16 MiB above them and the band the table skips. */
+    free_map_addr( 0x60000000, 0x10000000 );
+    free_map_addr( 0x7b000000, 0x01000000 );
+#else
     free_map_addr( 0x60000000, 0x1c000000 );
+#endif
     free_map_addr( 0x600000000000, 0x100000000000 );
 }
 
