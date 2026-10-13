@@ -239,6 +239,19 @@ void WINAPI RegisterSystemThread(DWORD flags, DWORD reserved)
 }
 
 /***********************************************************************
+ *           LoadRemoteFonts			[USER32.@]
+ *
+ * userinit.exe calls it at every logon: a remote session loads the fonts its
+ * client supplies. The console session has none to load.
+ */
+BOOL WINAPI LoadRemoteFonts(void)
+{
+    TRACE( "\n" );
+    return TRUE;
+}
+
+
+/***********************************************************************
  *           RegisterShellHookWindow			[USER32.@]
  */
 BOOL WINAPI RegisterShellHookWindow(HWND hWnd)
