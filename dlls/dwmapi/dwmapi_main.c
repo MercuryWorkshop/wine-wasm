@@ -54,6 +54,25 @@ HRESULT WINAPI DwmIsCompositionEnabled(BOOL *enabled)
 }
 
 /**********************************************************************
+ *           DwmpStartupViaUserInit         (DWMAPI.115)
+ *
+ * userinit.exe has the session's Desktop Window Manager started (waiting
+ * up to timeout ms) before it starts the shell. There is no DWM process
+ * to start: where composition is on, it is part of the system, and where
+ * it is off (Windows 7, the Basic theme), Windows starts none either.
+ */
+HRESULT WINAPI DwmpStartupViaUserInit(DWORD timeout)
+{
+    BOOL enabled;
+
+    TRACE("%lu\n", timeout);
+
+    if (DwmIsCompositionEnabled(&enabled) == S_OK && !enabled)
+        return DWM_E_COMPOSITIONDISABLED;
+    return S_OK;
+}
+
+/**********************************************************************
  *           DwmEnableComposition         (DWMAPI.102)
  */
 HRESULT WINAPI DwmEnableComposition(UINT uCompositionAction)
