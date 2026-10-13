@@ -321,6 +321,29 @@ static void wayland_surface_init_fractional_scale(struct wayland_surface *surfac
         surface->hwnd);
 }
 
+static void gex_placement_handle_origin(void *data, struct gex_window_placement_v1 *placement,
+                                        int32_t x, int32_t y)
+{
+    HWND hwnd = data;
+    struct wayland_win_data *win_data;
+    struct wayland_surface *surface;
+
+    TRACE("hwnd=%p origin=%d,%d\n", hwnd, x, y);
+
+    if (!(win_data = wayland_win_data_get(hwnd))) return;
+    if ((surface = win_data->wayland_surface) && surface->gex_placement == placement)
+    {
+        surface->placed_origin.x = x;
+        surface->placed_origin.y = y;
+    }
+    wayland_win_data_release(win_data);
+}
+
+static const struct gex_window_placement_v1_listener gex_placement_listener =
+{
+    gex_placement_handle_origin,
+};
+
 /**********************************************************************
  *          wayland_surface_make_toplevel
  *
@@ -370,6 +393,9 @@ void wayland_surface_make_toplevel(struct wayland_surface *surface)
             gex_window_placement_v1_set_stack_id(surface->gex_placement,
                                                  (UINT)(ULONG_PTR)surface->hwnd);
             surface->placed_at.x = surface->placed_at.y = INT_MIN;
+            surface->placed_origin.x = surface->placed_origin.y = INT_MIN;
+            gex_window_placement_v1_add_listener(surface->gex_placement,
+                                                 &gex_placement_listener, surface->hwnd);
             surface->placed_layer = 0;
             surface->placed_below = 0;
             surface->placed_stacked = FALSE;

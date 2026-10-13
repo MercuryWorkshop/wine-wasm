@@ -26,6 +26,7 @@
 
 #include <linux/input.h>
 #undef SW_MAX /* Also defined in winuser.rh */
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 
@@ -142,14 +143,42 @@ static void pointer_handle_motion_internal(wl_fixed_t sx, wl_fixed_t sy)
     window_rect = &surface->window.rect;
 
     screen = map_point_from_surface(surface, screen);
-    screen.x += window_rect->left;
-    screen.y += window_rect->top;
-    /* Sometimes, due to rounding, we may end up with pointer coordinates
-     * slightly outside the target window, so bring them within bounds. */
-    if (screen.x >= window_rect->right) screen.x = window_rect->right - 1;
-    else if (screen.x < window_rect->left) screen.x = window_rect->left;
-    if (screen.y >= window_rect->bottom) screen.y = window_rect->bottom - 1;
-    else if (screen.y < window_rect->top) screen.y = window_rect->top;
+    if (surface->gex_placement)
+    {
+        /* Relative to where the compositor shows the window, which is where
+         * it was a moment ago while Win32's move loop moves it: the window
+         * rectangle is already a step ahead, and a caption drag that added
+         * it overshot by that step and came back, shaking. Not clamped to
+         * the window either: the move and size loops follow a held pointer
+         * past its edge (the compositor's implicit grab), and a size loop
+         * clamped to the window only shrinks it. */
+        if (surface->placed_origin.x != INT_MIN)
+        {
+            screen.x += surface->placed_origin.x;
+            screen.y += surface->placed_origin.y;
+        }
+        else
+        {
+            screen.x += window_rect->left;
+            screen.y += window_rect->top;
+        }
+    }
+    else
+    {
+        screen.x += window_rect->left;
+        screen.y += window_rect->top;
+        /* Sometimes, due to rounding, we may end up with pointer coordinates
+         * slightly outside the target window, so bring them within bounds.
+         * Not under a compositor that places windows: Win32 runs the move
+         * and size loops there (see above). */
+        if (!process_wayland.gex_window_placement_manager_v1)
+        {
+            if (screen.x >= window_rect->right) screen.x = window_rect->right - 1;
+            else if (screen.x < window_rect->left) screen.x = window_rect->left;
+            if (screen.y >= window_rect->bottom) screen.y = window_rect->bottom - 1;
+            else if (screen.y < window_rect->top) screen.y = window_rect->top;
+        }
+    }
 
     wayland_win_data_release(data);
 
