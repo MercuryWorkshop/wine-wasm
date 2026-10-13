@@ -133,6 +133,48 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
     return __gexw_syscall_resume( __id_NtSetContextThread, w, 2 );
 }
 
+/* NtQueryPerformanceCounter without a system call (docs/wine-overhead.md
+ * F2 in the gex tree). The Unix side's answer is monotonic_counter():
+ * clock_gettime( CLOCK_BOOTTIME ) in 100 ns units, frequency TICKSPERSEC.
+ * gex.clock_ns reads that clock as the system call would (the same kernel
+ * clock, no lock, no door), so the two agree; games ask hundreds of times a
+ * frame (Noita: 795 a world frame on its main thread).
+ * WINEGEX_FASTQPC=0 makes the system call instead (A/B legs only). */
+extern long long gex_clock_ns( unsigned int clk ) __attribute__((import_module("gex"), import_name("clock_ns")));
+
+static int qpc_fast(void)
+{
+    static int fast = -1;
+    if (fast < 0)
+    {
+        static const WCHAR name[] = L"WINEGEX_FASTQPC=0";
+        const WCHAR *env = NtCurrentTeb()->Peb->ProcessParameters->Environment;
+        int f = 1;
+        while (env && *env)
+        {
+            const WCHAR *a = env, *b = name;
+            while (*b && *a == *b) a++, b++;
+            if (!*b && !*a) { f = 0; break; }
+            while (*env) env++;
+            env++;
+        }
+        fast = f;
+    }
+    return fast;
+}
+
+NTSTATUS WINAPI NtQueryPerformanceCounter( LARGE_INTEGER *counter, LARGE_INTEGER *frequency )
+{
+    if (!qpc_fast())
+    {
+        UINT w[2] = { PtrToUlong( counter ), PtrToUlong( frequency ) };
+        return __gexw_syscall( __id_NtQueryPerformanceCounter, w, 2 );
+    }
+    counter->QuadPart = gex_clock_ns( 7 /* CLOCK_BOOTTIME */ ) / 100;
+    if (frequency) frequency->QuadPart = 10000000;  /* TICKSPERSEC */
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS WINAPI NtWow64AllocateVirtualMemory64( HANDLE process, ULONG64 *ret, ULONG64 zero_bits,
                                                 ULONG64 *size_ptr, ULONG type, ULONG protect )
 {
