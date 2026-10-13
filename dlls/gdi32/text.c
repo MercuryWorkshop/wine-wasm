@@ -2907,3 +2907,77 @@ found:
     *cs = charset_info[i];
     return TRUE;
 }
+
+
+/* Private exports that Windows 7's native lpk.dll and comctl32 6.10 import. */
+
+/***********************************************************************
+ *           GetTextExtentExPointWPri    (GDI32.@)
+ */
+BOOL WINAPI GetTextExtentExPointWPri( HDC hdc, const WCHAR *str, INT count, INT max_ext,
+                                      INT *nfit, INT *dxs, SIZE *size )
+{
+    return GetTextExtentExPointW( hdc, str, count, max_ext, nfit, dxs, size );
+}
+
+/***********************************************************************
+ *           AnyLinkedFonts    (GDI32.@)
+ */
+BOOL WINAPI AnyLinkedFonts(void)
+{
+    return FALSE;
+}
+
+/***********************************************************************
+ *           QueryFontAssocStatus    (GDI32.@)
+ *
+ * The font association (FontAssoc registry key) flags: none here.
+ */
+ULONG WINAPI QueryFontAssocStatus(void)
+{
+    return 0;
+}
+
+/***********************************************************************
+ *           GdiSetLastError    (GDI32.@)
+ */
+void WINAPI GdiSetLastError( DWORD error )
+{
+    SetLastError( error );
+}
+
+/***********************************************************************
+ *           LpkPresent    (GDI32.@)
+ *
+ * lpk.dll's DllMain reports itself here (through usp10's forward).
+ */
+void WINAPI LpkPresent(void)
+{
+}
+
+/***********************************************************************
+ *           UspAllocCache    (GDI32.@)
+ *
+ * usp10's and lpk.dll's long-lived allocations (forwarded from usp10).
+ */
+HRESULT WINAPI UspAllocCache( SIZE_T size, void **ptr )
+{
+    if (!(*ptr = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, size ))) return E_OUTOFMEMORY;
+    return S_OK;
+}
+
+/***********************************************************************
+ *           UspAllocTemp    (GDI32.@)
+ */
+void * WINAPI UspAllocTemp( SIZE_T size )
+{
+    return HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, size );
+}
+
+/***********************************************************************
+ *           UspFreeMem    (GDI32.@)
+ */
+void WINAPI UspFreeMem( void *ptr )
+{
+    HeapFree( GetProcessHeap(), 0, ptr );
+}

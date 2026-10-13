@@ -2908,3 +2908,15 @@ BOOL WINAPI GdiGetDevmodeForPage( HANDLE h, DWORD page, DEVMODEW **cur, DEVMODEW
             return FALSE;
     }
 }
+
+
+/***********************************************************************
+ *           SetLayoutWidth    (GDI32.@)
+ *
+ * SetLayout with the width a mirrored layout reflects about; Wine's layout
+ * uses the device's width.
+ */
+DWORD WINAPI SetLayoutWidth( HDC hdc, LONG width, DWORD layout )
+{
+    return SetLayout( hdc, layout );
+}

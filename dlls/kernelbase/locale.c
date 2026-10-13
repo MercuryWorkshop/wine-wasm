@@ -6416,6 +6416,18 @@ done:
 
 
 /***********************************************************************
+ *	NlsGetCacheUpdateCount   (kernelbase.@)
+ *
+ * Changes when the user's locale settings change, so that callers (Windows
+ * 7's lpk.dll) refresh what they cached. Wine's cache is the registry: 0.
+ */
+ULONG WINAPI NlsGetCacheUpdateCount(void)
+{
+    return 0;
+}
+
+
+/***********************************************************************
  *	GetUserDefaultLCID   (kernelbase.@)
  */
 LCID WINAPI DECLSPEC_HOTPATCH GetUserDefaultLCID(void)

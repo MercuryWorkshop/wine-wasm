@@ -25,7 +25,7 @@
 @ stdcall AddFontResourceW(wstr)
 @ stdcall AngleArc(long long long long float float)
 @ stdcall AnimatePalette(long long long ptr)
-# @ stub AnyLinkedFonts
+@ stdcall AnyLinkedFonts()
 @ stdcall Arc(long long long long long long long long long)
 @ stdcall ArcTo(long long long long long long long long long)
 # @ stub BeginGdiRendering
@@ -309,7 +309,7 @@
 # @ stub GdiResetDCEMF
 @ stub GdiSetAttrs
 @ stdcall GdiSetBatchLimit(long)
-# @ stub GdiSetLastError
+@ stdcall GdiSetLastError(long)
 @ stdcall GdiSetPixelFormat(long long ptr)
 @ stub GdiSetServerAttr
 # @ stub GdiStartDocEMF
@@ -454,7 +454,7 @@
 @ stdcall GetTextExtentExPointA(long str long long ptr ptr ptr)
 @ stdcall GetTextExtentExPointI(long ptr long long ptr ptr ptr)
 @ stdcall GetTextExtentExPointW(long wstr long long ptr ptr ptr)
-# @ stub GetTextExtentExPointWPri
+@ stdcall GetTextExtentExPointWPri(long wstr long long ptr ptr ptr)
 @ stdcall GetTextExtentPoint32A(long str long ptr)
 @ stdcall GetTextExtentPoint32W(long wstr long ptr)
 @ stdcall GetTextExtentPointA(long str long ptr)
@@ -479,6 +479,7 @@
 @ stdcall LPtoDP(long ptr long)
 @ stdcall LineDDA(long long long long ptr long)
 @ stdcall LineTo(long long long)
+@ stdcall LpkPresent()
 @ stub LoadImageColorMatcherA
 @ stub LoadImageColorMatcherW
 @ stdcall MaskBlt(long long long long long long long long long long long long)
@@ -512,7 +513,7 @@
 @ stdcall PolylineTo(long ptr long)
 @ stdcall PtInRegion(long long long) NtGdiPtInRegion
 @ stdcall PtVisible(long long long) NtGdiPtVisible
-# @ stub QueryFontAssocStatus
+@ stdcall QueryFontAssocStatus()
 @ stdcall RealizePalette(long)
 @ stdcall RectInRegion(long ptr) NtGdiRectInRegion
 @ stdcall RectVisible(long ptr) NtGdiRectVisible
@@ -604,7 +605,7 @@
 @ stdcall SetICMProfileA(long str)
 @ stdcall SetICMProfileW(long wstr)
 @ stdcall SetLayout(long long)
-# @ stub SetLayoutWidth
+@ stdcall SetLayoutWidth(long long long)
 @ stdcall SetMagicColors(ptr long long) NtGdiSetMagicColors
 @ stdcall SetMapMode(long long)
 @ stdcall SetMapperFlags(long long)
@@ -652,6 +653,9 @@
 @ stdcall UpdateICMRegKey(long str str long) UpdateICMRegKeyA
 @ stdcall UpdateICMRegKeyA(long str str long)
 @ stdcall UpdateICMRegKeyW(long wstr wstr long)
+@ stdcall UspAllocCache(long ptr)
+@ stdcall UspAllocTemp(long)
+@ stdcall UspFreeMem(ptr)
 @ stdcall WidenPath(long)
 @ stub gdiPlaySpoolStream
 @ extern pfnRealizePalette

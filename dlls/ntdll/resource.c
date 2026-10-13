@@ -279,6 +279,20 @@ NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrFindResourceDirectory_U( HMODULE hmod, cons
 
 
 /**********************************************************************
+ *	LdrFindResourceEx_U  (NTDLL.@)
+ *
+ * LdrFindResource_U with flags (language fallback, MUI choices); Windows 7's
+ * lpk.dll calls it with 0.
+ */
+NTSTATUS WINAPI LdrFindResourceEx_U( ULONG flags, HMODULE hmod, const LDR_RESOURCE_INFO *info,
+                                     ULONG level, const IMAGE_RESOURCE_DATA_ENTRY **entry )
+{
+    if (flags) FIXME( "flags %#lx ignored\n", flags );
+    return LdrFindResource_U( hmod, info, level, entry );
+}
+
+
+/**********************************************************************
  *	LdrFindResource_U  (NTDLL.@)
  */
 NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrFindResource_U( HMODULE hmod, const LDR_RESOURCE_INFO *info,

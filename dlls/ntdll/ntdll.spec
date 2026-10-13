@@ -90,7 +90,7 @@
 # @ stub LdrFindCreateProcessManifest
 @ stdcall LdrFindEntryForAddress(ptr ptr)
 @ stdcall LdrFindResourceDirectory_U(long ptr long ptr)
-# @ stub LdrFindResourceEx_U
+@ stdcall LdrFindResourceEx_U(long long ptr long ptr)
 @ stdcall LdrFindResource_U(long ptr long ptr)
 @ stub LdrFlushAlternateResourceModules
 @ stdcall LdrGetDllDirectory(ptr)
