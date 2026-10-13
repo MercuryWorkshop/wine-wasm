@@ -1617,7 +1617,7 @@ static LRESULT FILEDLG95_InitControls(HWND hwnd)
       RECT rect;
       int i, cx;
 
-      SendDlgItemMessageW(hwnd, IDC_TOOLBARPLACES, TB_BUTTONSTRUCTSIZE, 0, 0);
+      SendDlgItemMessageW(hwnd, IDC_TOOLBARPLACES, TB_BUTTONSTRUCTSIZE, sizeof(tb), 0);
       GetClientRect(GetDlgItem(hwnd, IDC_TOOLBARPLACES), &rect);
       cx = rect.right - rect.left;
 
