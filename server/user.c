@@ -100,6 +100,23 @@ static const user_entry_t *alloc_user_entry( struct obj_locator locator, unsigne
     return entry;
 }
 
+/* an icon's published image (set_icon_image), kept in the server object slot
+   of its handle, which is (void *)-1 for client handles otherwise */
+struct icon_image
+{
+    data_size_t size;
+    char        data[1];
+};
+
+static void free_icon_image( const user_entry_t *entry )
+{
+    void *ptr;
+
+    if (entry->type != NTUSER_OBJ_ICON) return;
+    ptr = set_server_object( entry, (void *)-1 );
+    if (ptr && ptr != (void *)-1) free( ptr );
+}
+
 static void free_user_entry( user_entry_t *entry )
 {
     user_entry_t *handles = shared_session->user_entries;
@@ -208,7 +225,9 @@ void free_process_user_handles( struct process *process )
         case NTUSER_OBJ_WINPOS:
         case NTUSER_OBJ_ACCEL:
         case NTUSER_OBJ_IMC:
-            if (entry->pid == pid) free_user_entry( entry );
+            if (entry->pid != pid) break;
+            free_icon_image( entry );
+            free_user_entry( entry );
             break;
         case NTUSER_OBJ_HOOK:
         case NTUSER_OBJ_WINDOW:
@@ -231,7 +250,57 @@ DECL_HANDLER(free_user_handle)
     user_entry_t *entry;
 
     if ((entry = handle_to_entry( req->handle )) && entry->type == req->type)
+    {
+        free_icon_image( entry );
         free_user_entry( entry );
+    }
     else
         set_error( STATUS_INVALID_HANDLE );
+}
+
+
+/* publish an icon's image */
+DECL_HANDLER(set_icon_image)
+{
+    user_entry_t *entry;
+    struct icon_image *image;
+    data_size_t size = get_req_data_size();
+
+    if (!(entry = handle_to_entry( req->handle )) || entry->type != NTUSER_OBJ_ICON)
+    {
+        set_error( STATUS_INVALID_HANDLE );
+        return;
+    }
+    if (entry->pid != get_process_id( current->process ))
+    {
+        set_error( STATUS_ACCESS_DENIED );
+        return;
+    }
+    if (!(image = mem_alloc( offsetof( struct icon_image, data[size] ) ))) return;
+    image->size = size;
+    memcpy( image->data, get_req_data(), size );
+    free_icon_image( entry );
+    set_server_object( entry, image );
+}
+
+
+/* read an icon's published image */
+DECL_HANDLER(get_icon_image)
+{
+    const user_entry_t *entry;
+    struct icon_image *image;
+
+    if (!(entry = handle_to_entry( req->handle )) || entry->type != NTUSER_OBJ_ICON)
+    {
+        set_error( STATUS_INVALID_HANDLE );
+        return;
+    }
+    image = get_server_object( entry );
+    if (!image || image == (void *)-1)
+    {
+        set_error( STATUS_NOT_FOUND );
+        return;
+    }
+    reply->total = image->size;
+    set_reply_data( image->data, min( image->size, get_reply_max_size() ));
 }

@@ -6521,6 +6521,35 @@ struct get_shell_hook_windows_reply
 };
 
 
+/* Publish an icon's image (its frame's bitmaps, as win32u packs them) so that
+   other processes can draw the icon: Windows keeps icons in the kernel */
+struct set_icon_image_request
+{
+    struct request_header __header;
+    user_handle_t  handle;
+    /* VARARG(data,bytes); */
+};
+struct set_icon_image_reply
+{
+    struct reply_header __header;
+};
+
+
+
+struct get_icon_image_request
+{
+    struct request_header __header;
+    user_handle_t  handle;
+};
+struct get_icon_image_reply
+{
+    struct reply_header __header;
+    data_size_t    total;
+    /* VARARG(data,bytes); */
+    char __pad_12[4];
+};
+
+
 enum request
 {
     REQ_new_process,
@@ -6848,6 +6877,8 @@ enum request
     REQ_get_session_bitmap,
     REQ_set_shell_hook_window,
     REQ_get_shell_hook_windows,
+    REQ_set_icon_image,
+    REQ_get_icon_image,
     REQ_NB_REQUESTS
 };
 
@@ -7180,6 +7211,8 @@ union generic_request
     struct get_session_bitmap_request get_session_bitmap_request;
     struct set_shell_hook_window_request set_shell_hook_window_request;
     struct get_shell_hook_windows_request get_shell_hook_windows_request;
+    struct set_icon_image_request set_icon_image_request;
+    struct get_icon_image_request get_icon_image_request;
 };
 union generic_reply
 {
@@ -7510,8 +7543,10 @@ union generic_reply
     struct get_session_bitmap_reply get_session_bitmap_reply;
     struct set_shell_hook_window_reply set_shell_hook_window_reply;
     struct get_shell_hook_windows_reply get_shell_hook_windows_reply;
+    struct set_icon_image_reply set_icon_image_reply;
+    struct get_icon_image_reply get_icon_image_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 961
+#define SERVER_PROTOCOL_VERSION 963
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

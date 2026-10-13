@@ -48,6 +48,7 @@ struct cursoricon_object
     BOOL                    is_shared;  /* whether this object is shared */
     BOOL                    is_icon;    /* whether icon or cursor */
     BOOL                    is_ani;     /* whether this object is a static cursor or an animated cursor */
+    BOOL                    published;  /* whether its image is published to the server (publish_icon) */
     UINT                    delay;      /* delay between this frame and the next (in jiffies) */
     union
     {
@@ -71,6 +72,195 @@ static struct cursoricon_object *get_icon_ptr( HICON handle )
         WARN( "icon handle %p from other process\n", handle );
         obj = NULL;
     }
+    return obj;
+}
+
+/* Icons of other processes.  Windows keeps an icon's bitmaps in the kernel, so
+ * any process can draw any HICON (the taskbar draws its programs' window and
+ * class icons); Wine keeps them in the process that made the icon.  So an icon
+ * given to a window or a class, or returned for WM_GETICON, is published: its
+ * frame's bitmaps go to the server (set_icon_image) once.  A process that
+ * reads, draws or copies an icon of another process reads them back
+ * (get_icon_image) into a local copy, kept by full handle: an icon's image
+ * never changes, and a new icon in the same slot has a new handle. */
+
+struct icon_image_bitmap
+{
+    UINT width, height, bpp, size;  /* size of the bits, which follow (NtGdiGetBitmapBits) */
+};
+
+struct icon_image
+{
+    UINT is_icon, width, height;
+    INT  hotspot_x, hotspot_y;
+    struct icon_image_bitmap bitmaps[3];  /* mask, color, alpha */
+};
+
+#define MAX_FOREIGN_ICONS 256
+static struct list foreign_icons = LIST_INIT( foreign_icons );  /* most recently used first */
+static UINT foreign_icon_count;
+
+static UINT pack_icon_bitmap( HBITMAP bitmap, struct icon_image_bitmap *desc, char *bits )
+{
+    BITMAP bm;
+
+    memset( desc, 0, sizeof(*desc) );
+    if (!bitmap || !NtGdiExtGetObjectW( bitmap, sizeof(bm), &bm )) return 0;
+    desc->width  = bm.bmWidth;
+    desc->height = bm.bmHeight;
+    desc->bpp    = bm.bmBitsPixel;
+    desc->size   = NtGdiGetBitmapBits( bitmap, 0, NULL );
+    if (bits) NtGdiGetBitmapBits( bitmap, desc->size, bits );
+    return desc->size;
+}
+
+/* publish an icon of this process to the server, if not yet */
+void publish_icon( HICON handle )
+{
+    struct cursoricon_object *obj, *frame;
+    struct icon_image *image = NULL;
+    HBITMAP bitmaps[3];
+    UINT i, size;
+    char *bits;
+
+    if (!handle) return;
+    obj = get_user_handle_ptr( handle, NTUSER_OBJ_ICON );
+    if (!obj || obj == OBJ_OTHER_PROCESS) return;
+    if (obj->published) goto done;
+    frame = obj;
+    if (obj->is_ani && (!obj->ani.num_steps || !(frame = get_icon_ptr( obj->ani.frames[0] )))) goto done;
+    obj->published = TRUE;
+
+    bitmaps[0] = frame->frame.mask;
+    bitmaps[1] = frame->frame.color;
+    bitmaps[2] = frame->frame.alpha;
+    size = sizeof(*image);
+    for (i = 0; i < 3; i++)
+    {
+        struct icon_image_bitmap desc;
+        size += pack_icon_bitmap( bitmaps[i], &desc, NULL );
+    }
+    if ((image = malloc( size )))
+    {
+        image->is_icon   = obj->is_icon;
+        image->width     = frame->frame.width;
+        image->height    = frame->frame.height;
+        image->hotspot_x = frame->frame.hotspot.x;
+        image->hotspot_y = frame->frame.hotspot.y;
+        bits = (char *)(image + 1);
+        for (i = 0; i < 3; i++) bits += pack_icon_bitmap( bitmaps[i], &image->bitmaps[i], bits );
+        size = bits - (char *)image;
+    }
+    if (frame != obj) release_user_handle_ptr( frame );
+done:
+    release_user_handle_ptr( obj );
+    if (!image) return;
+
+    SERVER_START_REQ( set_icon_image )
+    {
+        req->handle = wine_server_user_handle( handle );
+        wine_server_add_data( req, image, size );
+        if (wine_server_call( req )) WARN( "icon %p not published\n", handle );
+    }
+    SERVER_END_REQ;
+    TRACE( "published icon %p, %ux%u, %u bytes\n", handle, image->width, image->height, size );
+    free( image );
+}
+
+static void free_foreign_icon( struct cursoricon_object *obj )
+{
+    list_remove( &obj->entry );
+    foreign_icon_count--;
+    NtGdiDeleteObjectApp( obj->frame.mask );
+    NtGdiDeleteObjectApp( obj->frame.color );
+    NtGdiDeleteObjectApp( obj->frame.alpha );
+    free( obj );
+}
+
+/* a local copy of another process's icon, with the user lock held as for a
+ * pointer from get_user_handle_ptr; NULL if the icon was not published */
+static struct cursoricon_object *get_foreign_icon( HICON handle )
+{
+    struct cursoricon_object *obj;
+    struct icon_image *image;
+    UINT size = 16384, total = 0, i;
+    HBITMAP bitmaps[3] = {0};
+    const char *bits;
+    NTSTATUS status;
+
+    if (!(handle = get_user_handle_full( handle, NTUSER_OBJ_ICON ))) return NULL;
+
+    user_lock();
+    LIST_FOR_EACH_ENTRY( obj, &foreign_icons, struct cursoricon_object, entry )
+    {
+        if (obj->handle != handle) continue;
+        list_remove( &obj->entry );
+        list_add_head( &foreign_icons, &obj->entry );
+        return obj;
+    }
+    user_unlock();
+
+    for (;;)
+    {
+        if (!(image = malloc( size ))) return NULL;
+        SERVER_START_REQ( get_icon_image )
+        {
+            req->handle = wine_server_user_handle( handle );
+            wine_server_set_reply( req, image, size );
+            if (!(status = wine_server_call( req ))) total = reply->total;
+        }
+        SERVER_END_REQ;
+        if (status || total <= size) break;
+        free( image );
+        size = total;
+    }
+    if (status || total < sizeof(*image))
+    {
+        WARN( "icon handle %p from other process, not published (%#x)\n", handle, (int)status );
+        free( image );
+        return NULL;
+    }
+
+    bits = (const char *)(image + 1);
+    for (i = 0; i < 3; i++)
+    {
+        const struct icon_image_bitmap *desc = &image->bitmaps[i];
+        if (!desc->size) continue;
+        if (desc->size > total - (bits - (const char *)image)) break;
+        bitmaps[i] = NtGdiCreateBitmap( desc->width, desc->height, 1, desc->bpp, bits );
+        bits += desc->size;
+    }
+    if (!bitmaps[0] || !(obj = calloc( 1, sizeof(*obj) )))
+    {
+        for (i = 0; i < 3; i++) NtGdiDeleteObjectApp( bitmaps[i] );
+        free( image );
+        return NULL;
+    }
+    obj->handle = handle;
+    obj->is_icon = image->is_icon;
+    obj->published = TRUE;
+    obj->frame.width = image->width;
+    obj->frame.height = image->height;
+    obj->frame.hotspot.x = image->hotspot_x;
+    obj->frame.hotspot.y = image->hotspot_y;
+    obj->frame.mask = bitmaps[0];
+    obj->frame.color = bitmaps[1];
+    obj->frame.alpha = bitmaps[2];
+    TRACE( "icon %p of another process: %ux%u\n", handle, image->width, image->height );
+    free( image );
+
+    user_lock();
+    list_add_head( &foreign_icons, &obj->entry );
+    if (++foreign_icon_count > MAX_FOREIGN_ICONS)
+        free_foreign_icon( LIST_ENTRY( list_tail( &foreign_icons ), struct cursoricon_object, entry ));
+    return obj;
+}
+
+/* get_icon_ptr for reading, drawing or copying: icons of other processes too */
+static struct cursoricon_object *get_any_icon_ptr( HICON handle )
+{
+    struct cursoricon_object *obj = get_user_handle_ptr( handle, NTUSER_OBJ_ICON );
+    if (obj == OBJ_OTHER_PROCESS) obj = get_foreign_icon( handle );
     return obj;
 }
 
@@ -163,7 +353,7 @@ static struct cursoricon_object *get_icon_frame_ptr( HICON handle, UINT step )
 {
     struct cursoricon_object *obj, *ret;
 
-    if (!(obj = get_icon_ptr( handle ))) return NULL;
+    if (!(obj = get_any_icon_ptr( handle ))) return NULL;
     if (!obj->is_ani) return obj;
     if (step >= obj->ani.num_steps)
     {
@@ -481,7 +671,7 @@ BOOL WINAPI NtUserGetIconInfo( HICON icon, ICONINFO *info, UNICODE_STRING *modul
     struct cursoricon_object *obj, *frame_obj;
     BOOL ret = TRUE;
 
-    if (!(obj = get_icon_ptr( icon )))
+    if (!(obj = get_any_icon_ptr( icon )))
     {
         RtlSetLastWin32Error( ERROR_INVALID_CURSOR_HANDLE );
         return FALSE;

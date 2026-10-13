@@ -4512,3 +4512,20 @@ enum inproc_sync_type
     int                 count;          /* how many there are */
     VARARG(windows,user_handles);       /* the windows */
 @END
+
+
+/* Publish an icon's image (its frame's bitmaps, as win32u packs them) so that
+   other processes can draw the icon: Windows keeps icons in the kernel */
+@REQ(set_icon_image)
+    user_handle_t  handle;        /* handle to the icon, owned by the caller */
+    VARARG(data,bytes);           /* the image */
+@END
+
+
+/* Read the image another process published for an icon */
+@REQ(get_icon_image)
+    user_handle_t  handle;        /* handle to the icon */
+@REPLY
+    data_size_t    total;         /* size of the whole image */
+    VARARG(data,bytes);           /* the image */
+@END

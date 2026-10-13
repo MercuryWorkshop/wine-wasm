@@ -332,6 +332,8 @@ DECL_HANDLER(add_session_bitmap);
 DECL_HANDLER(get_session_bitmap);
 DECL_HANDLER(set_shell_hook_window);
 DECL_HANDLER(get_shell_hook_windows);
+DECL_HANDLER(set_icon_image);
+DECL_HANDLER(get_icon_image);
 
 typedef void (*req_handler)( const void *req, void *reply );
 static const req_handler req_handlers[REQ_NB_REQUESTS] =
@@ -661,6 +663,8 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_get_session_bitmap,
     (req_handler)req_set_shell_hook_window,
     (req_handler)req_get_shell_hook_windows,
+    (req_handler)req_set_icon_image,
+    (req_handler)req_get_icon_image,
 };
 
 C_ASSERT( sizeof(abstime_t) == 8 );
@@ -2505,3 +2509,9 @@ C_ASSERT( sizeof(struct set_shell_hook_window_reply) == 16 );
 C_ASSERT( sizeof(struct get_shell_hook_windows_request) == 16 );
 C_ASSERT( offsetof(struct get_shell_hook_windows_reply, count) == 8 );
 C_ASSERT( sizeof(struct get_shell_hook_windows_reply) == 16 );
+C_ASSERT( offsetof(struct set_icon_image_request, handle) == 12 );
+C_ASSERT( sizeof(struct set_icon_image_request) == 16 );
+C_ASSERT( offsetof(struct get_icon_image_request, handle) == 12 );
+C_ASSERT( sizeof(struct get_icon_image_request) == 16 );
+C_ASSERT( offsetof(struct get_icon_image_reply, total) == 8 );
+C_ASSERT( sizeof(struct get_icon_image_reply) == 16 );
