@@ -891,7 +891,7 @@
     SYSCALL_ENTRY( 0x1377, NtUserDelegateInput, 0 ) \
     SYSCALL_ENTRY( 0x1378, NtUserDeleteMenu, 12 ) \
     SYSCALL_ENTRY( 0x1379, NtUserDeleteWindowGroup, 0 ) \
-    SYSCALL_ENTRY( 0x137a, NtUserDeregisterShellHookWindow, 0 ) \
+    SYSCALL_ENTRY( 0x137a, NtUserDeregisterShellHookWindow, 4 ) \
     SYSCALL_ENTRY( 0x137b, NtUserDestroyAcceleratorTable, 4 ) \
     SYSCALL_ENTRY( 0x137c, NtUserDestroyActivationGroup, 0 ) \
     SYSCALL_ENTRY( 0x137d, NtUserDestroyActivationObject, 0 ) \
@@ -1278,7 +1278,7 @@
     SYSCALL_ENTRY( 0x14fa, NtUserRegisterRawInputDevices, 12 ) \
     SYSCALL_ENTRY( 0x14fb, NtUserRegisterServicesProcess, 0 ) \
     SYSCALL_ENTRY( 0x14fc, NtUserRegisterSessionPort, 0 ) \
-    SYSCALL_ENTRY( 0x14fd, NtUserRegisterShellHookWindow, 0 ) \
+    SYSCALL_ENTRY( 0x14fd, NtUserRegisterShellHookWindow, 4 ) \
     SYSCALL_ENTRY( 0x14fe, NtUserRegisterShellPTPListener, 0 ) \
     SYSCALL_ENTRY( 0x14ff, NtUserRegisterSiblingFrostWindow, 0 ) \
     SYSCALL_ENTRY( 0x1500, NtUserRegisterSystemThread, 0 ) \
@@ -2433,7 +2433,7 @@
     SYSCALL_ENTRY( 0x1377, NtUserDelegateInput, 0 ) \
     SYSCALL_ENTRY( 0x1378, NtUserDeleteMenu, 24 ) \
     SYSCALL_ENTRY( 0x1379, NtUserDeleteWindowGroup, 0 ) \
-    SYSCALL_ENTRY( 0x137a, NtUserDeregisterShellHookWindow, 0 ) \
+    SYSCALL_ENTRY( 0x137a, NtUserDeregisterShellHookWindow, 8 ) \
     SYSCALL_ENTRY( 0x137b, NtUserDestroyAcceleratorTable, 8 ) \
     SYSCALL_ENTRY( 0x137c, NtUserDestroyActivationGroup, 0 ) \
     SYSCALL_ENTRY( 0x137d, NtUserDestroyActivationObject, 0 ) \
@@ -2820,7 +2820,7 @@
     SYSCALL_ENTRY( 0x14fa, NtUserRegisterRawInputDevices, 24 ) \
     SYSCALL_ENTRY( 0x14fb, NtUserRegisterServicesProcess, 0 ) \
     SYSCALL_ENTRY( 0x14fc, NtUserRegisterSessionPort, 0 ) \
-    SYSCALL_ENTRY( 0x14fd, NtUserRegisterShellHookWindow, 0 ) \
+    SYSCALL_ENTRY( 0x14fd, NtUserRegisterShellHookWindow, 8 ) \
     SYSCALL_ENTRY( 0x14fe, NtUserRegisterShellPTPListener, 0 ) \
     SYSCALL_ENTRY( 0x14ff, NtUserRegisterSiblingFrostWindow, 0 ) \
     SYSCALL_ENTRY( 0x1500, NtUserRegisterSystemThread, 0 ) \
@@ -3726,7 +3726,6 @@
     SYSCALL_STUB( NtUserDelegateCapturePointers ) \
     SYSCALL_STUB( NtUserDelegateInput ) \
     SYSCALL_STUB( NtUserDeleteWindowGroup ) \
-    SYSCALL_STUB( NtUserDeregisterShellHookWindow ) \
     SYSCALL_STUB( NtUserDestroyActivationGroup ) \
     SYSCALL_STUB( NtUserDestroyActivationObject ) \
     SYSCALL_STUB( NtUserDestroyDCompositionHwndTarget ) \
@@ -3968,7 +3967,6 @@
     SYSCALL_STUB( NtUserRegisterPrecisionTouchpadWindow ) \
     SYSCALL_STUB( NtUserRegisterServicesProcess ) \
     SYSCALL_STUB( NtUserRegisterSessionPort ) \
-    SYSCALL_STUB( NtUserRegisterShellHookWindow ) \
     SYSCALL_STUB( NtUserRegisterShellPTPListener ) \
     SYSCALL_STUB( NtUserRegisterSiblingFrostWindow ) \
     SYSCALL_STUB( NtUserRegisterSystemThread ) \

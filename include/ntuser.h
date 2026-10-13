@@ -794,6 +794,7 @@ W32KAPI HWINSTA WINAPI NtUserCreateWindowStation( OBJECT_ATTRIBUTES *attr, ACCES
 W32KAPI HDWP    WINAPI NtUserDeferWindowPosAndBand( HDWP hdwp, HWND hwnd, HWND after, INT x, INT y,
                                                     INT cx, INT cy, UINT flags, UINT unk1, UINT unk2 );
 W32KAPI BOOL    WINAPI NtUserDeleteMenu( HMENU menu, UINT id, UINT flags );
+W32KAPI BOOL    WINAPI NtUserDeregisterShellHookWindow( HWND hwnd );
 W32KAPI BOOL    WINAPI NtUserDestroyAcceleratorTable( HACCEL handle );
 W32KAPI BOOL    WINAPI NtUserDestroyCaret(void);
 W32KAPI BOOL    WINAPI NtUserDestroyCursor( HCURSOR cursor, ULONG arg );
@@ -959,6 +960,7 @@ W32KAPI ATOM    WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_
                                                  struct client_menu_name *menu_name, DWORD fnid, DWORD flags, DWORD *wow );
 W32KAPI BOOL    WINAPI NtUserRegisterHotKey( HWND hwnd, INT id, UINT modifiers, UINT vk );
 W32KAPI BOOL    WINAPI NtUserRegisterRawInputDevices( const RAWINPUTDEVICE *devices, UINT device_count, UINT size );
+W32KAPI BOOL    WINAPI NtUserRegisterShellHookWindow( HWND hwnd );
 W32KAPI BOOL    WINAPI NtUserRegisterTouchPadCapable( BOOL capable );
 W32KAPI ATOM    WINAPI NtUserRegisterWindowMessage( UNICODE_STRING *name );
 W32KAPI BOOL    WINAPI NtUserReleaseCapture(void);

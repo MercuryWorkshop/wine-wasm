@@ -2671,6 +2671,8 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, 
         if (result)
             NtUserNotifyWinEvent( EVENT_OBJECT_NAMECHANGE, hwnd, OBJID_WINDOW, CHILDID_SELF );
         if (result) repaint_caption( hwnd, DC_TEXT );
+        if (result && is_shell_hook_window( hwnd ))
+            shell_hook_notify( HSHELL_REDRAW, (LPARAM)hwnd );
         break;
 
     case WM_GETTEXTLENGTH:
@@ -2724,6 +2726,8 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, 
     case WM_SETICON:
         result = (LRESULT)set_window_icon( hwnd, wparam, (HICON)lparam );
         repaint_caption( hwnd, DC_ICON );
+        if (is_shell_hook_window( hwnd ))
+            shell_hook_notify( HSHELL_REDRAW, (LPARAM)hwnd );
         break;
 
     case WM_GETICON:

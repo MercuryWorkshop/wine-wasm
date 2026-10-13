@@ -889,7 +889,7 @@
 @ stub -syscall NtUserDelegateInput
 @ stdcall -syscall NtUserDeleteMenu(long long long)
 @ stub -syscall NtUserDeleteWindowGroup
-@ stub -syscall NtUserDeregisterShellHookWindow
+@ stdcall -syscall NtUserDeregisterShellHookWindow(long)
 @ stdcall -syscall NtUserDestroyAcceleratorTable(long)
 @ stub -syscall NtUserDestroyActivationGroup
 @ stub -syscall NtUserDestroyActivationObject
@@ -1276,7 +1276,7 @@
 @ stdcall -syscall NtUserRegisterRawInputDevices(ptr long long)
 @ stub -syscall NtUserRegisterServicesProcess
 @ stub -syscall NtUserRegisterSessionPort
-@ stub -syscall NtUserRegisterShellHookWindow
+@ stdcall -syscall NtUserRegisterShellHookWindow(long)
 @ stub -syscall NtUserRegisterShellPTPListener
 @ stub -syscall NtUserRegisterSiblingFrostWindow
 @ stub -syscall NtUserRegisterSystemThread
