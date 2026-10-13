@@ -93,6 +93,16 @@ static int kick_rfd = -1;
 /* Imports from the gex host */
 __attribute__((import_module("gex"), import_name("door_publish")))
 extern void gex_door_publish( struct door_area *area );
+/* A thread's wait pipe as the host names it, for writing in place from a
+ * door (docs/wineserver-kernel.md §4.5): -1 when it cannot; inside a door
+ * (the server's descriptors are the pump's) it never can. */
+__attribute__((import_module("gex"), import_name("wake_pipe")))
+extern int gex_wake_pipe( int fd );
+/* bytes written, or -errno (EPIPE: the client's end is gone) */
+__attribute__((import_module("gex"), import_name("wake_write")))
+extern int gex_wake_write( int id, const void *buf, unsigned int len );
+__attribute__((import_module("gex"), import_name("wake_close")))
+extern void gex_wake_close( int id );
 
 void __gex_set_tp( unsigned long );
 /* musl's thread entry (gex_thread.s), with gex's F_body signature: a door
@@ -187,6 +197,26 @@ void door_set_session( void *data, size_t size )
 {
     door_area_storage.session_size = size;
     __atomic_store_n( &door_area_storage.session, (unsigned int)(unsigned long)data, __ATOMIC_RELEASE );
+}
+
+/* The wakeup write in place (thread.c, send_thread_wakeup): with doors on,
+ * unless WINEGEX_DOOR_WAKE=0. Made at init_thread, which the pump serves. */
+int door_wake_pipe( int fd )
+{
+    static int off = -1;
+    if (off < 0) off = getenv( "WINEGEX_DOOR_WAKE" ) && !strcmp( getenv( "WINEGEX_DOOR_WAKE" ), "0" );
+    if (off || !door_area || fd < 0) return -1;
+    return gex_wake_pipe( fd );
+}
+
+int door_wake_write( int id, const void *buf, unsigned int len )
+{
+    return gex_wake_write( id, buf, len );
+}
+
+void door_wake_close( int id )
+{
+    if (id >= 0) gex_wake_close( id );
 }
 
 /* door calls served so far (the pump: did any run while it waited?) */

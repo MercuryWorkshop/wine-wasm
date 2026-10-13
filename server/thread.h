@@ -75,6 +75,9 @@ struct thread
     struct fd             *request_fd;    /* fd for receiving client requests */
     struct fd             *reply_fd;      /* fd to send a reply to a client */
     struct fd             *wait_fd;       /* fd to use to wake a sleeping client */
+#ifdef __wasm32__
+    int                    wake_pipe;     /* gex: wait_fd's pipe, written in place (door.c) */
+#endif
     enum run_state         state;         /* running state */
     int                    exit_code;     /* thread exit code */
     int                    unix_pid;      /* Unix pid of client */
@@ -114,6 +117,9 @@ extern struct thread *get_thread_from_tid( int tid );
 extern struct thread *get_thread_from_pid( int pid );
 #ifdef __wasm32__
 extern struct thread *door_find_thread( int unix_pid, int unix_tid );
+extern int door_wake_pipe( int fd );
+extern int door_wake_write( int id, const void *buf, unsigned int len );
+extern void door_wake_close( int id );
 #endif
 extern struct thread *get_wait_queue_thread( struct wait_queue_entry *entry );
 extern enum select_opcode get_wait_queue_select_op( struct wait_queue_entry *entry );

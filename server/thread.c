@@ -367,6 +367,9 @@ static inline void init_thread_structure( struct thread *thread )
     thread->request_fd      = NULL;
     thread->reply_fd        = NULL;
     thread->wait_fd         = NULL;
+#ifdef __wasm32__
+    thread->wake_pipe       = -1;
+#endif
     thread->state           = RUNNING;
     thread->exit_code       = 0;
     thread->priority        = 0;
@@ -577,6 +580,10 @@ static void cleanup_thread( struct thread *thread )
     free( thread->reply_data );
     if (thread->request_fd) release_object( thread->request_fd );
     if (thread->reply_fd) release_object( thread->reply_fd );
+#ifdef __wasm32__
+    door_wake_close( thread->wake_pipe );
+    thread->wake_pipe = -1;
+#endif
     if (thread->wait_fd) release_object( thread->wait_fd );
     cleanup_clipboard_thread(thread);
     destroy_thread_windows( thread );
@@ -1198,7 +1205,21 @@ static int send_thread_wakeup( struct thread *thread, client_ptr_t cookie, int s
     memset( &reply, 0, sizeof(reply) );
     reply.cookie   = cookie;
     reply.signaled = signaled;
-    if ((ret = write( get_unix_fd( thread->wait_fd ), &reply, sizeof(reply) )) == sizeof(reply))
+#ifdef __wasm32__
+    /* gex: the client's wait pipe written in place, not by the pump on the
+     * door's behalf (docs/wineserver-kernel.md §4.5) */
+    if (thread->wake_pipe >= 0)
+    {
+        if ((ret = door_wake_write( thread->wake_pipe, &reply, sizeof(reply) )) < 0)
+        {
+            errno = -ret;
+            ret = -1;
+        }
+    }
+    else
+#endif
+    ret = write( get_unix_fd( thread->wait_fd ), &reply, sizeof(reply) );
+    if (ret == sizeof(reply))
         return 0;
     if (ret >= 0)
         fatal_protocol_error( thread, "partial wakeup write %d\n", ret );
@@ -1731,6 +1752,9 @@ static int init_thread( struct thread *thread, int reply_fd, int wait_fd )
 
     thread->reply_fd = create_anonymous_fd( &thread_fd_ops, reply_fd, &thread->obj, 0 );
     thread->wait_fd  = create_anonymous_fd( &thread_fd_ops, wait_fd, &thread->obj, 0 );
+#ifdef __wasm32__
+    if (thread->wait_fd) thread->wake_pipe = door_wake_pipe( get_unix_fd( thread->wait_fd ) );
+#endif
     return thread->reply_fd && thread->wait_fd;
 
  error:
