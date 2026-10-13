@@ -163,7 +163,11 @@ void door_init(void)
      * pump's (which may be inside a system call while a door runs) */
     if (!(self_copy = malloc( 4096 ))) return;
     memcpy( self_copy, (void *)pthread_self(), 512 );
-    if (!(ctx = calloc( 34, 8 ))) return;
+    /* gex's whole register context (gex_abi ctx::SIZE, 1120 bytes for
+     * i386), not just the syscall slots: the kernel writes past them (the
+     * last system call's number at 45 * 8), which with 34 slots landed in
+     * the next heap block (a process's handle table) */
+    if (!(ctx = calloc( 1, 4096 ))) return;
 
     kick_rfd = fds[0];
     a->kick_fd = fds[1];
