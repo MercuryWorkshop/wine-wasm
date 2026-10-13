@@ -346,19 +346,29 @@ static int door_on = -1;
 static int door_pid;
 static __thread int door_tid;
 
-/* 1: the request ran in a door, its status in *ret */
-static int door_try( struct __server_request_info *req, unsigned int *ret )
-{
-    int r;
+/* A section of the fd cache's (server_enter_section_nosig) entered without
+ * blocking signals, and whether its server call has blocked them since. */
+static __thread int section_nosig, section_masked;
+static __thread sigset_t section_old;
 
+static void door_init( void )
+{
     if (door_on < 0)
     {
         const char *env = getenv( "WINEGEX_DOOR" );
         door_on = !(env && !strcmp( env, "0" ));
         door_pid = getpid();
     }
+    if (door_on && !door_tid) door_tid = syscall( SYS_gettid );
+}
+
+/* 1: the request ran in a door, its status in *ret */
+static int door_try( struct __server_request_info *req, unsigned int *ret )
+{
+    int r;
+
+    door_init();
     if (!door_on) return 0;
-    if (!door_tid) door_tid = syscall( SYS_gettid );
     r = gex_door_call( req, door_pid, door_tid );
     if (r == 2) abort_thread( 0 );
     if (r) return 0;
@@ -417,6 +427,15 @@ unsigned int CDECL wine_server_call( void *req_ptr )
             __atomic_add_fetch( &__wine_session_writes, 1, __ATOMIC_SEQ_CST );
         if (door_try( req_ptr, &ret )) return ret;
     }
+    /* In a section entered without blocking signals (server_enter_section_
+     * nosig): the pipes block them now, until the section is left, as the
+     * section would have from its start (the mutex is held). */
+    if (section_nosig && !section_masked)
+    {
+        pthread_sigmask( SIG_BLOCK, &server_block_set, &section_old );
+        section_masked = 1;
+    }
+    if (section_nosig) return server_call_unlocked( req_ptr );
 #endif
     pthread_sigmask( SIG_BLOCK, &server_block_set, &old_set );
     ret = server_call_unlocked( req_ptr );
@@ -453,6 +472,48 @@ void server_leave_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigse
 {
     mutex_unlock( mutex );
     pthread_sigmask( SIG_SETMASK, sigset, NULL );
+}
+
+
+/***********************************************************************
+ *           server_enter_section_nosig
+ *
+ * server_enter_uninterrupted_section for a section whose only system call
+ * would be its server request (NtClose, NtDuplicateObject's
+ * DUPLICATE_CLOSE_SOURCE): with doors that request is one host call, no
+ * system call, so no signal can be delivered while the mutex is held and
+ * blocking them costs two system calls for nothing. If the request takes
+ * the pipes after all, wine_server_call blocks them then, until the
+ * section is left. Elsewhere, the section itself.
+ */
+static void server_enter_section_nosig( pthread_mutex_t *mutex, sigset_t *sigset )
+{
+#ifdef __wasm32__
+    door_init();
+    if (door_on && !reqstats_on && !section_nosig)
+    {
+        mutex_lock( mutex );
+        section_nosig = 1;
+        section_masked = 0;
+        return;
+    }
+#endif
+    server_enter_uninterrupted_section( mutex, sigset );
+}
+
+static void server_leave_section_nosig( pthread_mutex_t *mutex, sigset_t *sigset )
+{
+#ifdef __wasm32__
+    if (section_nosig)
+    {
+        int masked = section_masked;
+        section_nosig = section_masked = 0;
+        mutex_unlock( mutex );
+        if (masked) pthread_sigmask( SIG_SETMASK, &section_old, NULL );
+        return;
+    }
+#endif
+    server_leave_uninterrupted_section( mutex, sigset );
 }
 
 
@@ -2004,8 +2065,9 @@ NTSTATUS WINAPI NtDuplicateObject( HANDLE source_process, HANDLE source, HANDLE 
     }
 
     /* hold fd_cache_mutex to prevent the fd from being added again between the
-     * call to remove_fd_from_cache and close_handle */
-    server_enter_uninterrupted_section( &fd_cache_mutex, &sigset );
+     * call to remove_fd_from_cache and close_handle (only then: a plain
+     * duplicate touches no cache) */
+    if (options & DUPLICATE_CLOSE_SOURCE) server_enter_section_nosig( &fd_cache_mutex, &sigset );
 
     /* always remove the cached fd; if the server request fails we'll just
      * retrieve it again */
@@ -2030,7 +2092,7 @@ NTSTATUS WINAPI NtDuplicateObject( HANDLE source_process, HANDLE source, HANDLE 
     }
     SERVER_END_REQ;
 
-    server_leave_uninterrupted_section( &fd_cache_mutex, &sigset );
+    if (options & DUPLICATE_CLOSE_SOURCE) server_leave_section_nosig( &fd_cache_mutex, &sigset );
 
     if (fd != -1) close( fd );
     return ret;
@@ -2081,7 +2143,7 @@ NTSTATUS WINAPI NtClose( HANDLE handle )
 
     /* hold fd_cache_mutex to prevent the fd from being added again between the
      * call to remove_fd_from_cache and close_handle */
-    server_enter_uninterrupted_section( &fd_cache_mutex, &sigset );
+    server_enter_section_nosig( &fd_cache_mutex, &sigset );
 
     /* always remove the cached fd; if the server request fails we'll just
      * retrieve it again */
@@ -2095,7 +2157,7 @@ NTSTATUS WINAPI NtClose( HANDLE handle )
     }
     SERVER_END_REQ;
 
-    server_leave_uninterrupted_section( &fd_cache_mutex, &sigset );
+    server_leave_section_nosig( &fd_cache_mutex, &sigset );
 
     if (fd != -1) close( fd );
 
