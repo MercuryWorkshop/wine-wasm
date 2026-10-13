@@ -411,7 +411,7 @@
 @ stdcall InitiateSystemShutdownExA(str str long long long long)
 @ stdcall InitiateSystemShutdownExW(wstr wstr long long long long)
 @ stdcall InitiateSystemShutdownW(wstr wstr long long long)
-@ stub InstallApplication
+@ stdcall InstallApplication(ptr)
 @ stub IsProcessRestricted
 @ stdcall IsTextUnicode(ptr long ptr)
 @ stdcall -import IsTokenRestricted(long)
