@@ -322,6 +322,12 @@ static struct ratio get_window_dpi( struct window *win )
 static int link_window( struct window *win, struct window *previous )
 {
     struct list *old_prev;
+    struct window *shell = win->desktop->shell_window;
+
+    /* the shell's window (the desktop's icons and background) stays below
+     * its siblings, as on Windows: showing or activating it does not raise
+     * it over the windows on the desktop */
+    if (win == shell && previous != WINPTR_TOPMOST) previous = WINPTR_BOTTOM;
 
     if (previous == WINPTR_NOTOPMOST)
     {
@@ -374,6 +380,13 @@ static int link_window( struct window *win, struct window *previous )
     }
 
     win->is_linked = 1;
+    /* nothing goes below the shell's window */
+    if (shell && shell != win && shell->parent == win->parent && shell->is_linked &&
+        !(shell->ex_style & WS_EX_TOPMOST) && list_tail( &win->parent->children ) != &shell->entry)
+    {
+        list_remove( &shell->entry );
+        list_add_tail( &win->parent->children, &shell->entry );
+    }
     return old_prev != win->entry.prev;
 }
 
