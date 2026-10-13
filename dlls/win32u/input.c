@@ -2139,9 +2139,16 @@ BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus, DWORD new
     if (hwnd)
     {
         NtUserNotifyWinEvent( EVENT_SYSTEM_FOREGROUND, hwnd, 0, 0 );
-        /* Windows (Vista on) tells the taskbar of every activation this way */
+        /* Windows (Vista on) tells the taskbar of every activation this way,
+         * naming the window that has the taskbar's button: the window itself,
+         * or the owner it belongs to (a program's dialog), or none (the
+         * shell's own popups: the Start button and menu) */
         if (NtUserGetAncestor( hwnd, GA_PARENT ) == get_desktop_window())
-            shell_hook_notify( HSHELL_RUDEAPPACTIVATED, (LPARAM)hwnd );
+        {
+            HWND task = hwnd;
+            while (task && !is_shell_hook_window( task )) task = get_window_relative( task, GW_OWNER );
+            shell_hook_notify( HSHELL_RUDEAPPACTIVATED, (LPARAM)task );
+        }
 
         /* send palette messages */
         if (send_message( hwnd, WM_QUERYNEWPALETTE, 0, 0 ))
