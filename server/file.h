@@ -155,6 +155,7 @@ extern void door_kicked( void );
 extern unsigned int door_calls( void );
 extern void door_pump_lock( void );
 extern void door_pump_unlock( long long wake );
+extern void door_kill_clients( void );
 #endif
 extern struct timeout_user *add_timeout_user( timeout_t when, timeout_callback func, void *private );
 extern void remove_timeout_user( struct timeout_user *user );

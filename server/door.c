@@ -276,11 +276,14 @@ void door_pump_lock(void)
         {
             a->owner = -1;
             /* A handler cut off midway cannot be repaired: the server goes,
-             * as when wineserver dies, and its clients see their pipes close. */
+             * and its clients with it. A client thread blocked in a wait
+             * never learns the server died (its wait pipe's write end is
+             * its own too, as in Wine anywhere), so the session would hang. */
             if (__atomic_load_n( &a->poisoned, __ATOMIC_ACQUIRE ))
             {
-                fprintf( stderr, "wineserver: door: a door call died midway (pid %d tid %d); the server exits\n",
+                fprintf( stderr, "wineserver: door: a door call died midway (pid %d tid %d); the server and its clients exit\n",
                          a->owner_pid, a->poisoned );
+                door_kill_clients();
                 _exit( 1 );
             }
             return;
