@@ -97,6 +97,7 @@ extern int is_fd_overlapped( struct fd *fd );
 extern int get_unix_fd( struct fd *fd );
 extern client_ptr_t get_fd_map_address( struct fd *fd );
 extern void set_fd_map_address( struct fd *fd, client_ptr_t addr, mem_size_t size );
+extern const char *get_fd_unix_name( struct fd *fd );
 extern int is_same_file_fd( struct fd *fd1, struct fd *fd2 );
 extern int is_fd_removable( struct fd *fd );
 extern int check_fd_events( struct fd *fd, int events );

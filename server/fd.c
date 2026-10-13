@@ -2175,6 +2175,12 @@ void set_fd_map_address( struct fd *fd, client_ptr_t addr, mem_size_t size )
     fd->map_size = size;
 }
 
+/* the unix file name of the fd, if it has one */
+const char *get_fd_unix_name( struct fd *fd )
+{
+    return fd->unix_name;
+}
+
 /* check if two file descriptors point to the same file */
 int is_same_file_fd( struct fd *fd1, struct fd *fd2 )
 {
