@@ -272,6 +272,8 @@ static bool desktop_init( struct object *obj, const void *init_data )
     desktop->shell_listview = NULL;
     desktop->progman_window = NULL;
     desktop->taskman_window = NULL;
+    desktop->shell_hooks = NULL;
+    desktop->shell_hook_count = 0;
     desktop->global_hooks = NULL;
     desktop->close_timeout = NULL;
     desktop->foreground_input = NULL;
@@ -339,6 +341,7 @@ static void desktop_destroy( struct object *obj )
     struct desktop *desktop = (struct desktop *)obj;
     struct winstation *winstation = desktop->winstation;
 
+    free( desktop->shell_hooks );
     list_remove( &desktop->entry );
 
     if (desktop == winstation->input_desktop)

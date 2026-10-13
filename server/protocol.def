@@ -4495,3 +4495,20 @@ enum inproc_sync_type
     int                 height;
     VARARG(bits,bytes);
 @END
+
+
+/* Register (add) or deregister a window for its desktop's shell hook messages, as RegisterShellHookWindow */
+@REQ(set_shell_hook_window)
+    user_handle_t       window;         /* the window */
+    int                 add;            /* register, else deregister */
+@REPLY
+    int                 found;          /* it was registered */
+@END
+
+
+/* Get the windows registered for the current desktop's shell hook messages */
+@REQ(get_shell_hook_windows)
+@REPLY
+    int                 count;          /* how many there are */
+    VARARG(windows,user_handles);       /* the windows */
+@END

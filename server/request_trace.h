@@ -3703,6 +3703,27 @@ static void dump_get_session_bitmap_reply( const struct get_session_bitmap_reply
     dump_varargs_bytes( ", bits=", cur_size );
 }
 
+static void dump_set_shell_hook_window_request( const struct set_shell_hook_window_request *req )
+{
+    fprintf( stderr, " window=%08x", req->window );
+    fprintf( stderr, ", add=%d", req->add );
+}
+
+static void dump_set_shell_hook_window_reply( const struct set_shell_hook_window_reply *req )
+{
+    fprintf( stderr, " found=%d", req->found );
+}
+
+static void dump_get_shell_hook_windows_request( const struct get_shell_hook_windows_request *req )
+{
+}
+
+static void dump_get_shell_hook_windows_reply( const struct get_shell_hook_windows_reply *req )
+{
+    fprintf( stderr, " count=%d", req->count );
+    dump_varargs_user_handles( ", windows=", cur_size );
+}
+
 typedef void (*dump_func)( const void *req );
 
 static const dump_func req_dumpers[REQ_NB_REQUESTS] =
@@ -4030,6 +4051,8 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_get_user_api_hook_request,
     (dump_func)dump_add_session_bitmap_request,
     (dump_func)dump_get_session_bitmap_request,
+    (dump_func)dump_set_shell_hook_window_request,
+    (dump_func)dump_get_shell_hook_windows_request,
 };
 
 static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
@@ -4357,6 +4380,8 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_get_user_api_hook_reply,
     (dump_func)dump_add_session_bitmap_reply,
     (dump_func)dump_get_session_bitmap_reply,
+    (dump_func)dump_set_shell_hook_window_reply,
+    (dump_func)dump_get_shell_hook_windows_reply,
 };
 
 static const char * const req_names[REQ_NB_REQUESTS] =
@@ -4684,6 +4709,8 @@ static const char * const req_names[REQ_NB_REQUESTS] =
     "get_user_api_hook",
     "add_session_bitmap",
     "get_session_bitmap",
+    "set_shell_hook_window",
+    "get_shell_hook_windows",
 };
 
 static const struct
