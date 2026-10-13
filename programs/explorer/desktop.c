@@ -1364,6 +1364,12 @@ void manage_desktop( WCHAR *arg )
     /* Ideally we would set the window of an IShellView here, but we never
        actually create one, so the desktop window itself will have to do. */
     if (!native_shell) set_shell_window( hwnd );
+#ifdef __wasm32__
+    /* (the desktop is up: win32u's get_desktop_window waits for this, or
+     * for the shell window, which a native shell names only later -- and
+     * its winlogon starts that shell only once the desktop is up) */
+    if (hwnd) SetPropW( hwnd, L"__wine_gex_desktop_ready", (HANDLE)1 );
+#endif
 
     /* run the desktop message loop */
     if (hwnd)

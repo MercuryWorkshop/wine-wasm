@@ -934,6 +934,26 @@ static BOOL is_desktop_process(void)
 }
 #endif
 
+#ifdef __wasm32__
+/* Whether the desktop process (or thread) is in its message loop: it has
+ * named the shell window, or (with a native shell, which names its own
+ * later) marked the desktop window (programs/explorer/desktop.c). */
+static BOOL desktop_up(void)
+{
+    static const WCHAR readyW[] = {'_','_','w','i','n','e','_','g','e','x','_','d','e','s','k','t','o','p','_','r','e','a','d','y',0};
+    HWND top = 0;
+
+    if (NtUserGetShellWindow()) return TRUE;
+    SERVER_START_REQ( get_desktop_window )
+    {
+        req->force = 0;
+        if (!wine_server_call( req )) top = wine_server_ptr_handle( reply->top_window );
+    }
+    SERVER_END_REQ;
+    return top && NtUserGetProp( top, readyW );
+}
+#endif
+
 HWND get_desktop_window(void)
 {
     struct user_thread_info *thread_info = get_user_thread_info();
@@ -1054,7 +1074,7 @@ HWND get_desktop_window(void)
                 /* until its window is up and its thread in its message
                  * loop, which it enters as it names the shell window (on
                  * the default desktop: as explorer's WaitForInputIdle) */
-                for (i = 0; i < 6000 && !NtUserGetShellWindow(); i++)  /* (60 s: a child sets up slower) */
+                for (i = 0; i < 6000 && !desktop_up(); i++)  /* (60 s: a child sets up slower) */
                     NtDelayExecution( FALSE, &delay );
             }
             else ERR_(win)( "failed to start the desktop thread %x\n", status );
@@ -1086,11 +1106,10 @@ HWND get_desktop_window(void)
             {
                 /* a child process starts slower than WaitForInputIdle's
                  * 10 s (and its idle event does not cross to this process):
-                 * until explorer names the shell window, as the thread
-                 * path waits */
+                 * until explorer's desktop is up, as the thread path waits */
                 LARGE_INTEGER delay = { .QuadPart = -10 * 10000 };
                 int i;
-                for (i = 0; i < 6000 && !NtUserGetShellWindow(); i++)
+                for (i = 0; i < 6000 && !desktop_up(); i++)
                     NtDelayExecution( FALSE, &delay );
             }
 #else
