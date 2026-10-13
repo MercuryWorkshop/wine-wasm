@@ -82,9 +82,10 @@ static struct session_thread_data *get_session_thread_data(void)
 }
 
 #ifdef __wasm32__
-/* A process that cannot map the session (a child of the process hosting the
- * in-process wineserver: one wasm memory each) reads it through requests,
- * into a local copy laid out as the mapping is. Each read sequence (a seqlock
+/* No process can map the session (it is in the wineserver's wasm memory, one
+ * memory each): each reads it into a local copy laid out as the mapping is,
+ * from the server's memory through the door (gex_session_copy) or else
+ * through requests. Each read sequence (a seqlock
  * acquire, a user entry) refreshes what it reads; the copy is consistent, so
  * the seqlock check that follows passes. */
 #define SESSION_MIRROR_SIZE (16 << 20)  /* (server/mapping.c: one block) */
@@ -248,19 +249,7 @@ static NTSTATUS map_shared_session_block( SIZE_T offset, SIZE_T size, struct ses
 
 #ifdef __wasm32__
     {
-        /* the process's own wineserver holds the session: read it there */
-        extern const void *wineserver_session_data( UINT64 offset, UINT64 *size );
-        UINT64 avail;
-
-        if ((block->data = wineserver_session_data( off.QuadPart, &avail )))
-        {
-            block->offset = off.QuadPart;
-            block->size = avail;
-            list_add_tail( &session_blocks, &block->entry );
-            *ret = block;
-            return STATUS_SUCCESS;
-        }
-        /* not this process's: through requests (session_mirror_refresh) */
+        /* the server's memory, never this process's: a copy (session_mirror_refresh) */
         if (session_mirror || (session_mirror = calloc( 1, SESSION_MIRROR_SIZE )))
         {
             block->data = session_mirror;

@@ -553,14 +553,7 @@ static int exec_wineserver( pid_t *pid, char **argv )
  * calls, server.c; gex docs/wineserver-kernel.md). It runs in the foreground
  * (-f: it never forks, which would make it fork-instrumented) and says it is
  * up with a byte on the descriptor WINEGEX_SERVER_READY names. */
-void *wineserver_user_shared_data;  /* (none in this process: virtual.c gives every process its own USD) */
 static BOOL wineserver_started;
-
-/* win32u: the session is never this process's own memory */
-const void *wineserver_session_data( UINT64 offset, UINT64 *size )
-{
-    return NULL;
-}
 
 extern int clone( int (*func)(void *), void *stack, int flags, void *arg, ... );
 

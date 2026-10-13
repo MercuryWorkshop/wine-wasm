@@ -4603,16 +4603,15 @@ void virtual_map_user_shared_data(void)
     NtClose( section );
 #ifdef __wasm32__
     {
-        /* The USD is written by the server, which runs in the first process
-         * (wasm32_inproc.h). A child has its own wasm memory: what it mapped
-         * is a copy, its clocks stopped. It keeps them itself: a private
-         * page, the copy's contents, and a thread advancing the times as the
-         * server's set_user_shared_data_time does. */
-        extern KUSER_SHARED_DATA *wineserver_user_shared_data;
+        /* The USD is written by the server, in its own wasm memory: what a
+         * process mapped is a copy, its clocks stopped. Each keeps them
+         * itself: a private page, the copy's contents, and a thread advancing
+         * the times as the server's set_user_shared_data_time does (gex
+         * docs/wineserver-kernel.md §6.2). */
         static pthread_t clock_thread;
         void *copy;
 
-        if (!wineserver_user_shared_data && (copy = malloc( page_size )))
+        if ((copy = malloc( page_size )))
         {
             memcpy( copy, (void *)user_shared_data, page_size );
             if (mmap( user_shared_data, page_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0 ) == user_shared_data)
