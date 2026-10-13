@@ -314,6 +314,10 @@ struct wayland_surface
      * told: position, layer, and the window it was put under. */
     struct gex_window_placement_v1 *gex_placement;
     POINT placed_at;
+    /* Where the compositor shows the window (gex_window_placement_v1.origin),
+     * which the pointer positions after it are relative to; x INT_MIN until
+     * it says. */
+    POINT placed_origin;
     UINT placed_layer;
     HWND placed_below;
     BOOL placed_stacked;
