@@ -234,7 +234,7 @@ static void thread_detach(void)
  */
 BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
 {
-    static HMODULE imm32_module;
+    static HMODULE imm32_module, lpk_module;
     BOOL ret = TRUE;
 
     switch(reason)
@@ -244,12 +244,25 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
         ret = process_attach();
         if(ret)
             imm32_module = LoadLibraryW(L"imm32.dll");
+        /* Windows' language pack: user32 loads it and calls LpkInitialize at
+         * process start. Wine has none; a native lpk.dll in system32 is used,
+         * as native comctl32 6.10's edit control calls its LpkEditControl. */
+        if (ret && (lpk_module = LoadLibraryExW( L"lpk.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32 )))
+        {
+            BOOL (WINAPI *lpk_init)(DWORD) = (void *)GetProcAddress( lpk_module, "LpkInitialize" );
+            if (!lpk_init || !lpk_init( 0 ))
+            {
+                FreeLibrary( lpk_module );
+                lpk_module = NULL;
+            }
+        }
         break;
     case DLL_THREAD_DETACH:
         thread_detach();
         break;
     case DLL_PROCESS_DETACH:
         FreeLibrary(imm32_module);
+        if (lpk_module) FreeLibrary( lpk_module );
         break;
     }
     return ret;
