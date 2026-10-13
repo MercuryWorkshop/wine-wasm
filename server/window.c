@@ -36,6 +36,7 @@
 #include "user.h"
 #include "unicode.h"
 
+static int remove_shell_hook_window( struct desktop *desktop, user_handle_t handle );
 static const struct ratio no_dpi;
 
 /* a window property */
@@ -2164,6 +2165,7 @@ void free_window_handle( struct window *win )
     if (win == win->desktop->shell_listview) win->desktop->shell_listview = NULL;
     if (win == win->desktop->progman_window) win->desktop->progman_window = NULL;
     if (win == win->desktop->taskman_window) win->desktop->taskman_window = NULL;
+    remove_shell_hook_window( win->desktop, win->handle );
     free_hotkeys( win->desktop, win->handle );
     cleanup_clipboard_window( win->desktop, win->handle );
     destroy_properties( win );
@@ -3201,6 +3203,60 @@ DECL_HANDLER(get_window_properties)
     }
 }
 
+
+/* take a window off its desktop's list of shell hook windows */
+static int remove_shell_hook_window( struct desktop *desktop, user_handle_t handle )
+{
+    unsigned int i;
+
+    for (i = 0; i < desktop->shell_hook_count; i++)
+    {
+        if (desktop->shell_hooks[i] != handle) continue;
+        memmove( desktop->shell_hooks + i, desktop->shell_hooks + i + 1,
+                 (desktop->shell_hook_count - i - 1) * sizeof(*desktop->shell_hooks) );
+        desktop->shell_hook_count--;
+        return 1;
+    }
+    return 0;
+}
+
+/* register or deregister a window for its desktop's shell hook messages */
+DECL_HANDLER(set_shell_hook_window)
+{
+    struct window *win = get_window( req->window );
+    user_handle_t *hooks;
+
+    if (!win) return;
+    if (!win->desktop || is_desktop_window( win ))
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        return;
+    }
+    /* deregistering first keeps a window on the list once, at its end */
+    reply->found = remove_shell_hook_window( win->desktop, win->handle );
+    if (!req->add) return;
+    if (!(hooks = realloc( win->desktop->shell_hooks,
+                           (win->desktop->shell_hook_count + 1) * sizeof(*hooks) )))
+    {
+        set_error( STATUS_NO_MEMORY );
+        return;
+    }
+    hooks[win->desktop->shell_hook_count++] = win->handle;
+    win->desktop->shell_hooks = hooks;
+}
+
+/* get the current desktop's shell hook windows, in the order they registered */
+DECL_HANDLER(get_shell_hook_windows)
+{
+    struct desktop *desktop;
+    data_size_t size;
+
+    if (!(desktop = get_desktop_obj( current->process, current->desktop, 0 ))) return;
+    reply->count = desktop->shell_hook_count;
+    size = min( get_reply_max_size(), desktop->shell_hook_count * sizeof(user_handle_t) );
+    if (size) set_reply_data( desktop->shell_hooks, size );
+    release_object( desktop );
+}
 
 /* get the new window pointer for a desktop shell window, checking permissions */
 /* helper for set_desktop_shell_windows request */

@@ -6490,6 +6490,37 @@ struct get_session_bitmap_reply
 };
 
 
+
+struct set_shell_hook_window_request
+{
+    struct request_header __header;
+    user_handle_t       window;
+    int                 add;
+    char __pad_20[4];
+};
+struct set_shell_hook_window_reply
+{
+    struct reply_header __header;
+    int                 found;
+    char __pad_12[4];
+};
+
+
+
+struct get_shell_hook_windows_request
+{
+    struct request_header __header;
+    char __pad_12[4];
+};
+struct get_shell_hook_windows_reply
+{
+    struct reply_header __header;
+    int                 count;
+    /* VARARG(windows,user_handles); */
+    char __pad_12[4];
+};
+
+
 enum request
 {
     REQ_new_process,
@@ -6815,6 +6846,8 @@ enum request
     REQ_get_user_api_hook,
     REQ_add_session_bitmap,
     REQ_get_session_bitmap,
+    REQ_set_shell_hook_window,
+    REQ_get_shell_hook_windows,
     REQ_NB_REQUESTS
 };
 
@@ -7145,6 +7178,8 @@ union generic_request
     struct get_user_api_hook_request get_user_api_hook_request;
     struct add_session_bitmap_request add_session_bitmap_request;
     struct get_session_bitmap_request get_session_bitmap_request;
+    struct set_shell_hook_window_request set_shell_hook_window_request;
+    struct get_shell_hook_windows_request get_shell_hook_windows_request;
 };
 union generic_reply
 {
@@ -7473,8 +7508,10 @@ union generic_reply
     struct get_user_api_hook_reply get_user_api_hook_reply;
     struct add_session_bitmap_reply add_session_bitmap_reply;
     struct get_session_bitmap_reply get_session_bitmap_reply;
+    struct set_shell_hook_window_reply set_shell_hook_window_reply;
+    struct get_shell_hook_windows_reply get_shell_hook_windows_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 960
+#define SERVER_PROTOCOL_VERSION 961
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
