@@ -36,6 +36,7 @@
 @ stdcall WinStationFreeMemory(ptr)
 @ stub WinStationGenerateLicense
 @ stdcall WinStationGetAllProcesses(ptr long ptr ptr)
+@ stdcall WinStationGetInitialApplication(long ptr ptr ptr ptr)
 @ stub WinStationGetLanAdapterNameA
 @ stub WinStationGetLanAdapterNameW
 @ stub WinStationGetMachinePolicy

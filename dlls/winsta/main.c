@@ -112,6 +112,22 @@ BOOLEAN WINAPI WinStationFreeMemory( void *mem )
     return TRUE;
 }
 
+/* the program a session runs instead of the shell, and its directory (a
+ * remote session's "initial program"; WinStationFreeMemory frees them): the
+ * console session has none, so the user's shell runs (userinit.exe logs a
+ * session off when this fails) */
+BOOLEAN WINAPI WinStationGetInitialApplication( ULONG session, WCHAR **program, WCHAR **directory,
+                                                BOOLEAN *inherit, BOOLEAN *published )
+{
+    TRACE( "%ld %p %p %p %p\n", session, program, directory, inherit, published );
+
+    if (program) *program = NULL;
+    if (directory) *directory = NULL;
+    if (inherit) *inherit = FALSE;
+    if (published) *published = FALSE;
+    return TRUE;
+}
+
 BOOLEAN WINAPI WinStationEnumerateW( HANDLE server, PSESSIONIDW *sessionids, ULONG *count )
 {
     SESSIONIDW *session;
