@@ -153,11 +153,11 @@ static HBITMAP fit_wallpaper( HBITMAP picture, int style, SIZE screen )
     x = (screen.cx - w) / 2;
     y = (screen.cy - h) / 2;
 
-    screen_dc = GetDC( 0 );
+    screen_dc = NtUserGetDC( 0 );
     fitted = CreateCompatibleBitmap( screen_dc, screen.cx, screen.cy );
     src = CreateCompatibleDC( screen_dc );
     dst = CreateCompatibleDC( screen_dc );
-    ReleaseDC( 0, screen_dc );
+    NtUserReleaseDC( 0, screen_dc );
     if (!fitted || !src || !dst)
     {
         if (fitted) DeleteObject( fitted );
