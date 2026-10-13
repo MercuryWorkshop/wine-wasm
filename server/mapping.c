@@ -1259,6 +1259,105 @@ static enum server_fd_type mapping_get_fd_type( struct fd *fd )
     return FD_TYPE_FILE;
 }
 
+/* Pinned DLL addresses: the config dir's dll-bases file, "ADDRESS UNIXPATH"
+ * lines. Without it, an image's address depends on the order in which the
+ * session's processes first map the images, which varies from run to run;
+ * with it, an image the file names always gets the same address (when that
+ * range is free), so code translated ahead of time for that address is used. */
+static struct pinned_base
+{
+    client_ptr_t addr;
+    char        *name;
+} *pinned_bases;
+static unsigned int pinned_count;
+
+static void load_pinned_bases(void)
+{
+    static int loaded;
+    unsigned int size = 0;
+    char line[1024], name[1024];
+    unsigned long long addr;
+    FILE *f;
+    int fd;
+
+    if (loaded) return;
+    loaded = 1;
+    if (config_dir_fd == -1 || (fd = openat( config_dir_fd, "dll-bases", O_RDONLY )) == -1) return;
+    if (!(f = fdopen( fd, "r" ))) { close( fd ); return; }
+    while (fgets( line, sizeof(line), f ))
+    {
+        if (sscanf( line, "%llx %1023s", &addr, name ) != 2 || (addr & granularity_mask)) continue;
+        if (pinned_count == size)
+        {
+            struct pinned_base *new_bases;
+            size = max( 64, size * 2 );
+            if (!(new_bases = realloc( pinned_bases, size * sizeof(*pinned_bases) ))) break;
+            pinned_bases = new_bases;
+        }
+        if (!(pinned_bases[pinned_count].name = strdup( name ))) break;
+        pinned_bases[pinned_count++].addr = addr;
+    }
+    fclose( f );
+}
+
+/* the pinned address of an image, taken out of the free ranges, or 0 */
+static client_ptr_t pinned_map_address( struct mapping *mapping, struct addr_range *range, mem_size_t size )
+{
+    const char *name = get_fd_unix_name( mapping->fd );
+    client_ptr_t addr = 0, end;
+    unsigned int i;
+
+    load_pinned_bases();
+    if (!name) return 0;
+    for (i = 0; i < pinned_count; i++)
+        if (!strcmp( pinned_bases[i].name, name )) { addr = pinned_bases[i].addr; break; }
+    if (!addr) return 0;
+    end = addr + size;
+
+    /* the free ranges are in decreasing order of address */
+    for (i = 0; i < range->count; i++)
+    {
+        client_ptr_t base = range->free[i].base, top = base + range->free[i].size;
+
+        if (base > addr) continue;
+        if (top < end) return 0;  /* not free (some other image has it) */
+        if (base < addr)  /* the free part below stays, after the part above */
+        {
+            if (top > end)
+            {
+                if (range->count == range->size)
+                {
+                    unsigned int new_size = max( 256, range->size * 2 );
+                    void *new_free = realloc( range->free, new_size * sizeof(*range->free) );
+                    if (!new_free) return 0;
+                    range->size = new_size;
+                    range->free = new_free;
+                }
+                memmove( &range->free[i + 1], &range->free[i], (range->count - i) * sizeof(*range->free) );
+                range->count++;
+                range->free[i].base = end;
+                range->free[i].size = top - end;
+                i++;
+            }
+            range->free[i].base = base;
+            range->free[i].size = addr - base;
+        }
+        else if (top > end)
+        {
+            range->free[i].base = end;
+            range->free[i].size = top - end;
+        }
+        else
+        {
+            range->count--;
+            memmove( &range->free[i], &range->free[i + 1], (range->count - i) * sizeof(*range->free) );
+        }
+        set_fd_map_address( mapping->fd, addr, size );
+        return addr;
+    }
+    return 0;
+}
+
 /* assign a mapping address to a PE image mapping */
 static client_ptr_t assign_map_address( struct mapping *mapping )
 {
@@ -1272,6 +1371,8 @@ static client_ptr_t assign_map_address( struct mapping *mapping )
     if ((ret = get_fd_map_address( mapping->fd ))) return ret;
 
     size += granularity_mask + 1;  /* leave some free space between mappings */
+
+    if ((ret = pinned_map_address( mapping, range, size ))) return ret;
 
     for (i = 0; i < range->count; i++)
     {
