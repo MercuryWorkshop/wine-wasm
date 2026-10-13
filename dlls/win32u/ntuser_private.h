@@ -54,8 +54,14 @@ typedef struct tagWND
     POINT              max_pos;       /* Position for maximized window */
     WCHAR             *text;          /* Window text */
     struct win_scroll_bar_info *pScroll; /* Scroll-bar info */
-    UINT               dwStyle;       /* Window style (from CreateWindow) */
+    /* GetWindowLongPtr( hwnd, -1 ) (GWLP_WOWWORDS) returns &wow_state: the native
+     * comctl32 6.10 controls read the styles through it, at the offsets of the
+     * Windows WND (state, state2, ExStyle at +8, style at +12, more after). */
+    UINT               wow_state;     /* WND state bits (always 0 here) */
+    UINT               wow_state2;    /* WND state2 bits (always 0 here) */
     UINT               dwExStyle;     /* Extended style (from CreateWindowEx) */
+    UINT               dwStyle;       /* Window style (from CreateWindow) */
+    UINT               wow_tail[16];  /* the WND fields after style (zero here) */
     UINT               helpContext;   /* Help context ID */
     UINT               flags;         /* Misc. flags (see below) */
     HMENU              hSysMenu;      /* window's copy of System Menu */
