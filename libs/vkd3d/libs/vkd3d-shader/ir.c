@@ -1561,12 +1561,14 @@ static enum vkd3d_result vsir_program_normalize_addr(struct vsir_program *progra
 
     for (ins = vsir_program_iterator_head(&it); ins; ins = vsir_program_iterator_next(&it))
     {
+        /* Signed: an address can be negative, a relative index then wrapping
+         * below its base (a target's float-to-unsigned may saturate). */
         if (ins->opcode == VSIR_OP_MOV && ins->dst[0].reg.type == VSIR_REGISTER_ADDR)
         {
             if (tmp_idx == ~0u)
                 tmp_idx = program->temp_count++;
 
-            ins->opcode = VSIR_OP_FTOU;
+            ins->opcode = VSIR_OP_FTOI;
             vsir_operand_init(&ins->dst[0].reg, VSIR_REGISTER_TEMP, VSIR_DATA_U32, 1);
             ins->dst[0].reg.idx[0].offset = tmp_idx;
             ins->dst[0].reg.dimension = VSIR_DIMENSION_VEC4;
@@ -1586,7 +1588,7 @@ static enum vkd3d_result vsir_program_normalize_addr(struct vsir_program *progra
             ins->dst[0].reg.dimension = VSIR_DIMENSION_VEC4;
 
             ins2 = vsir_program_iterator_next(&it);
-            if (!vsir_instruction_init_with_params(program, ins2, &ins->location, VSIR_OP_FTOU, 1, 1))
+            if (!vsir_instruction_init_with_params(program, ins2, &ins->location, VSIR_OP_FTOI, 1, 1))
                 return VKD3D_ERROR_OUT_OF_MEMORY;
 
             vsir_operand_init(&ins2->dst[0].reg, VSIR_REGISTER_TEMP, VSIR_DATA_U32, 1);
