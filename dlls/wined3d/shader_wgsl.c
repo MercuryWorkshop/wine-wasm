@@ -120,6 +120,76 @@ static void shader_wgsl_handle_instruction(const struct wined3d_shader_instructi
 {
 }
 
+/* The varying map between a Direct3D 9 vertex and pixel shader, with the
+ * fog varying they will have: vkd3d adds a FOG output to the vertex shader
+ * for some fog sources and a FOG input to the pixel shader for fragment fog,
+ * after the signatures were scanned, and a varying in neither signature
+ * would be left unlinked (the pixel shader reading zero). The elements go
+ * where vkd3d puts them: last in the output signature, and in the input
+ * signature at the register after the highest. */
+static void shader_wgsl_build_varying_map(const struct wined3d_context *context, const struct wined3d_state *state,
+        const struct wined3d_shader *ps, enum vkd3d_shader_fog_source fog_source,
+        const struct vkd3d_shader_signature *vs_output, const struct vkd3d_shader_signature *ps_input,
+        unsigned int *count, struct vkd3d_shader_varying_map *map)
+{
+    struct vkd3d_shader_signature_element out_elements[MAX_REG_OUTPUT + 2], in_elements[MAX_SM1_INTER_STAGE_VARYINGS + 1];
+    struct vkd3d_shader_signature out = *vs_output, in = *ps_input;
+    static const struct vkd3d_shader_signature_element fog =
+    {
+        .semantic_name = "FOG",
+        .component_type = VKD3D_SHADER_COMPONENT_FLOAT,
+        .mask = 0x1,
+        .used_mask = 0x1,
+    };
+    struct ps_compile_args ps_args;
+    unsigned int i, max_register = 0;
+    bool has_fog = false, has_specular = false, ps_has_fog = false;
+
+    for (i = 0; i < vs_output->element_count; ++i)
+    {
+        const struct vkd3d_shader_signature_element *e = &vs_output->elements[i];
+
+        if (!_stricmp(e->semantic_name, "FOG") && !e->semantic_index)
+            has_fog = true;
+        if (!_stricmp(e->semantic_name, "COLOR") && e->semantic_index == 1)
+            has_specular = true;
+    }
+    if (!has_fog && vs_output->element_count < ARRAY_SIZE(out_elements)
+            && fog_source != VKD3D_SHADER_FOG_SOURCE_FOG
+            && (fog_source != VKD3D_SHADER_FOG_SOURCE_FOG_OR_SPECULAR_W || has_specular))
+    {
+        memcpy(out_elements, vs_output->elements, vs_output->element_count * sizeof(*out_elements));
+        out_elements[out.element_count++] = fog;
+        out.elements = out_elements;
+    }
+
+    for (i = 0; i < ps_input->element_count; ++i)
+    {
+        const struct vkd3d_shader_signature_element *e = &ps_input->elements[i];
+
+        if (!_stricmp(e->semantic_name, "FOG") && !e->semantic_index)
+            ps_has_fog = true;
+        max_register = max(max_register, e->register_index + 1);
+    }
+    find_ps_compile_args(state, ps, state->vertex_declaration && state->vertex_declaration->position_transformed,
+            &ps_args, context);
+    if (!ps_has_fog && ps_args.fog != WINED3D_FFP_PS_FOG_OFF && ps_input->element_count < ARRAY_SIZE(in_elements))
+    {
+        memcpy(in_elements, ps_input->elements, ps_input->element_count * sizeof(*in_elements));
+        in_elements[in.element_count] = fog;
+        in_elements[in.element_count++].register_index = max_register;
+        in.elements = in_elements;
+    }
+
+    vkd3d_shader_build_varying_map(&out, &in, count, map);
+    TRACE("fog source %#x, vs fog %u (+%u), ps fog %u (+%u, ps args fog %#x), %u varyings.\n", fog_source, has_fog,
+            out.element_count - vs_output->element_count, ps_has_fog, in.element_count - ps_input->element_count,
+            ps_args.fog, *count);
+    for (i = 0; i < *count; ++i)
+        TRACE("  output %u -> register %u mask %#x.\n", map[i].output_signature_index,
+                map[i].input_register_index, map[i].input_mask);
+}
+
 static void shader_wgsl_compile_arguments_init(struct shader_wgsl_compile_arguments *args,
         const struct wined3d_context *context, const struct wined3d_shader *shader,
         const struct wined3d_state *state, unsigned int sample_count,
@@ -140,19 +210,6 @@ static void shader_wgsl_compile_arguments_init(struct shader_wgsl_compile_argume
         {
             struct wined3d_shader *ps = state->shader[WINED3D_SHADER_TYPE_PIXEL];
 
-            if (shader->reg_maps.shader_version.major < 4 && ps && ps->backend_data)
-            {
-                struct shader_wgsl_graphics_program *vs_program = shader->backend_data;
-                struct shader_wgsl_graphics_program *ps_program = ps->backend_data;
-
-                if (ps_program->signature_info.input.element_count > ARRAY_SIZE(args->u.vs.varying_map))
-                    ERR("Unexpected inter-stage varying count %u.\n", ps_program->signature_info.input.element_count);
-                else
-                    vkd3d_shader_build_varying_map(&vs_program->signature_info.output,
-                            &ps_program->signature_info.input, &args->u.vs.varying_count, args->u.vs.varying_map);
-            }
-
-            args->u.vs.clip_planes = state->extra_vs_args.clip_planes;
             /* Table fog reads the depth, Z when orthographic; vertex fog the
              * fog output. */
             if (state->extra_vs_args.pixel_fog)
@@ -160,6 +217,21 @@ static void shader_wgsl_compile_arguments_init(struct shader_wgsl_compile_argume
                         ? VKD3D_SHADER_FOG_SOURCE_Z : VKD3D_SHADER_FOG_SOURCE_W;
             else
                 args->u.vs.fog_source = VKD3D_SHADER_FOG_SOURCE_FOG_OR_SPECULAR_W;
+
+            if (shader->reg_maps.shader_version.major < 4 && ps && ps->backend_data)
+            {
+                struct shader_wgsl_graphics_program *vs_program = shader->backend_data;
+                struct shader_wgsl_graphics_program *ps_program = ps->backend_data;
+
+                if (ps_program->signature_info.input.element_count + 1 > ARRAY_SIZE(args->u.vs.varying_map))
+                    ERR("Unexpected inter-stage varying count %u.\n", ps_program->signature_info.input.element_count);
+                else
+                    shader_wgsl_build_varying_map(context, state, ps, args->u.vs.fog_source,
+                            &vs_program->signature_info.output, &ps_program->signature_info.input,
+                            &args->u.vs.varying_count, args->u.vs.varying_map);
+            }
+
+            args->u.vs.clip_planes = state->extra_vs_args.clip_planes;
             if (ps_interpolation)
             {
                 args->u.vs.flat_mask = ps_interpolation->flat_mask;
