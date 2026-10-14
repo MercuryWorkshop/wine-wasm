@@ -725,6 +725,18 @@ GLuint *map_context_objects( enum object_type type, UINT n, GLuint *handles )
     if (!handles || !(ctx = get_current_context())) return handles;
     if (!(table = get_object_table( ctx, type, FALSE ))) return handles;
 
+#ifdef __wasm32__
+    /* Until a table allows implicit allocation, every client id is its host
+     * id (alloc_client_id), so the walk would hand each one back unchanged.
+     * Only an id never created, or deleted, differs: the walk maps it to -1
+     * and the host is left to reject the raw id instead, as it would the -1.
+     * Framebuffers and renderbuffers keep the walk, since win32u creates
+     * host ones of its own that a stray client id must not reach. implicit
+     * only goes from FALSE to TRUE, under the exclusive lock. */
+    if (!ReadNoFence( (LONG *)&table->implicit ) && type != OBJ_TYPE_FRAMEBUFFER && type != OBJ_TYPE_RENDERBUFFER)
+        return handles;
+#endif
+
     AcquireSRWLockShared( &table->lock );
     while (n--) handles[n] = handles[n] ? get_object( table, handles[n], FALSE ) : 0;
     ReleaseSRWLockShared( &table->lock );
