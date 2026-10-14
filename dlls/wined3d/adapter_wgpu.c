@@ -92,8 +92,10 @@ static void wgpu_device_lost_callback(WGPUDevice const *device, WGPUDeviceLostRe
         WGPUStringView message, void *userdata1, void *userdata2)
 {
     if (reason != WGPUDeviceLostReason_Destroyed)
-        ERR("WebGPU device lost, reason %#x: %s.\n", reason,
+        ERR("WebGPU device %p lost, reason %#x: %s.\n", device ? *device : NULL, reason,
                 debugstr_an(message.data, message.data ? (int)message.length : 0));
+    else
+        TRACE("WebGPU device %p destroyed.\n", device ? *device : NULL);
 }
 
 static void wgpu_uncaptured_error_callback(WGPUDevice const *device, WGPUErrorType type,
@@ -1075,7 +1077,10 @@ static void adapter_wgpu_draw_primitive(struct wined3d_device *device,
                     instance_count, parameters->u.direct.start_idx, parameters->u.direct.start_instance);
     }
 
-    ++context_wgpu->work_count;
+    /* A command buffer of tens of thousands of draws can take the GPU long
+     * enough that the system gives up on the device: submit as we go. */
+    if (++context_wgpu->work_count >= WINED3D_WGPU_PERIODIC_SUBMIT_WORK_COUNT)
+        wined3d_context_wgpu_submit(context_wgpu);
 
     context_release(&context_wgpu->c);
 }
@@ -1116,7 +1121,10 @@ static void adapter_wgpu_dispatch_compute(struct wined3d_device *device,
                 direct->group_count_x, direct->group_count_y, direct->group_count_z);
     }
 
-    ++context_wgpu->work_count;
+    /* A command buffer of tens of thousands of draws can take the GPU long
+     * enough that the system gives up on the device: submit as we go. */
+    if (++context_wgpu->work_count >= WINED3D_WGPU_PERIODIC_SUBMIT_WORK_COUNT)
+        wined3d_context_wgpu_submit(context_wgpu);
 
     context_release(&context_wgpu->c);
 }

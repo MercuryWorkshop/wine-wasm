@@ -21,15 +21,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d);
 
-/* Submitted encoders whose completion is awaited. */
-struct wined3d_submission_wgpu
-{
-    uint64_t encoder_id;
-    WGPUFuture future;
-};
-
-static struct wined3d_submission_wgpu submissions[64];
-static unsigned int submission_head, submission_count;
 
 static WGPUBlendFactor wgpu_blend_factor_from_wined3d(enum wined3d_blend blend,
         const struct wined3d_format *dst_format, bool alpha)
@@ -240,10 +231,11 @@ static void wgpu_work_done_callback(WGPUQueueWorkDoneStatus status, WGPUStringVi
 
 static void wined3d_context_wgpu_retire_submissions(struct wined3d_context_wgpu *context_wgpu)
 {
-    while (submission_count && submissions[submission_head].encoder_id <= context_wgpu->completed_encoder_id)
+    while (context_wgpu->submission_count
+            && context_wgpu->submissions[context_wgpu->submission_head].encoder_id <= context_wgpu->completed_encoder_id)
     {
-        submission_head = (submission_head + 1) % ARRAY_SIZE(submissions);
-        --submission_count;
+        context_wgpu->submission_head = (context_wgpu->submission_head + 1) % ARRAY_SIZE(context_wgpu->submissions);
+        --context_wgpu->submission_count;
     }
 }
 
@@ -269,16 +261,16 @@ void wined3d_context_wgpu_submit(struct wined3d_context_wgpu *context_wgpu)
 
     /* Wait on the oldest when the ring is full. */
     wined3d_context_wgpu_retire_submissions(context_wgpu);
-    if (submission_count == ARRAY_SIZE(submissions))
-        wined3d_context_wgpu_wait(context_wgpu, submissions[submission_head].encoder_id);
+    if (context_wgpu->submission_count == ARRAY_SIZE(context_wgpu->submissions))
+        wined3d_context_wgpu_wait(context_wgpu, context_wgpu->submissions[context_wgpu->submission_head].encoder_id);
 
     callback_info.mode = WGPUCallbackMode_AllowProcessEvents;
     callback_info.callback = wgpu_work_done_callback;
     callback_info.userdata1 = context_wgpu;
     callback_info.userdata2 = (void *)(uintptr_t)context_wgpu->encoder_id;
-    idx = (submission_head + submission_count++) % ARRAY_SIZE(submissions);
-    submissions[idx].encoder_id = context_wgpu->encoder_id;
-    submissions[idx].future = wgpuQueueOnSubmittedWorkDone(device_wgpu->queue, callback_info);
+    idx = (context_wgpu->submission_head + context_wgpu->submission_count++) % ARRAY_SIZE(context_wgpu->submissions);
+    context_wgpu->submissions[idx].encoder_id = context_wgpu->encoder_id;
+    context_wgpu->submissions[idx].future = wgpuQueueOnSubmittedWorkDone(device_wgpu->queue, callback_info);
 
     context_wgpu->submitted_encoder_id = context_wgpu->encoder_id++;
     context_wgpu->work_count = 0;
@@ -315,9 +307,9 @@ void wined3d_context_wgpu_wait(struct wined3d_context_wgpu *context_wgpu, uint64
     if (encoder_id >= context_wgpu->encoder_id)
         wined3d_context_wgpu_submit(context_wgpu);
 
-    while (context_wgpu->completed_encoder_id < encoder_id && submission_count)
+    while (context_wgpu->completed_encoder_id < encoder_id && context_wgpu->submission_count)
     {
-        struct wined3d_submission_wgpu *s = &submissions[submission_head];
+        struct wined3d_submission_wgpu *s = &context_wgpu->submissions[context_wgpu->submission_head];
 
         if (!wined3d_context_wgpu_wait_future(context_wgpu, s->future))
             wined3d_context_wgpu_poll(context_wgpu);
@@ -1952,6 +1944,8 @@ void wined3d_context_wgpu_cleanup(struct wined3d_context_wgpu *context_wgpu)
 
     wined3d_context_wgpu_submit(context_wgpu);
     wined3d_context_wgpu_wait(context_wgpu, context_wgpu->submitted_encoder_id);
+    /* The work-done callbacks name this context: none may fire after it. */
+    wgpuInstanceProcessEvents(context_wgpu->wgpu_info->instance);
 
     free(context_wgpu->graphics.bindings.bindings);
     free(context_wgpu->graphics.bindings.entries);
