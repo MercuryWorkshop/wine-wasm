@@ -45,33 +45,48 @@ static BOOL driver_draws_glass(void)
 }
 
 /* The colorization, as Windows 7 keeps it; its default is "sky". */
-static void get_colorization( DWORD *argb, DWORD *balance, DWORD *blur_balance )
+struct colorization
 {
-    DWORD size;
+    DWORD argb, balance, blur_balance, afterglow, afterglow_balance;
+};
+
+static void get_colorization( struct colorization *c )
+{
+    static const struct { const WCHAR *name; size_t offset; } values[] =
+    {
+        { L"ColorizationColor", offsetof(struct colorization, argb) },
+        { L"ColorizationColorBalance", offsetof(struct colorization, balance) },
+        { L"ColorizationBlurBalance", offsetof(struct colorization, blur_balance) },
+        { L"ColorizationAfterglow", offsetof(struct colorization, afterglow) },
+        { L"ColorizationAfterglowBalance", offsetof(struct colorization, afterglow_balance) },
+    };
+    DWORD size, i;
     HKEY key;
 
-    *argb = 0x6b74b8fc;
-    *balance = 8;
-    *blur_balance = 49;
+    c->argb = c->afterglow = 0x6b74b8fc;
+    c->balance = 8;
+    c->blur_balance = 49;
+    c->afterglow_balance = 43;
     if (RegOpenKeyExW( HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\DWM", 0, KEY_READ, &key )) return;
-    size = sizeof(*argb);
-    RegQueryValueExW( key, L"ColorizationColor", NULL, NULL, (BYTE *)argb, &size );
-    size = sizeof(*balance);
-    RegQueryValueExW( key, L"ColorizationColorBalance", NULL, NULL, (BYTE *)balance, &size );
-    size = sizeof(*blur_balance);
-    RegQueryValueExW( key, L"ColorizationBlurBalance", NULL, NULL, (BYTE *)blur_balance, &size );
+    for (i = 0; i < ARRAY_SIZE(values); i++)
+    {
+        size = sizeof(DWORD);
+        RegQueryValueExW( key, values[i].name, NULL, NULL, (BYTE *)c + values[i].offset, &size );
+    }
     RegCloseKey( key );
 }
 
 static BOOL set_glass( HWND hwnd, struct set_window_glass_params *params )
 {
-    DWORD argb, balance, blur_balance;
+    struct colorization c;
 
-    get_colorization( &argb, &balance, &blur_balance );
+    get_colorization( &c );
     params->mask |= WINDOW_GLASS_COLORIZATION;
-    params->argb = argb;
-    params->balance = min( balance, 100 );
-    params->blur_balance = min( blur_balance, 100 );
+    params->argb = c.argb;
+    params->balance = min( c.balance, 100 );
+    params->blur_balance = min( c.blur_balance, 100 );
+    params->afterglow = c.afterglow;
+    params->afterglow_balance = min( c.afterglow_balance, 100 );
     return NtUserSetWindowGlass( hwnd, params );
 }
 
@@ -134,7 +149,7 @@ HRESULT WINAPI DwmExtendFrameIntoClientArea(HWND hwnd, const MARGINS* margins)
  */
 HRESULT WINAPI DwmGetColorizationColor(DWORD *colorization, BOOL *opaque_blend)
 {
-    DWORD balance, blur_balance;
+    struct colorization c;
 
     TRACE("(%p, %p)\n", colorization, opaque_blend);
 
@@ -144,7 +159,8 @@ HRESULT WINAPI DwmGetColorizationColor(DWORD *colorization, BOOL *opaque_blend)
         FIXME("(%p, %p) stub\n", colorization, opaque_blend);
         return E_NOTIMPL;
     }
-    get_colorization( colorization, &balance, &blur_balance );
+    get_colorization( &c );
+    *colorization = c.argb;
     *opaque_blend = FALSE;
     return S_OK;
 }
@@ -452,8 +468,36 @@ HRESULT WINAPI DwmSetIconicThumbnail(HWND hwnd, HBITMAP hbmp, DWORD flags)
  */
 HRESULT WINAPI DwmpGetColorizationParameters(void *params)
 {
-    FIXME("(%p) stub\n", params);
-    return E_NOTIMPL;
+    /* Windows 7's DWM_COLORIZATION_PARAMS, as the personalization page reads it */
+    struct
+    {
+        COLORREF color;
+        COLORREF afterglow;
+        UINT intensity;
+        UINT afterglow_balance;
+        UINT blur_balance;
+        UINT reflection_intensity;
+        BOOL opaque;
+    } *out = params;
+    struct colorization c;
+
+    TRACE("(%p)\n", params);
+
+    if (!out) return E_INVALIDARG;
+    if (!driver_draws_glass())
+    {
+        FIXME("(%p) stub\n", params);
+        return E_NOTIMPL;
+    }
+    get_colorization( &c );
+    out->color = c.argb;
+    out->afterglow = c.afterglow;
+    out->intensity = c.balance;
+    out->afterglow_balance = c.afterglow_balance;
+    out->blur_balance = c.blur_balance;
+    out->reflection_intensity = 0;
+    out->opaque = FALSE;
+    return S_OK;
 }
 
 /**********************************************************************

@@ -370,7 +370,7 @@ struct window_glass
 {
     RECT rects[5];
     UINT count;
-    UINT argb, balance, blur_balance;
+    UINT argb, balance, blur_balance, afterglow, afterglow_balance;
     UINT frame;             /* WINDOW_GLASS_DRAW_* */
     RECT buttons[3];        /* close, maximize, minimize */
     UINT button_states[3];  /* 0 none, 1 normal, 2 hot, 3 pushed, 4 disabled */
