@@ -368,6 +368,225 @@ static void wgpu_readback_callback(WGPUMapAsyncStatus status, WGPUStringView mes
     *(WGPUMapAsyncStatus *)userdata1 = status;
 }
 
+static WGPURenderPipeline wgpu_depth_read_pipeline(struct wined3d_device_wgpu *device_wgpu)
+{
+    static const char code[] =
+        "@group(0) @binding(0) var d: texture_depth_2d;\n"
+        "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+        "    let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+        "    return vec4f(p * vec2f(2.0, -2.0) + vec2f(-1.0, 1.0), 0.0, 1.0);\n"
+        "}\n"
+        "@fragment fn fs(@builtin(position) p: vec4f) -> @location(0) vec4f {\n"
+        "    return vec4f(textureLoad(d, vec2i(p.xy), 0), 0.0, 0.0, 0.0);\n"
+        "}\n";
+    struct wined3d_null_resources_wgpu *r = &device_wgpu->null_resources;
+    WGPURenderPipelineDescriptor desc = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;
+    WGPUShaderModuleDescriptor module_desc = WGPU_SHADER_MODULE_DESCRIPTOR_INIT;
+    WGPUColorTargetState target = WGPU_COLOR_TARGET_STATE_INIT;
+    WGPUFragmentState fragment = WGPU_FRAGMENT_STATE_INIT;
+    WGPUShaderSourceWGSL wgsl = WGPU_SHADER_SOURCE_WGSL_INIT;
+    WGPUShaderModule module;
+
+    if (r->depth_read_pipeline)
+        return r->depth_read_pipeline;
+
+    wgsl.code = wgpu_string(code);
+    module_desc.nextInChain = &wgsl.chain;
+    if (!(module = wgpuDeviceCreateShaderModule(device_wgpu->device, &module_desc)))
+        return NULL;
+    desc.vertex.module = module;
+    desc.vertex.entryPoint = wgpu_string("vs");
+    target.format = WGPUTextureFormat_R32Float;
+    fragment.module = module;
+    fragment.entryPoint = wgpu_string("fs");
+    fragment.targetCount = 1;
+    fragment.targets = &target;
+    desc.fragment = &fragment;
+    r->depth_read_pipeline = wgpuDeviceCreateRenderPipeline(device_wgpu->device, &desc);
+    wgpuShaderModuleRelease(module);
+    return r->depth_read_pipeline;
+}
+
+/* Reads back a depth/stencil sub-resource WebGPU will not copy to a buffer
+ * (depth24plus and its stencil variant): the depth drawn into an r32float
+ * texture and copied from there, the stencil aspect copied as is, both
+ * packed into the format asked for. */
+static bool wined3d_texture_wgpu_download_depth(struct wined3d_context_wgpu *context_wgpu,
+        struct wined3d_texture_wgpu *texture_wgpu, unsigned int sub_resource_idx, const struct wined3d_box *box,
+        const struct wined3d_bo_address *dst_bo_addr, const struct wined3d_format *dst_format,
+        unsigned int dst_row_pitch)
+{
+    struct wined3d_device_wgpu *device_wgpu = wined3d_device_wgpu(context_wgpu->c.device);
+    WGPURenderPassColorAttachment attachment = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
+    WGPUBufferMapCallbackInfo callback_info = WGPU_BUFFER_MAP_CALLBACK_INFO_INIT;
+    WGPUTextureViewDescriptor view_desc = WGPU_TEXTURE_VIEW_DESCRIPTOR_INIT;
+    WGPURenderPassDescriptor pass_desc = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
+    WGPUBindGroupDescriptor group_desc = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
+    WGPUTextureDescriptor texture_desc = WGPU_TEXTURE_DESCRIPTOR_INIT;
+    WGPUBufferDescriptor buffer_desc = WGPU_BUFFER_DESCRIPTOR_INIT;
+    WGPUTexelCopyTextureInfo src = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT;
+    WGPUTexelCopyBufferInfo dst = WGPU_TEXEL_COPY_BUFFER_INFO_INIT;
+    WGPUBindGroupEntry entry = WGPU_BIND_GROUP_ENTRY_INIT;
+    unsigned int level = sub_resource_idx % texture_wgpu->t.level_count;
+    unsigned int layer = sub_resource_idx / texture_wgpu->t.level_count;
+    unsigned int width = wined3d_texture_get_level_width(&texture_wgpu->t, level);
+    unsigned int height = wined3d_texture_get_level_height(&texture_wgpu->t, level);
+    bool stencil = texture_wgpu->format == WGPUTextureFormat_Depth24PlusStencil8
+            || texture_wgpu->format == WGPUTextureFormat_Depth32FloatStencil8;
+    unsigned int depth_pitch = (width * 4 + 255) & ~255u, stencil_pitch = (width + 255) & ~255u;
+    WGPUMapAsyncStatus status = 0;
+    WGPURenderPassEncoder pass;
+    WGPUCommandEncoder encoder;
+    WGPUTextureView depth_view, colour_view;
+    WGPURenderPipeline pipeline;
+    WGPUBuffer readback = NULL;
+    WGPUTexture colour = NULL;
+    WGPUBindGroup group;
+    WGPUExtent3D extent;
+    const uint8_t *data;
+    uint8_t *dst_ptr;
+    size_t dst_size;
+    uint64_t size;
+    unsigned int x, y;
+    bool ret = false;
+
+    switch (dst_format->id)
+    {
+        case WINED3DFMT_D24_UNORM_S8_UINT:
+        case WINED3DFMT_X8D24_UNORM:
+        case WINED3DFMT_R24G8_TYPELESS:
+        case WINED3DFMT_R24_UNORM_X8_TYPELESS:
+        case WINED3DFMT_D32_FLOAT:
+        case WINED3DFMT_R32_FLOAT:
+        case WINED3DFMT_R32_TYPELESS:
+        case WINED3DFMT_D32_FLOAT_S8X24_UINT:
+        case WINED3DFMT_R32G8X24_TYPELESS:
+            break;
+        default:
+            return false;
+    }
+    if (!(pipeline = wgpu_depth_read_pipeline(device_wgpu)))
+        return false;
+
+    texture_desc.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
+    texture_desc.size.width = width;
+    texture_desc.size.height = height;
+    texture_desc.size.depthOrArrayLayers = 1;
+    texture_desc.format = WGPUTextureFormat_R32Float;
+    buffer_desc.usage = WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst;
+    buffer_desc.size = size = (uint64_t)depth_pitch * height + (stencil ? (uint64_t)stencil_pitch * height : 0);
+    if (!(colour = wgpuDeviceCreateTexture(device_wgpu->device, &texture_desc))
+            || !(readback = wgpuDeviceCreateBuffer(device_wgpu->device, &buffer_desc)))
+        goto done;
+
+    view_desc.dimension = WGPUTextureViewDimension_2D;
+    view_desc.aspect = WGPUTextureAspect_DepthOnly;
+    view_desc.baseMipLevel = level;
+    view_desc.mipLevelCount = 1;
+    view_desc.baseArrayLayer = layer;
+    view_desc.arrayLayerCount = 1;
+    depth_view = wgpuTextureCreateView(texture_wgpu->texture, &view_desc);
+    colour_view = wgpuTextureCreateView(colour, NULL);
+    entry.binding = 0;
+    entry.textureView = depth_view;
+    group_desc.layout = wgpuRenderPipelineGetBindGroupLayout(pipeline, 0);
+    group_desc.entryCount = 1;
+    group_desc.entries = &entry;
+    group = wgpuDeviceCreateBindGroup(device_wgpu->device, &group_desc);
+    wgpuBindGroupLayoutRelease(group_desc.layout);
+
+    encoder = wined3d_context_wgpu_get_encoder(context_wgpu);
+    wined3d_context_wgpu_end_passes(context_wgpu);
+    attachment.view = colour_view;
+    attachment.loadOp = WGPULoadOp_Clear;
+    attachment.storeOp = WGPUStoreOp_Store;
+    pass_desc.colorAttachmentCount = 1;
+    pass_desc.colorAttachments = &attachment;
+    pass = wgpuCommandEncoderBeginRenderPass(encoder, &pass_desc);
+    wgpuRenderPassEncoderSetPipeline(pass, pipeline);
+    wgpuRenderPassEncoderSetBindGroup(pass, 0, group, 0, NULL);
+    wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+    wgpuRenderPassEncoderEnd(pass);
+    wgpuRenderPassEncoderRelease(pass);
+
+    extent.width = width;
+    extent.height = height;
+    extent.depthOrArrayLayers = 1;
+    src.texture = colour;
+    dst.buffer = readback;
+    dst.layout.bytesPerRow = depth_pitch;
+    dst.layout.rowsPerImage = height;
+    wgpuCommandEncoderCopyTextureToBuffer(encoder, &src, &dst, &extent);
+    if (stencil)
+    {
+        src.texture = texture_wgpu->texture;
+        src.mipLevel = level;
+        src.origin.z = layer;
+        src.aspect = WGPUTextureAspect_StencilOnly;
+        dst.layout.offset = (uint64_t)depth_pitch * height;
+        dst.layout.bytesPerRow = stencil_pitch;
+        wgpuCommandEncoderCopyTextureToBuffer(encoder, &src, &dst, &extent);
+    }
+    wined3d_context_wgpu_submit(context_wgpu);
+    wgpuBindGroupRelease(group);
+    wgpuTextureViewRelease(colour_view);
+    wgpuTextureViewRelease(depth_view);
+
+    callback_info.mode = WGPUCallbackMode_WaitAnyOnly;
+    callback_info.callback = wgpu_readback_callback;
+    callback_info.userdata1 = &status;
+    if (!wined3d_context_wgpu_wait_future(context_wgpu, wgpuBufferMapAsync(readback, WGPUMapMode_Read, 0, size, callback_info))
+            || status != WGPUMapAsyncStatus_Success || !(data = wgpuBufferGetConstMappedRange(readback, 0, size)))
+    {
+        ERR("Failed to map the readback buffer, status %#x.\n", status);
+        goto done;
+    }
+
+    dst_size = (size_t)dst_row_pitch * (box->bottom - box->top - 1) + (box->right - box->left) * dst_format->byte_count;
+    if ((dst_ptr = wined3d_context_map_bo_address(&context_wgpu->c, dst_bo_addr, dst_size, WINED3D_MAP_WRITE)))
+    {
+        struct wined3d_range range = {0, dst_size};
+
+        for (y = box->top; y < box->bottom; ++y)
+        {
+            const float *d = (const float *)(data + (size_t)y * depth_pitch);
+            const uint8_t *st = stencil ? data + (size_t)depth_pitch * height + (size_t)y * stencil_pitch : NULL;
+            uint8_t *row = dst_ptr + (size_t)(y - box->top) * dst_row_pitch;
+
+            for (x = box->left; x < box->right; ++x)
+            {
+                float z = min(max(d[x], 0.0f), 1.0f);
+                unsigned int s = st ? st[x] : 0;
+
+                switch (dst_format->byte_count)
+                {
+                    case 4:
+                        if (dst_format->id == WINED3DFMT_D32_FLOAT || dst_format->id == WINED3DFMT_R32_FLOAT
+                                || dst_format->id == WINED3DFMT_R32_TYPELESS)
+                            ((float *)row)[x - box->left] = d[x];
+                        else
+                            ((uint32_t *)row)[x - box->left] = ((uint32_t)(z * 16777215.0 + 0.5) & 0xffffff) | (s << 24);
+                        break;
+                    case 8:
+                        ((float *)row)[2 * (x - box->left)] = d[x];
+                        ((uint32_t *)row)[2 * (x - box->left) + 1] = s;
+                        break;
+                }
+            }
+        }
+        wined3d_context_unmap_bo_address(&context_wgpu->c, dst_bo_addr, 1, &range);
+        ret = true;
+    }
+    wgpuBufferUnmap(readback);
+
+done:
+    if (readback)
+        wgpuBufferRelease(readback);
+    if (colour)
+        wgpuTextureRelease(colour);
+    return ret;
+}
+
 static void wined3d_texture_wgpu_download_data(struct wined3d_context *context,
         struct wined3d_texture *src_texture, unsigned int src_sub_resource_idx, unsigned int src_location,
         const struct wined3d_box *src_box, const struct wined3d_bo_address *dst_bo_addr,
@@ -427,7 +646,10 @@ static void wined3d_texture_wgpu_download_data(struct wined3d_context *context,
 
     if (!wgpu_format_is_copyable(src_texture_wgpu->format, false))
     {
-        FIXME("Cannot read back format %s.\n", debug_d3dformat(src_texture->resource.format->id));
+        if (!wgpu_format_is_depth(src_texture_wgpu->format) || src_texture->resource.type == WINED3D_RTYPE_TEXTURE_3D
+                || !wined3d_texture_wgpu_download_depth(context_wgpu, src_texture_wgpu, src_sub_resource_idx,
+                src_box, dst_bo_addr, dst_format, dst_row_pitch))
+            FIXME("Cannot read back format %s.\n", debug_d3dformat(src_texture->resource.format->id));
         return;
     }
 
@@ -1256,6 +1478,8 @@ void wined3d_device_wgpu_destroy_null_resources(struct wined3d_device_wgpu *devi
                 wgpuTextureViewRelease(r->views[i][j]);
         }
     }
+    if (r->depth_read_pipeline)
+        wgpuRenderPipelineRelease(r->depth_read_pipeline);
     if (r->depth_2d)
         wgpuTextureViewRelease(r->depth_2d);
     if (r->depth_cube)
