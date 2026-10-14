@@ -1105,7 +1105,9 @@ static void adapter_wgpu_clear_uav(struct wined3d_context *context,
 
 static void adapter_wgpu_generate_mipmap(struct wined3d_context *context, struct wined3d_shader_resource_view *view)
 {
-    FIXME("context %p, view %p, not implemented.\n", context, view);
+    TRACE("context %p, view %p.\n", context, view);
+
+    wined3d_texture_wgpu_generate_mipmaps(wined3d_context_wgpu(context), view);
 }
 
 static const struct wined3d_adapter_ops wined3d_adapter_wgpu_ops =
