@@ -25,6 +25,7 @@
 #include "wined3d_private.h"
 #include "wined3d_gl.h"
 #include "wined3d_vk.h"
+#include "wined3d_wgpu.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d);
 
@@ -1332,6 +1333,122 @@ void wined3d_buffer_vk_barrier(struct wined3d_buffer_vk *buffer_vk,
                 vk_pipeline_stage_mask_from_bind_flags(bind_mask),
                 0, 0, NULL, 1, &vk_barrier, 0, NULL));
     }
+}
+
+static WGPUBufferUsage wgpu_buffer_usage_from_bind_flags(uint32_t bind_flags)
+{
+    WGPUBufferUsage usage = WGPUBufferUsage_CopySrc | WGPUBufferUsage_CopyDst;
+
+    if (bind_flags & WINED3D_BIND_VERTEX_BUFFER)
+        usage |= WGPUBufferUsage_Vertex;
+    if (bind_flags & WINED3D_BIND_INDEX_BUFFER)
+        usage |= WGPUBufferUsage_Index;
+    if (bind_flags & WINED3D_BIND_CONSTANT_BUFFER)
+        usage |= WGPUBufferUsage_Uniform;
+    if (bind_flags & (WINED3D_BIND_SHADER_RESOURCE | WINED3D_BIND_UNORDERED_ACCESS))
+        usage |= WGPUBufferUsage_Storage;
+    if (bind_flags & WINED3D_BIND_INDIRECT_BUFFER)
+        usage |= WGPUBufferUsage_Indirect;
+    return usage;
+}
+
+static BOOL wined3d_buffer_wgpu_create_buffer_object(struct wined3d_buffer_wgpu *buffer_wgpu,
+        struct wined3d_context_wgpu *context_wgpu)
+{
+    struct wined3d_resource *resource = &buffer_wgpu->b.resource;
+    struct wined3d_bo_wgpu *bo_wgpu;
+
+    if (!(bo_wgpu = malloc(sizeof(*bo_wgpu))))
+        return FALSE;
+
+    if (!wined3d_context_wgpu_create_bo(context_wgpu, resource->size,
+            wgpu_buffer_usage_from_bind_flags(resource->bind_flags), bo_wgpu))
+    {
+        WARN("Failed to create WebGPU buffer.\n");
+        free(bo_wgpu);
+        return FALSE;
+    }
+
+    buffer_wgpu->b.buffer_object = &bo_wgpu->b;
+    buffer_invalidate_bo_range(&buffer_wgpu->b, 0, 0);
+
+    return TRUE;
+}
+
+static BOOL wined3d_buffer_wgpu_prepare_location(struct wined3d_buffer *buffer,
+        struct wined3d_context *context, unsigned int location)
+{
+    switch (location)
+    {
+        case WINED3D_LOCATION_SYSMEM:
+            return wined3d_resource_prepare_sysmem(&buffer->resource);
+
+        case WINED3D_LOCATION_BUFFER:
+            if (buffer->buffer_object)
+                return TRUE;
+
+            return wined3d_buffer_wgpu_create_buffer_object(wined3d_buffer_wgpu(buffer),
+                    wined3d_context_wgpu(context));
+
+        default:
+            FIXME("Unhandled location %s.\n", wined3d_debug_location(location));
+            return FALSE;
+    }
+}
+
+static void wined3d_buffer_wgpu_unload_location(struct wined3d_buffer *buffer,
+        struct wined3d_context *context, unsigned int location)
+{
+    struct wined3d_context_wgpu *context_wgpu = wined3d_context_wgpu(context);
+    struct wined3d_bo_wgpu *bo_wgpu = wined3d_bo_wgpu(buffer->buffer_object);
+
+    TRACE("buffer %p, context %p, location %s.\n", buffer, context, wined3d_debug_location(location));
+
+    switch (location)
+    {
+        case WINED3D_LOCATION_BUFFER:
+            if (buffer->bo_user.valid)
+            {
+                buffer->bo_user.valid = false;
+                list_remove(&buffer->bo_user.entry);
+            }
+            if (!--bo_wgpu->b.refcount)
+            {
+                wined3d_context_wgpu_destroy_bo(context_wgpu, bo_wgpu);
+                free(bo_wgpu);
+            }
+            buffer->buffer_object = NULL;
+            break;
+
+        default:
+            ERR("Unhandled location %s.\n", wined3d_debug_location(location));
+            break;
+    }
+}
+
+static const struct wined3d_buffer_ops wined3d_buffer_wgpu_ops =
+{
+    wined3d_buffer_wgpu_prepare_location,
+    wined3d_buffer_wgpu_unload_location,
+};
+
+HRESULT wined3d_buffer_wgpu_init(struct wined3d_buffer_wgpu *buffer_wgpu, struct wined3d_device *device,
+        const struct wined3d_buffer_desc *desc, const struct wined3d_sub_resource_data *data,
+        void *parent, const struct wined3d_parent_ops *parent_ops)
+{
+    TRACE("buffer_wgpu %p, device %p, desc %p, data %p, parent %p, parent_ops %p.\n",
+            buffer_wgpu, device, desc, data, parent, parent_ops);
+
+    if (desc->bind_flags & WINED3D_BIND_STREAM_OUTPUT)
+    {
+        WARN("WebGPU has no stream output.\n");
+        return WINED3DERR_INVALIDCALL;
+    }
+
+    if (desc->access & WINED3D_RESOURCE_ACCESS_GPU)
+        buffer_wgpu->b.flags |= WINED3D_BUFFER_USE_BO;
+
+    return wined3d_buffer_init(&buffer_wgpu->b, device, desc, data, parent, parent_ops, &wined3d_buffer_wgpu_ops);
 }
 
 HRESULT CDECL wined3d_buffer_create(struct wined3d_device *device, const struct wined3d_buffer_desc *desc,

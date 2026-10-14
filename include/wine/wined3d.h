@@ -59,6 +59,7 @@ enum wined3d_renderer
     WINED3D_RENDERER_VULKAN,
     WINED3D_RENDERER_OPENGL,
     WINED3D_RENDERER_NO3D,
+    WINED3D_RENDERER_WEBGPU,
 };
 
 enum wined3d_light_type

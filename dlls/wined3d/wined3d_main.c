@@ -452,6 +452,11 @@ static BOOL wined3d_dll_init(HINSTANCE hInstDLL)
                 ERR_(winediag)("Using the OpenGL renderer.\n");
                 wined3d_settings.renderer = WINED3D_RENDERER_OPENGL;
             }
+            else if (!strcmp(buffer, "webgpu"))
+            {
+                ERR_(winediag)("Using the WebGPU renderer.\n");
+                wined3d_settings.renderer = WINED3D_RENDERER_WEBGPU;
+            }
             else if (!strcmp(buffer, "gdi") || !strcmp(buffer, "no3d"))
             {
                 ERR_(winediag)("Disabling 3D support.\n");
