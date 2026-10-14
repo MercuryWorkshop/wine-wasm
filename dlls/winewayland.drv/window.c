@@ -232,6 +232,10 @@ static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *dat
      * it as needed. */
     if (data->hwnd == NtUserGetForegroundWindow()) reapply_cursor_clipping();
 
+    if (data->glass_count && !surface->gex_glass_v1)
+        wayland_surface_set_glass(surface, data->glass, data->glass_count, data->glass_argb,
+                                  data->glass_balance, data->glass_blur_balance);
+
     TRACE("hwnd=%p surface=%p=>%p\n", data->hwnd, data->wayland_surface, surface);
     data->wayland_surface = surface;
     return TRUE;
@@ -655,6 +659,32 @@ void WAYLAND_SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha, DWO
     data->layered_attribs_set = TRUE;
 
     wayland_win_data_release(data);
+}
+
+/***********************************************************************
+ *           WAYLAND_SetWindowGlass
+ */
+BOOL WAYLAND_SetWindowGlass(HWND hwnd, const RECT *rects, UINT count, UINT argb, UINT balance, UINT blur_balance)
+{
+    struct wayland_win_data *data;
+
+    if (!hwnd) return process_wayland.gex_glass_manager_v1 != NULL;
+    if (!(data = wayland_win_data_get(hwnd))) return FALSE;
+
+    TRACE("hwnd=%p count=%u argb=%08x\n", hwnd, count, argb);
+    data->glass_count = min(count, ARRAY_SIZE(data->glass));
+    memcpy(data->glass, rects, data->glass_count * sizeof(*rects));
+    data->glass_argb = argb;
+    data->glass_balance = balance;
+    data->glass_blur_balance = blur_balance;
+    if (data->wayland_surface)
+    {
+        wayland_surface_set_glass(data->wayland_surface, data->glass, data->glass_count, argb, balance, blur_balance);
+        wl_display_flush(process_wayland.wl_display);
+    }
+
+    wayland_win_data_release(data);
+    return TRUE;
 }
 
 static enum xdg_toplevel_resize_edge hittest_to_resize_edge(WPARAM hittest)

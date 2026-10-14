@@ -924,6 +924,12 @@ static void nulldrv_WindowPosChanged( HWND hwnd, HWND insert_after, HWND owner_h
 {
 }
 
+static BOOL nulldrv_SetWindowGlass( HWND hwnd, const RECT *rects, UINT count, UINT argb,
+                                    UINT balance, UINT blur_balance )
+{
+    return FALSE;
+}
+
 static BOOL nulldrv_SystemParametersInfo( UINT action, UINT int_param, void *ptr_param, UINT flags )
 {
     return FALSE;
@@ -1249,6 +1255,12 @@ static void loaderdrv_SetWindowRgn( HWND hwnd, HRGN hrgn, BOOL redraw )
     load_driver()->pSetWindowRgn( hwnd, hrgn, redraw );
 }
 
+static BOOL loaderdrv_SetWindowGlass( HWND hwnd, const RECT *rects, UINT count, UINT argb,
+                                      UINT balance, UINT blur_balance )
+{
+    return load_driver()->pSetWindowGlass( hwnd, rects, count, argb, balance, blur_balance );
+}
+
 static void loaderdrv_UpdateLayeredWindow( HWND hwnd, BYTE alpha, UINT flags )
 {
     load_driver()->pUpdateLayeredWindow( hwnd, alpha, flags );
@@ -1336,6 +1348,8 @@ static const struct user_driver_funcs lazy_load_driver =
     nulldrv_CreateWindowSurface,
     nulldrv_MoveWindowBits,
     nulldrv_WindowPosChanged,
+    /* glass */
+    loaderdrv_SetWindowGlass,
     /* system parameters */
     nulldrv_SystemParametersInfo,
     /* wintab support */
@@ -1436,6 +1450,7 @@ void __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT version
     SET_USER_FUNC(CreateWindowSurface);
     SET_USER_FUNC(MoveWindowBits);
     SET_USER_FUNC(WindowPosChanged);
+    SET_USER_FUNC(SetWindowGlass);
     SET_USER_FUNC(SystemParametersInfo);
     SET_USER_FUNC(WintabProc);
     SET_USER_FUNC(VulkanInit);
