@@ -61,6 +61,8 @@
 @ stdcall GetNameInfoW(ptr long ptr long ptr long long)
 @ stdcall InetNtopW(long ptr ptr long)
 @ stdcall InetPtonW(long wstr ptr)
+@ stdcall SetAddrInfoExA(str str ptr long ptr long long ptr ptr ptr ptr ptr)
+@ stdcall SetAddrInfoExW(wstr wstr ptr long ptr long long ptr ptr ptr ptr ptr)
 @ stdcall WSApSetPostRoutine(ptr)
 @ stdcall WPUCompleteOverlappedRequest(long ptr long long ptr)
 @ stdcall WSAAccept(long ptr ptr ptr long)
