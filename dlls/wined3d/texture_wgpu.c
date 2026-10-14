@@ -1090,6 +1090,208 @@ static bool wgpu_clear_rt_now(struct wined3d_device *device, struct wined3d_rend
     return true;
 }
 
+/* A pipeline that writes the blend constant to a colour attachment, or the
+ * viewport's depth and the stencil reference to a depth/stencil one, where
+ * the scissor lets it: a clear of rectangles. */
+static WGPURenderPipeline wgpu_clear_pipeline(struct wined3d_device_wgpu *device_wgpu, WGPUTextureFormat format,
+        unsigned int samples, uint32_t flags)
+{
+    static const char code[] =
+        "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+        "    let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+        "    return vec4f(p * 2.0 - 1.0, 0.0, 1.0);\n"
+        "}\n"
+        "@fragment fn fs() -> @location(0) vec4f {\n"
+        "    return vec4f(1.0);\n"
+        "}\n";
+    struct wined3d_null_resources_wgpu *r = &device_wgpu->null_resources;
+    WGPURenderPipelineDescriptor desc = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;
+    WGPUDepthStencilState ds = WGPU_DEPTH_STENCIL_STATE_INIT;
+    WGPUColorTargetState target = WGPU_COLOR_TARGET_STATE_INIT;
+    WGPUFragmentState fragment = WGPU_FRAGMENT_STATE_INIT;
+    WGPUBlendState blend = WGPU_BLEND_STATE_INIT;
+    WGPURenderPipeline pipeline;
+    unsigned int i;
+
+    for (i = 0; i < ARRAY_SIZE(r->clear_pipelines); ++i)
+    {
+        if (r->clear_pipelines[i].pipeline && r->clear_pipelines[i].format == format
+                && r->clear_pipelines[i].samples == samples && r->clear_pipelines[i].flags == flags)
+            return r->clear_pipelines[i].pipeline;
+    }
+
+    if (!r->clear_module)
+    {
+        WGPUShaderModuleDescriptor module_desc = WGPU_SHADER_MODULE_DESCRIPTOR_INIT;
+        WGPUShaderSourceWGSL wgsl = WGPU_SHADER_SOURCE_WGSL_INIT;
+
+        wgsl.code = wgpu_string(code);
+        module_desc.nextInChain = &wgsl.chain;
+        if (!(r->clear_module = wgpuDeviceCreateShaderModule(device_wgpu->device, &module_desc)))
+            return NULL;
+    }
+
+    desc.vertex.module = r->clear_module;
+    desc.vertex.entryPoint = wgpu_string("vs");
+    desc.multisample.count = samples;
+    if (flags & WINED3DCLEAR_TARGET)
+    {
+        blend.color.srcFactor = WGPUBlendFactor_Constant;
+        blend.color.dstFactor = WGPUBlendFactor_Zero;
+        blend.alpha = blend.color;
+        target.format = format;
+        target.blend = &blend;
+        fragment.module = r->clear_module;
+        fragment.entryPoint = wgpu_string("fs");
+        fragment.targetCount = 1;
+        fragment.targets = &target;
+        desc.fragment = &fragment;
+    }
+    else
+    {
+        ds.format = format;
+        ds.depthWriteEnabled = (flags & WINED3DCLEAR_ZBUFFER) ? WGPUOptionalBool_True : WGPUOptionalBool_False;
+        ds.depthCompare = WGPUCompareFunction_Always;
+        /* Stencil state only where there is a stencil to write. */
+        if (flags & WINED3DCLEAR_STENCIL)
+        {
+            ds.stencilFront.compare = WGPUCompareFunction_Always;
+            ds.stencilFront.passOp = WGPUStencilOperation_Replace;
+            ds.stencilBack = ds.stencilFront;
+            ds.stencilWriteMask = 0xff;
+        }
+        desc.depthStencil = &ds;
+    }
+
+    wined3d_device_wgpu_push_error_scope(device_wgpu);
+    pipeline = wgpuDeviceCreateRenderPipeline(device_wgpu->device, &desc);
+    if (!wined3d_device_wgpu_pop_error_scope(device_wgpu, "a clear pipeline") && pipeline)
+    {
+        wgpuRenderPipelineRelease(pipeline);
+        pipeline = NULL;
+    }
+    if (!pipeline)
+        return NULL;
+
+    i = ARRAY_SIZE(r->clear_pipelines) - 1;
+    if (r->clear_pipelines[i].pipeline)
+        wgpuRenderPipelineRelease(r->clear_pipelines[i].pipeline);
+    memmove(&r->clear_pipelines[1], &r->clear_pipelines[0], i * sizeof(r->clear_pipelines[0]));
+    r->clear_pipelines[0].format = format;
+    r->clear_pipelines[0].samples = samples;
+    r->clear_pipelines[0].flags = flags;
+    r->clear_pipelines[0].pipeline = pipeline;
+    return pipeline;
+}
+
+/* A clear of rectangles of one view, in a pass of its own. */
+static bool wgpu_clear_rects(struct wined3d_device *device, struct wined3d_rendertarget_view *view,
+        unsigned int rect_count, const RECT *clear_rects, const RECT *draw_rect, uint32_t flags,
+        const struct wined3d_color *colour, float depth, unsigned int stencil)
+{
+    WGPURenderPassDepthStencilAttachment ds = WGPU_RENDER_PASS_DEPTH_STENCIL_ATTACHMENT_INIT;
+    WGPURenderPassColorAttachment a = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
+    WGPURenderPassDescriptor desc = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
+    struct wined3d_device_wgpu *device_wgpu = wined3d_device_wgpu(device);
+    struct wined3d_context_wgpu *context_wgpu;
+    unsigned int samples, i, drawn = 0;
+    WGPURenderPipeline pipeline;
+    WGPURenderPassEncoder pass;
+    WGPUCommandEncoder encoder;
+    WGPUTextureFormat format;
+    WGPUTextureView attachment;
+    RECT bounds, r;
+
+    if (view->resource->type == WINED3D_RTYPE_BUFFER || view->resource->type == WINED3D_RTYPE_TEXTURE_3D)
+        return false;
+    /* Integer formats do not blend. */
+    if ((flags & WINED3DCLEAR_TARGET) && (view->format->attrs & WINED3D_FORMAT_ATTR_INTEGER))
+        return false;
+
+    context_wgpu = wined3d_context_wgpu(context_acquire(device, NULL, 0));
+    wined3d_rendertarget_view_load_location(view, &context_wgpu->c, view->resource->draw_binding);
+    if (!(attachment = wined3d_rendertarget_view_wgpu_get_view(wined3d_rendertarget_view_wgpu(view), context_wgpu))
+            || !(encoder = wined3d_context_wgpu_get_encoder(context_wgpu)))
+    {
+        context_release(&context_wgpu->c);
+        return false;
+    }
+    format = wgpuTextureGetFormat(wined3d_texture_wgpu(texture_from_resource(view->resource))->texture);
+    if (flags & WINED3DCLEAR_TARGET)
+    {
+        WGPUTextureFormat view_format = wined3d_format_wgpu(view->format)->texture_format;
+
+        if (view_format == wined3d_format_wgpu(view->resource->format)->srgb_toggle_format)
+            format = view_format;
+    }
+    samples = max(1, wined3d_resource_get_sample_count(view->resource)) > 1 ? 4 : 1;
+    if (!(pipeline = wgpu_clear_pipeline(device_wgpu, format, samples, flags)))
+    {
+        context_release(&context_wgpu->c);
+        return false;
+    }
+    wined3d_context_wgpu_end_passes(context_wgpu);
+
+    if (flags & WINED3DCLEAR_TARGET)
+    {
+        a.view = attachment;
+        a.loadOp = WGPULoadOp_Load;
+        a.storeOp = WGPUStoreOp_Store;
+        desc.colorAttachmentCount = 1;
+        desc.colorAttachments = &a;
+    }
+    else
+    {
+        ds.view = attachment;
+        if (view->format->depth_size)
+        {
+            ds.depthLoadOp = WGPULoadOp_Load;
+            ds.depthStoreOp = WGPUStoreOp_Store;
+        }
+        if (view->format->stencil_size)
+        {
+            ds.stencilLoadOp = WGPULoadOp_Load;
+            ds.stencilStoreOp = WGPUStoreOp_Store;
+        }
+        desc.depthStencilAttachment = &ds;
+    }
+    pass = wgpuCommandEncoderBeginRenderPass(encoder, &desc);
+    wgpuRenderPassEncoderSetPipeline(pass, pipeline);
+    if (flags & WINED3DCLEAR_TARGET)
+    {
+        WGPUColor c;
+
+        wined3d_format_colour_to_wgpu(view->format, colour, &c);
+        wgpuRenderPassEncoderSetBlendConstant(pass, &c);
+    }
+    else
+    {
+        /* The triangle's z is 0: its depth, the viewport's range. */
+        wgpuRenderPassEncoderSetViewport(pass, 0.0f, 0.0f, view->width, view->height,
+                min(max(depth, 0.0f), 1.0f), min(max(depth, 0.0f), 1.0f));
+        wgpuRenderPassEncoderSetStencilReference(pass, stencil);
+    }
+    SetRect(&bounds, 0, 0, view->width, view->height);
+    if (draw_rect)
+        IntersectRect(&bounds, &bounds, draw_rect);
+    for (i = 0; i < rect_count; ++i)
+    {
+        if (!IntersectRect(&r, &clear_rects[i], &bounds))
+            continue;
+        wgpuRenderPassEncoderSetScissorRect(pass, r.left, r.top, r.right - r.left, r.bottom - r.top);
+        wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+        ++drawn;
+    }
+    wgpuRenderPassEncoderEnd(pass);
+    wgpuRenderPassEncoderRelease(pass);
+
+    wined3d_rendertarget_view_validate_location(view, view->resource->draw_binding);
+    wined3d_rendertarget_view_invalidate_location(view, ~view->resource->draw_binding);
+    context_release(&context_wgpu->c);
+    TRACE("Cleared %u of %u rectangles.\n", drawn, rect_count);
+    return true;
+}
+
 static void wgpu_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_device *device,
         unsigned int rt_count, const struct wined3d_fb_state *fb, unsigned int rect_count, const RECT *clear_rects,
         const RECT *draw_rect, uint32_t flags, const struct wined3d_color *colour, float depth, unsigned int stencil)
@@ -1139,6 +1341,11 @@ static void wgpu_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_d
                     && wgpu_clear_rt_now(device, view, colour))
                 continue;
 
+            if (!wined3d_rendertarget_view_use_cpu_clear(view)
+                    && wgpu_clear_rects(device, view, rect_count, clear_rects, draw_rect, WINED3DCLEAR_TARGET,
+                    colour, depth, stencil))
+                continue;
+
             TRACE_(d3d_perf)("Partial clear of render target %u.\n", i);
             next_fb.render_targets[i] = view;
             next_rt_count = i + 1;
@@ -1165,8 +1372,13 @@ static void wgpu_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_d
             wined3d_rendertarget_view_validate_location(view, WINED3D_LOCATION_CLEARED);
             wined3d_rendertarget_view_invalidate_location(view, ~WINED3D_LOCATION_CLEARED);
         }
-        else if (!wined3d_rendertarget_view_is_full_clear(view, draw_rect, clear_rects)
-                || !wgpu_clear_ds_aspect(device, view, flags, depth, stencil))
+        else if ((wined3d_rendertarget_view_is_full_clear(view, draw_rect, clear_rects)
+                && wgpu_clear_ds_aspect(device, view, flags, depth, stencil))
+                || wgpu_clear_rects(device, view, rect_count, clear_rects, draw_rect,
+                flags & (WINED3DCLEAR_ZBUFFER | WINED3DCLEAR_STENCIL), colour, depth, stencil))
+        {
+        }
+        else
         {
             FIXME("Partial depth/stencil clear, flags %#x.\n", flags);
             next_fb.depth_stencil = view;
@@ -1485,6 +1697,13 @@ void wined3d_device_wgpu_destroy_null_resources(struct wined3d_device_wgpu *devi
         if (r->mip_pipelines[i].pipeline)
             wgpuRenderPipelineRelease(r->mip_pipelines[i].pipeline);
     }
+    for (i = 0; i < ARRAY_SIZE(r->clear_pipelines); ++i)
+    {
+        if (r->clear_pipelines[i].pipeline)
+            wgpuRenderPipelineRelease(r->clear_pipelines[i].pipeline);
+    }
+    if (r->clear_module)
+        wgpuShaderModuleRelease(r->clear_module);
     if (r->mip_layout)
         wgpuBindGroupLayoutRelease(r->mip_layout);
     if (r->mip_layout_3d)
@@ -1681,11 +1900,11 @@ void wined3d_texture_wgpu_generate_mipmaps(struct wined3d_context_wgpu *context_
             WGPUBindGroupEntry entry = WGPU_BIND_GROUP_ENTRY_INIT;
             WGPUTextureView src, dst;
             WGPURenderPassEncoder pass;
+            unsigned int slice, slice_count;
             WGPUBindGroup group;
 
             sub_resource_idx = layer * texture->level_count + level;
-            unsigned int slice, slice_count = is_3d ? wined3d_texture_get_level_depth(texture, level) : 1;
-
+            slice_count = is_3d ? wined3d_texture_get_level_depth(texture, level) : 1;
             view_desc.format = format;
             view_desc.dimension = is_3d ? WGPUTextureViewDimension_3D : WGPUTextureViewDimension_2D;
             view_desc.baseMipLevel = level - 1;
