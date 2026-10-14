@@ -924,8 +924,7 @@ static void nulldrv_WindowPosChanged( HWND hwnd, HWND insert_after, HWND owner_h
 {
 }
 
-static BOOL nulldrv_SetWindowGlass( HWND hwnd, const RECT *rects, UINT count, UINT argb,
-                                    UINT balance, UINT blur_balance )
+static BOOL nulldrv_SetWindowGlass( HWND hwnd, const struct window_glass *glass )
 {
     return FALSE;
 }
@@ -1255,10 +1254,9 @@ static void loaderdrv_SetWindowRgn( HWND hwnd, HRGN hrgn, BOOL redraw )
     load_driver()->pSetWindowRgn( hwnd, hrgn, redraw );
 }
 
-static BOOL loaderdrv_SetWindowGlass( HWND hwnd, const RECT *rects, UINT count, UINT argb,
-                                      UINT balance, UINT blur_balance )
+static BOOL loaderdrv_SetWindowGlass( HWND hwnd, const struct window_glass *glass )
 {
-    return load_driver()->pSetWindowGlass( hwnd, rects, count, argb, balance, blur_balance );
+    return load_driver()->pSetWindowGlass( hwnd, glass );
 }
 
 static void loaderdrv_UpdateLayeredWindow( HWND hwnd, BYTE alpha, UINT flags )

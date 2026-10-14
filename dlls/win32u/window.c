@@ -2261,8 +2261,6 @@ static BOOL is_fullscreen( const MONITORINFO *info, const RECT *rect )
  *
  * Backend implementation of SetWindowPos.
  */
-static BOOL update_window_glass( HWND hwnd );
-
 static BOOL apply_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags, struct window_surface *new_surface,
                               const struct window_rects *new_rects, const RECT *valid_rects )
 {
@@ -2452,17 +2450,44 @@ static BOOL apply_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags, stru
     return ret;
 }
 
+/* Whether the display driver draws glass at all; asked once. */
+static BOOL driver_draws_glass(void)
+{
+    static LONG state = -1;
+
+    if (state == -1) state = user_driver->pSetWindowGlass( NULL, NULL ) ? 1 : 0;
+    return state;
+}
+
+/* Whether a window's frame is glass, DWM's way: every captioned top-level
+ * window's, when the driver draws glass, unless the window said otherwise. */
+static BOOL window_has_glass_frame( HWND hwnd, const struct set_window_glass_params *g, DWORD style )
+{
+    if ((g->mask & WINDOW_GLASS_FRAME) && !g->frame) return FALSE;
+    if ((style & WS_CAPTION) != WS_CAPTION || (style & WS_CHILD)) return FALSE;
+    return driver_draws_glass();
+}
+
 /* The rectangles of a window's glass, relative to its visible rect: the
  * frame (if it is glass) and the margins it extends into the client area,
- * as up to four bands, and the blur-behind rectangle. */
-static UINT get_window_glass_rects( const struct set_window_glass_params *g, const struct window_rects *rects,
-                                    RECT *out )
+ * as up to four bands around an inner box, and the blur-behind rectangle. */
+static UINT get_window_glass_rects( HWND hwnd, const struct set_window_glass_params *g,
+                                    const struct window_rects *rects, BOOL frame, RECT *out )
 {
     RECT vis = rects->visible, client = rects->client, outer, inner;
     UINT count = 0;
 
     OffsetRect( &client, -vis.left, -vis.top );
+    if (frame)
+    {
+        /* Inside the borders and caption: a menu bar below the caption is
+         * not glass. */
+        get_glass_frame_inner( hwnd, &inner );
+        OffsetRect( &inner, rects->window.left - vis.left, rects->window.top - vis.top );
+    }
+    else inner = client;
     OffsetRect( &vis, -vis.left, -vis.top );
+    outer = frame ? vis : client;
 
     if ((g->mask & WINDOW_GLASS_MARGINS) && g->margins[0] == -1 && g->margins[1] == -1
             && g->margins[2] == -1 && g->margins[3] == -1)
@@ -2470,17 +2495,17 @@ static UINT get_window_glass_rects( const struct set_window_glass_params *g, con
         out[0] = vis;
         return 1;
     }
-
-    outer = g->frame ? vis : client;
-    inner = client;
     if (g->mask & WINDOW_GLASS_MARGINS)
     {
-        inner.left += max( 0, g->margins[0] );
-        inner.right -= max( 0, g->margins[1] );
-        inner.top += max( 0, g->margins[2] );
-        inner.bottom -= max( 0, g->margins[3] );
-        if (inner.right < inner.left) inner.right = inner.left;
-        if (inner.bottom < inner.top) inner.bottom = inner.top;
+        RECT m = client;
+
+        m.left += max( 0, g->margins[0] );
+        m.right -= max( 0, g->margins[1] );
+        m.top += max( 0, g->margins[2] );
+        m.bottom -= max( 0, g->margins[3] );
+        if (m.right < m.left) m.right = m.left;
+        if (m.bottom < m.top) m.bottom = m.top;
+        if (!intersect_rect( &inner, &inner, &m )) SetRect( &inner, m.left, m.top, m.left, m.top );
     }
     if (g->blur && IsRectEmpty( &g->blur_rect ) && EqualRect( &outer, &vis ))
     {
@@ -2511,36 +2536,75 @@ static UINT get_window_glass_rects( const struct set_window_glass_params *g, con
     return count;
 }
 
-static BOOL update_window_glass( HWND hwnd )
+BOOL update_window_glass( HWND hwnd )
 {
     struct set_window_glass_params glass;
+    struct window_glass draw = {0};
     struct window_rects rects;
-    RECT out[5];
-    UINT count;
+    DWORD style, ex_style;
+    BOOL frame, active;
+    UINT pushed, i;
     WND *win;
 
     if (!(win = get_win_ptr( hwnd )) || win == WND_OTHER_PROCESS || win == WND_DESKTOP) return FALSE;
     glass = win->glass;
     rects = win->rects;
+    style = win->dwStyle;
+    ex_style = win->dwExStyle;
+    active = !!(win->flags & WIN_NCACTIVATED);
+    pushed = win->glass_pushed;
     release_win_ptr( win );
-    if (!glass.mask) return FALSE;
 
-    count = get_window_glass_rects( &glass, &rects, out );
-    if (!(glass.mask & WINDOW_GLASS_COLORIZATION))
+    frame = window_has_glass_frame( hwnd, &glass, style );
+    if (!glass.mask && !frame) return FALSE;
+
+    draw.count = get_window_glass_rects( hwnd, &glass, &rects, frame, draw.rects );
+    if (glass.mask & WINDOW_GLASS_COLORIZATION)
+    {
+        draw.argb = glass.argb;
+        draw.balance = glass.balance;
+        draw.blur_balance = glass.blur_balance;
+    }
+    else
     {
         /* Windows 7's default: sky. */
-        glass.argb = 0x6b74b8fc;
-        glass.balance = 8;
-        glass.blur_balance = 49;
+        draw.argb = 0x6b74b8fc;
+        draw.balance = 8;
+        draw.blur_balance = 49;
     }
-    return user_driver->pSetWindowGlass( hwnd, out, count, glass.argb, glass.balance, glass.blur_balance );
+    if (frame)
+    {
+        draw.frame = WINDOW_GLASS_DRAW_FRAME | (active ? WINDOW_GLASS_DRAW_ACTIVE : 0)
+                | ((style & WS_MAXIMIZE) ? WINDOW_GLASS_DRAW_MAXIMIZED : 0)
+                | ((ex_style & WS_EX_TOOLWINDOW) ? WINDOW_GLASS_DRAW_TOOL : 0);
+        get_caption_buttons( hwnd, draw.buttons, draw.button_states, pushed );
+        for (i = 0; i < 3; i++)
+            OffsetRect( &draw.buttons[i], rects.window.left - rects.visible.left, rects.window.top - rects.visible.top );
+    }
+    return user_driver->pSetWindowGlass( hwnd, &draw );
+}
+
+/* A caption button drawn pushed or released on a glass frame: the driver
+ * draws it so. */
+void set_window_glass_pushed( HWND hwnd, UINT button, BOOL down )
+{
+    UINT old;
+    WND *win;
+
+    if (!driver_draws_glass()) return;
+    if (!(win = get_win_ptr( hwnd )) || win == WND_OTHER_PROCESS || win == WND_DESKTOP) return;
+    old = win->glass_pushed;
+    if (down) win->glass_pushed = button;
+    else if (win->glass_pushed == button) win->glass_pushed = 0;
+    release_win_ptr( win );
+    if (old != (down ? button : 0)) update_window_glass( hwnd );
 }
 
 static BOOL set_window_glass( HWND hwnd, const struct set_window_glass_params *params )
 {
     WND *win;
 
-    if (!hwnd) return user_driver->pSetWindowGlass( NULL, NULL, 0, 0, 0, 0 );
+    if (!hwnd) return driver_draws_glass();
 
     if (!(win = get_win_ptr( hwnd )) || win == WND_OTHER_PROCESS || win == WND_DESKTOP) return FALSE;
     if (params->mask & WINDOW_GLASS_MARGINS) memcpy( win->glass.margins, params->margins, sizeof(params->margins) );
