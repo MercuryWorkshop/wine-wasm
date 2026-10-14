@@ -150,6 +150,23 @@ static const struct wgsl_resource_type_info *wgsl_get_resource_type_info(enum vk
     return &info[t];
 }
 
+/* Whether a resource of type "t" is a 1D one declared as 2D. */
+static bool wgsl_is_1d_as_2d(const struct wgsl_generator *gen, enum vkd3d_shader_resource_type t)
+{
+    return gen->target_info && gen->target_info->textures_1d_as_2d
+            && (t == VKD3D_SHADER_RESOURCE_TEXTURE_1D || t == VKD3D_SHADER_RESOURCE_TEXTURE_1DARRAY);
+}
+
+/* The type a resource is declared as. */
+static enum vkd3d_shader_resource_type wgsl_declared_resource_type(const struct wgsl_generator *gen,
+        enum vkd3d_shader_resource_type t)
+{
+    if (!wgsl_is_1d_as_2d(gen, t))
+        return t;
+    return t == VKD3D_SHADER_RESOURCE_TEXTURE_1D ? VKD3D_SHADER_RESOURCE_TEXTURE_2D
+            : VKD3D_SHADER_RESOURCE_TEXTURE_2DARRAY;
+}
+
 static const char *wgsl_get_prefix(enum vkd3d_shader_type type)
 {
     switch (type)
@@ -724,6 +741,22 @@ static void wgsl_print_src_with_type(struct vkd3d_string_buffer *buffer, struct 
     }
 
     vkd3d_string_buffer_release(&gen->string_buffers, name);
+}
+
+/* A texture coordinate: the components the resource type takes, or for a 1D
+ * resource declared as 2D, x and "y". */
+static void wgsl_print_texture_coord(struct vkd3d_string_buffer *buffer, struct wgsl_generator *gen,
+        const struct vsir_src_operand *src, const struct wgsl_resource_type_info *info,
+        enum vsir_data_type data_type, bool as_2d, const char *y)
+{
+    if (!as_2d)
+    {
+        wgsl_print_src_with_type(buffer, gen, src, vkd3d_write_mask_from_component_count(info->coord_size), data_type);
+        return;
+    }
+    vkd3d_string_buffer_printf(buffer, "vec2<%s>(", wgsl_scalar_name(gen, data_type));
+    wgsl_print_src_with_type(buffer, gen, src, VKD3DSP_WRITEMASK_0, data_type);
+    vkd3d_string_buffer_printf(buffer, ", %s)", y);
 }
 
 static void wgsl_src_init(struct wgsl_src *wgsl_src, struct wgsl_generator *gen,
@@ -1573,7 +1606,6 @@ static void wgsl_ld(struct wgsl_generator *gen, const struct vsir_instruction *i
     struct vkd3d_string_buffer *read;
     unsigned int sample_count = 1;
     enum vsir_data_type data_type;
-    uint32_t coord_mask;
     struct wgsl_dst dst;
 
     if (vsir_instruction_has_texel_offset(ins))
@@ -1606,7 +1638,6 @@ static void wgsl_ld(struct wgsl_generator *gen, const struct vsir_instruction *i
                 "Internal compiler error: Unhandled resource type %#x.", resource_type);
         resource_type_info = wgsl_get_resource_type_info(VKD3D_SHADER_RESOURCE_TEXTURE_2D);
     }
-    coord_mask = vkd3d_write_mask_from_component_count(resource_type_info->coord_size);
 
     if (!wgsl_dst_init(&dst, gen, ins, &ins->dst[0]))
         return;
@@ -1615,7 +1646,8 @@ static void wgsl_ld(struct wgsl_generator *gen, const struct vsir_instruction *i
     vkd3d_string_buffer_printf(read, "textureLoad(");
     wgsl_print_descriptor_name(read, VKD3D_SHADER_DESCRIPTOR_TYPE_SRV, resource_id, resource_idx);
     vkd3d_string_buffer_printf(read, ", ");
-    wgsl_print_src_with_type(read, gen, &ins->src[0], coord_mask, VSIR_DATA_I32);
+    wgsl_print_texture_coord(read, gen, &ins->src[0], resource_type_info, VSIR_DATA_I32,
+            wgsl_is_1d_as_2d(gen, resource_type), "0i");
     if (resource_type_info->array)
     {
         vkd3d_string_buffer_printf(read, ", ");
@@ -1650,7 +1682,6 @@ static void wgsl_sample(struct wgsl_generator *gen, const struct vsir_instructio
     enum vsir_data_type data_type;
     const struct vsir_descriptor *d;
     unsigned int component_idx;
-    uint32_t coord_mask;
     struct wgsl_dst dst;
 
     bias = ins->opcode == VSIR_OP_SAMPLE_B;
@@ -1695,7 +1726,7 @@ static void wgsl_sample(struct wgsl_generator *gen, const struct vsir_instructio
                 "Sampling resource type %#x is not supported.", resource_type);
 
     if ((resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_1D || resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_1DARRAY)
-            && (bias || grad || lod || compare || gather))
+            && !wgsl_is_1d_as_2d(gen, resource_type) && (bias || grad || lod || compare || gather))
         wgsl_compiler_error(gen, VKD3D_SHADER_ERROR_WGSL_UNSUPPORTED,
                 "Resource type %#x supports only plain sampling.", resource_type);
 
@@ -1705,7 +1736,6 @@ static void wgsl_sample(struct wgsl_generator *gen, const struct vsir_instructio
                 "Internal compiler error: Unhandled resource type %#x.", resource_type);
         resource_type_info = wgsl_get_resource_type_info(VKD3D_SHADER_RESOURCE_TEXTURE_2D);
     }
-    coord_mask = vkd3d_write_mask_from_component_count(resource_type_info->coord_size);
 
     wgsl_find_descriptor(gen, VKD3D_SHADER_DESCRIPTOR_TYPE_SAMPLER, sampler, &sampler_id, &sampler_idx);
 
@@ -1737,7 +1767,8 @@ static void wgsl_sample(struct wgsl_generator *gen, const struct vsir_instructio
     vkd3d_string_buffer_printf(sample, ", ");
     wgsl_print_descriptor_name(sample, VKD3D_SHADER_DESCRIPTOR_TYPE_SAMPLER, sampler_id, sampler_idx);
     vkd3d_string_buffer_printf(sample, ", ");
-    wgsl_print_src_with_type(sample, gen, &ins->src[0], coord_mask, VSIR_DATA_F32);
+    wgsl_print_texture_coord(sample, gen, &ins->src[0], resource_type_info, VSIR_DATA_F32,
+            wgsl_is_1d_as_2d(gen, resource_type), "0.5f");
     if (resource_type_info->array)
     {
         vkd3d_string_buffer_printf(sample, ", i32(");
@@ -1753,9 +1784,11 @@ static void wgsl_sample(struct wgsl_generator *gen, const struct vsir_instructio
     if (grad)
     {
         vkd3d_string_buffer_printf(sample, ", ");
-        wgsl_print_src_with_type(sample, gen, &ins->src[3], coord_mask, VSIR_DATA_F32);
+        wgsl_print_texture_coord(sample, gen, &ins->src[3], resource_type_info, VSIR_DATA_F32,
+                wgsl_is_1d_as_2d(gen, resource_type), "0.0f");
         vkd3d_string_buffer_printf(sample, ", ");
-        wgsl_print_src_with_type(sample, gen, &ins->src[4], coord_mask, VSIR_DATA_F32);
+        wgsl_print_texture_coord(sample, gen, &ins->src[4], resource_type_info, VSIR_DATA_F32,
+                wgsl_is_1d_as_2d(gen, resource_type), "0.0f");
     }
     if (lod_zero && !compare)
     {
@@ -1773,7 +1806,10 @@ static void wgsl_sample(struct wgsl_generator *gen, const struct vsir_instructio
     }
     if (offset)
     {
-        if (!resource_type_info->offset)
+        const struct wgsl_resource_type_info *declared_info
+                = wgsl_get_resource_type_info(wgsl_declared_resource_type(gen, resource_type));
+
+        if (!declared_info || !declared_info->offset)
             wgsl_compiler_error(gen, VKD3D_SHADER_ERROR_WGSL_UNSUPPORTED,
                     "Texel sample offsets are not supported with resource type %#x.", resource_type);
         vkd3d_string_buffer_printf(sample, ", ");
@@ -1781,7 +1817,8 @@ static void wgsl_sample(struct wgsl_generator *gen, const struct vsir_instructio
             wgsl_compiler_error(gen, VKD3D_SHADER_ERROR_WGSL_UNSUPPORTED,
                     "Dynamic texel offsets are not supported.");
         else
-            wgsl_print_texel_offset(sample, gen, resource_type_info->coord_size, &ins->texel_offset);
+            wgsl_print_texel_offset(sample, gen, declared_info ? declared_info->coord_size
+                    : resource_type_info->coord_size, &ins->texel_offset);
     }
     vkd3d_string_buffer_printf(sample, ")");
 
@@ -2509,8 +2546,8 @@ static void wgsl_ld_uav_typed(struct wgsl_generator *gen, const struct vsir_inst
     vkd3d_string_buffer_printf(load, "textureLoad(");
     wgsl_print_descriptor_name(load, VKD3D_SHADER_DESCRIPTOR_TYPE_UAV, uav_id, uav_idx);
     vkd3d_string_buffer_printf(load, ", ");
-    wgsl_print_src_with_type(load, gen, &ins->src[0],
-            vkd3d_write_mask_from_component_count(type_info->coord_size), VSIR_DATA_U32);
+    wgsl_print_texture_coord(load, gen, &ins->src[0], type_info, VSIR_DATA_U32,
+            wgsl_is_1d_as_2d(gen, d->resource_type), "0u");
     if (type_info->array)
     {
         vkd3d_string_buffer_printf(load, ", ");
@@ -2555,8 +2592,8 @@ static void wgsl_store_uav_typed(struct wgsl_generator *gen, const struct vsir_i
     vkd3d_string_buffer_printf(gen->buffer, "textureStore(");
     wgsl_print_descriptor_name(gen->buffer, VKD3D_SHADER_DESCRIPTOR_TYPE_UAV, uav_id, uav_idx);
     vkd3d_string_buffer_printf(gen->buffer, ", ");
-    wgsl_print_src_with_type(gen->buffer, gen, &ins->src[0],
-            vkd3d_write_mask_from_component_count(type_info->coord_size), VSIR_DATA_U32);
+    wgsl_print_texture_coord(gen->buffer, gen, &ins->src[0], type_info, VSIR_DATA_U32,
+            wgsl_is_1d_as_2d(gen, d->resource_type), "0u");
     if (type_info->array)
     {
         vkd3d_string_buffer_printf(gen->buffer, ", ");
@@ -2608,11 +2645,12 @@ static void wgsl_resinfo(struct wgsl_generator *gen, const struct vsir_instructi
     switch (wgsl_effective_resource_type(d->resource_type, d->sample_count))
     {
         case VKD3D_SHADER_RESOURCE_TEXTURE_1D:
-            snprintf(dims, sizeof(dims), "textureDimensions(%s%s), 0u, 0u", name, storage ? "" : ", l");
+            snprintf(dims, sizeof(dims), "textureDimensions(%s%s)%s, 0u, 0u", name, storage ? "" : ", l",
+                    wgsl_is_1d_as_2d(gen, d->resource_type) ? ".x" : "");
             break;
         case VKD3D_SHADER_RESOURCE_TEXTURE_1DARRAY:
-            snprintf(dims, sizeof(dims), "textureDimensions(%s%s), textureNumLayers(%s), 0u",
-                    name, storage ? "" : ", l", name);
+            snprintf(dims, sizeof(dims), "textureDimensions(%s%s)%s, textureNumLayers(%s), 0u",
+                    name, storage ? "" : ", l", wgsl_is_1d_as_2d(gen, d->resource_type) ? ".x" : "", name);
             break;
         case VKD3D_SHADER_RESOURCE_TEXTURE_2DMS:
             snprintf(dims, sizeof(dims), "textureDimensions(%s), 0u", name);
@@ -3799,8 +3837,8 @@ static void wgsl_generate_descriptor_declarations(struct wgsl_generator *gen)
                     break;
 
                 case VKD3D_SHADER_DESCRIPTOR_TYPE_SRV:
-                    if (!(type_info = wgsl_get_resource_type_info(
-                            wgsl_effective_resource_type(d->resource_type, d->sample_count))))
+                    if (!(type_info = wgsl_get_resource_type_info(wgsl_declared_resource_type(gen,
+                            wgsl_effective_resource_type(d->resource_type, d->sample_count)))))
                     {
                         wgsl_compiler_error(gen, VKD3D_SHADER_ERROR_WGSL_INTERNAL,
                                 "Internal compiler error: Unhandled resource type %#x.", d->resource_type);
@@ -3866,7 +3904,7 @@ static void wgsl_generate_descriptor_declarations(struct wgsl_generator *gen)
                         wgsl_add_binding(gen, group, binding, VKD3D_SHADER_WGSL_BINDING_STORAGE_BUFFER, d, idx, NULL);
                         break;
                     }
-                    if (!wgsl_storage_texture_suffix(d->resource_type))
+                    if (!wgsl_storage_texture_suffix(wgsl_declared_resource_type(gen, d->resource_type)))
                     {
                         wgsl_compiler_error(gen, VKD3D_SHADER_ERROR_WGSL_UNSUPPORTED,
                                 "Unordered access views of type %#x are not supported.", d->resource_type);
@@ -3874,7 +3912,8 @@ static void wgsl_generate_descriptor_declarations(struct wgsl_generator *gen)
                     }
                     vkd3d_string_buffer_printf(gen->buffer,
                             "@group(%u) @binding(%u) var u%u_%u: texture_storage_%s<%s, %s>;\n\n",
-                            group, binding, d->register_id, idx, wgsl_storage_texture_suffix(d->resource_type),
+                            group, binding, d->register_id, idx,
+                            wgsl_storage_texture_suffix(wgsl_declared_resource_type(gen, d->resource_type)),
                             wgsl_uav_format(gen, d, idx),
                             d->flags & VKD3D_SHADER_DESCRIPTOR_INFO_FLAG_UAV_READ ? "read_write" : "write");
                     wgsl_add_binding(gen, group, binding, d->flags & VKD3D_SHADER_DESCRIPTOR_INFO_FLAG_UAV_READ
