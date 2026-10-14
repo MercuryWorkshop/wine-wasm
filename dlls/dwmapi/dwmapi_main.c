@@ -38,9 +38,11 @@ WINE_DEFAULT_DEBUG_CHANNEL(dwmapi);
  * then composition is on, whatever version is reported. */
 static BOOL driver_draws_glass(void)
 {
-    static LONG state = -1;
+    static LONG state;
 
-    if (state == -1) state = NtUserSetWindowGlass( NULL, NULL ) ? 1 : 0;
+    /* Kept once yes: until a window has loaded the display driver, the
+     * answer is no for now. */
+    if (!state && NtUserSetWindowGlass( NULL, NULL )) state = 1;
     return state;
 }
 
