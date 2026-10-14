@@ -1096,6 +1096,82 @@ static bool wgpu_draw_triangle_fan(struct wined3d_context_wgpu *context_wgpu, co
     return true;
 }
 
+/* Streams WebGPU cannot step as they are, replaced for this draw by copies
+ * made from the buffers' CPU copies: one stepped per instance with a
+ * divisor above 1 (element i of the copy is element i / divisor), and one
+ * whose stride is not a multiple of 4 (repacked to the pipeline's stride). */
+static bool wgpu_expand_vertex_streams(struct wined3d_context_wgpu *context_wgpu, const struct wined3d_state *state,
+        const struct wined3d_draw_parameters *parameters)
+{
+    struct wined3d_device_wgpu *device_wgpu = wined3d_device_wgpu(context_wgpu->c.device);
+    const struct wined3d_graphics_pipeline_key_wgpu *key = &context_wgpu->graphics.key;
+    unsigned int slot, divisor, src_stride, dst_stride, element_size;
+    WGPUBufferDescriptor desc = WGPU_BUFFER_DESCRIPTOR_INIT;
+    const struct wined3d_stream_state *stream;
+    uint64_t i, count, src;
+    struct wined3d_bo_wgpu *bo;
+    WGPUBuffer buffer;
+    uint8_t *data;
+
+    for (slot = 0; slot < key->buffer_count; ++slot)
+    {
+        divisor = context_wgpu->slot_divisor[slot];
+        src_stride = context_wgpu->slot_packed_stride[slot] ? context_wgpu->slot_packed_stride[slot]
+                : key->buffers[slot].stride;
+        dst_stride = key->buffers[slot].stride;
+        if (divisor <= 1 && !context_wgpu->slot_packed_stride[slot])
+            continue;
+        if (parameters->indirect)
+        {
+            FIXME("Indirect draw from a stream WebGPU cannot step.\n");
+            return false;
+        }
+
+        stream = &state->streams[context_wgpu->slot_streams[slot]];
+        if (!stream->buffer || !stream->buffer->buffer_object
+                || !(bo = wined3d_bo_wgpu(stream->buffer->buffer_object))->shadow || bo->gpu_written)
+        {
+            FIXME("Stream without a CPU copy (divisor %u, stride %u).\n", divisor, src_stride);
+            return false;
+        }
+        if (stream->offset >= bo->size || !dst_stride)
+            continue;
+
+        /* As many elements as the draw can read. */
+        if (key->buffers[slot].step_mode == WGPUVertexStepMode_Instance)
+            count = parameters->u.direct.start_instance + max(parameters->u.direct.instance_count, 1);
+        else if (!parameters->indexed)
+            count = parameters->u.direct.start_idx + parameters->u.direct.index_count;
+        else
+            count = (bo->size - stream->offset + src_stride - 1) / src_stride;
+        element_size = min(src_stride, dst_stride);
+        if (!(data = calloc(count, dst_stride)))
+            return false;
+        for (i = 0; i < count; ++i)
+        {
+            src = stream->offset + (divisor > 1 ? i / divisor : i) * src_stride;
+            if (src < bo->size)
+                memcpy(data + i * dst_stride, bo->shadow + src, min(element_size, bo->size - src));
+        }
+        desc.usage = WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst;
+        desc.size = count * dst_stride;
+        if (!(buffer = wgpuDeviceCreateBuffer(device_wgpu->device, &desc)))
+        {
+            free(data);
+            return false;
+        }
+        wgpuQueueWriteBuffer(device_wgpu->queue, buffer, 0, data, desc.size);
+        free(data);
+        wgpuRenderPassEncoderSetVertexBuffer(context_wgpu->render_pass, slot, buffer, 0, desc.size);
+        context_wgpu->slot_bound_size[slot] = desc.size;
+        /* The pass keeps it for as long as it needs it. */
+        wgpuBufferRelease(buffer);
+        /* The stream's own buffer goes back at the next draw. */
+        context_invalidate_state(&context_wgpu->c, STATE_STREAMSRC);
+    }
+    return true;
+}
+
 static void adapter_wgpu_draw_primitive(struct wined3d_device *device,
         const struct wined3d_state *state, const struct wined3d_draw_parameters *parameters)
 {
@@ -1117,7 +1193,8 @@ static void adapter_wgpu_draw_primitive(struct wined3d_device *device,
         return;
     }
 
-    if (!wined3d_context_wgpu_check_draw(context_wgpu, state, parameters))
+    if (!wgpu_expand_vertex_streams(context_wgpu, state, parameters)
+            || !wined3d_context_wgpu_check_draw(context_wgpu, state, parameters))
     {
         context_release(&context_wgpu->c);
         return;

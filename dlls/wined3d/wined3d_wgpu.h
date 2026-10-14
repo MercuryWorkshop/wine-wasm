@@ -282,6 +282,13 @@ struct wined3d_context_wgpu
     /* For each slot, the bytes a vertex reads, and the bytes bound; a draw
      * past the end is an error in WebGPU, and is skipped. */
     uint64_t slot_vertex_size[WINED3D_MAX_STREAMS];
+    /* Instance divisors above 1, which WebGPU lacks (adapter_wgpu.c expands
+     * such streams per draw); 0 or 1 otherwise. */
+    unsigned int slot_divisor[WINED3D_MAX_STREAMS];
+    /* The application's stride of a stream whose stride is not a multiple of
+     * 4, which WebGPU requires: repacked per draw to the pipeline's; 0
+     * otherwise. */
+    unsigned int slot_packed_stride[WINED3D_MAX_STREAMS];
     uint64_t slot_bound_size[WINED3D_MAX_STREAMS];
     uint64_t index_bound_size;
 

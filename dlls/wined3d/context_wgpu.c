@@ -649,6 +649,8 @@ static void wined3d_context_wgpu_update_vertex_input(struct wined3d_context_wgpu
 
     memset(key->buffers, 0, sizeof(key->buffers));
     memset(context_wgpu->slot_vertex_size, 0, sizeof(context_wgpu->slot_vertex_size));
+    memset(context_wgpu->slot_divisor, 0, sizeof(context_wgpu->slot_divisor));
+    memset(context_wgpu->slot_packed_stride, 0, sizeof(context_wgpu->slot_packed_stride));
     key->buffer_count = 0;
     *null_slot = ~0u;
     memset(stream_slots, 0xff, sizeof(stream_slots));
@@ -676,10 +678,15 @@ static void wined3d_context_wgpu_update_vertex_input(struct wined3d_context_wgpu
             /* A point drawn as a quad is an instance. */
             key->buffers[slot].step_mode = e->instanced || context_wgpu->point_quads
                     ? WGPUVertexStepMode_Instance : WGPUVertexStepMode_Vertex;
-            if (e->instanced && e->divisor > 1)
-                FIXME("Unhandled instance divisor %u.\n", e->divisor);
+            context_wgpu->slot_divisor[slot] = e->instanced ? e->divisor : 0;
+            /* WebGPU's strides are multiples of 4: the stream is repacked
+             * for each draw (adapter_wgpu.c). */
+            context_wgpu->slot_packed_stride[slot] = 0;
             if (e->stride & 3)
-                FIXME("Unhandled stride %u.\n", e->stride);
+            {
+                context_wgpu->slot_packed_stride[slot] = e->stride;
+                key->buffers[slot].stride = (e->stride + 3) & ~3u;
+            }
         }
 
         if (!wined3d_format_wgpu(e->format)->vertex_format)
