@@ -1333,6 +1333,17 @@ static void wined3d_swapchain_wgpu_rotate(struct wined3d_swapchain *swapchain,
     if (swapchain->state.desc.backbuffer_count < 2)
         return;
 
+    /* Every back buffer has a texture to swap: one never drawn to may not
+     * have been made yet. */
+    for (i = 0; i < swapchain->state.desc.backbuffer_count; ++i)
+    {
+        if (!wined3d_texture_wgpu_prepare_texture(wined3d_texture_wgpu(swapchain->back_buffers[i]), context_wgpu))
+        {
+            ERR("Failed to prepare back buffer %u.\n", i);
+            return;
+        }
+    }
+
     texture_prev = wined3d_texture_wgpu(swapchain->back_buffers[0]);
 
     /* Back buffer 0 is already in the draw binding. */
