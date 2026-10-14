@@ -12,6 +12,7 @@ SOURCES = \
 	d3dkmt.c \
 	debugger.c \
 	device.c \
+	door.c \
 	directory.c \
 	event.c \
 	fd.c \

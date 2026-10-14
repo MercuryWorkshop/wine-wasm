@@ -266,6 +266,15 @@ int main( int argc, char *argv[] )
     init_directories( load_intl_file() );
     init_threading();
     init_registry();
+#ifdef __wasm32__
+    door_init();  /* gex: door calls (door.c) */
+    /* the loader's start_server waits for this: after the door is
+     * published, so a client it relaunches starts with the door */
+    {
+        extern void wineserver_ready(void);
+        wineserver_ready();
+    }
+#endif
     main_loop();
     return 0;
 }

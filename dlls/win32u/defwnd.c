@@ -1716,16 +1716,16 @@ BOOL WINAPI NtUserDrawCaptionTemp( HWND hwnd, HDC hdc, const RECT *rect, HFONT f
 }
 
 /* Paint the non-client area for windows */
-static void nc_paint( HWND hwnd, HRGN clip )
+/* Draws the non-client area of hwnd into hdc, in window coordinates: for
+ * WM_NCPAINT into the window DC, and for WM_PRINT's PRF_NONCLIENT into the
+ * caller's DC. */
+static void nc_paint_dc( HWND hwnd, HDC hdc )
 {
-    HDC hdc;
     RECT rfuzz, rect, clip_rect;
     BOOL active;
     WND *win;
     DWORD style, ex_style;
     WORD flags;
-    HRGN hrgn;
-    RECT rectClient;
 
     if (!(win = get_win_ptr( hwnd )) || win == WND_OTHER_PROCESS) return;
     style = win->dwStyle;
@@ -1735,27 +1735,7 @@ static void nc_paint( HWND hwnd, HRGN clip )
 
     active = flags & WIN_NCACTIVATED;
 
-    TRACE( "%p %d\n", hwnd, active );
-
-    get_client_rect_rel( hwnd, COORDS_SCREEN, &rectClient, get_thread_dpi() );
-    hrgn = NtGdiCreateRectRgn( rectClient.left, rectClient.top,
-                               rectClient.right, rectClient.bottom );
-
-    if (clip > (HRGN)1)
-    {
-        NtGdiCombineRgn( hrgn, clip, hrgn, RGN_DIFF );
-        hdc = NtUserGetDCEx( hwnd, hrgn, DCX_USESTYLE | DCX_WINDOW | DCX_INTERSECTRGN );
-    }
-    else
-    {
-        hdc = NtUserGetDCEx( hwnd, hrgn, DCX_USESTYLE | DCX_WINDOW | DCX_EXCLUDERGN );
-    }
-
-    if (!hdc)
-    {
-        NtGdiDeleteObjectApp( hrgn );
-        return;
-    }
+    TRACE( "%p %p %d\n", hwnd, hdc, active );
 
     get_window_rect_rel( hwnd, COORDS_WINDOW, &rect, get_thread_dpi() );
     NtGdiGetAppClipBox( hdc, &clip_rect );
@@ -1819,7 +1799,35 @@ static void nc_paint( HWND hwnd, HRGN clip )
         r.top  = r.bottom - get_system_metrics( SM_CYHSCROLL ) + 1;
         fill_rect( hdc, &r, get_sys_color_brush( COLOR_BTNFACE ) );
     }
+}
 
+static void nc_paint( HWND hwnd, HRGN clip )
+{
+    HDC hdc;
+    HRGN hrgn;
+    RECT rectClient;
+
+    get_client_rect_rel( hwnd, COORDS_SCREEN, &rectClient, get_thread_dpi() );
+    hrgn = NtGdiCreateRectRgn( rectClient.left, rectClient.top,
+                               rectClient.right, rectClient.bottom );
+
+    if (clip > (HRGN)1)
+    {
+        NtGdiCombineRgn( hrgn, clip, hrgn, RGN_DIFF );
+        hdc = NtUserGetDCEx( hwnd, hrgn, DCX_USESTYLE | DCX_WINDOW | DCX_INTERSECTRGN );
+    }
+    else
+    {
+        hdc = NtUserGetDCEx( hwnd, hrgn, DCX_USESTYLE | DCX_WINDOW | DCX_EXCLUDERGN );
+    }
+
+    if (!hdc)
+    {
+        NtGdiDeleteObjectApp( hrgn );
+        return;
+    }
+
+    nc_paint_dc( hwnd, hdc );
     NtUserReleaseDC( hwnd, hdc );
 }
 
@@ -2846,8 +2854,26 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, 
         if ((lparam & PRF_CHECKVISIBLE) && !is_window_visible ( hwnd )) break;
         result = 1;
 
-        if (lparam & (PRF_OWNED | PRF_NONCLIENT))
+        if (lparam & PRF_OWNED)
             WARN( "WM_PRINT message with unsupported lparam %lx\n", lparam );
+
+        /* PRF_NONCLIENT draws the frame at the DC's origin and the client
+         * part offset by the client area's position in the window, as on
+         * Windows. The Windows 7 Ribbon prints its host's caption this way. */
+        {
+        POINT nc_org = { 0, 0 };
+        BOOL nc = (lparam & PRF_NONCLIENT) != 0;
+
+        if (nc)
+        {
+            RECT win_rect, client_rect;
+
+            nc_paint_dc( hwnd, (HDC)wparam );
+            get_window_rect_rel( hwnd, COORDS_SCREEN, &win_rect, get_thread_dpi() );
+            get_client_rect_rel( hwnd, COORDS_SCREEN, &client_rect, get_thread_dpi() );
+            offset_viewport_org( (HDC)wparam, client_rect.left - win_rect.left,
+                                 client_rect.top - win_rect.top, &nc_org );
+        }
 
         if (lparam & PRF_ERASEBKGND) send_message( hwnd, WM_ERASEBKGND, wparam, 0 );
         if (lparam & PRF_CLIENT)
@@ -2868,9 +2894,10 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, 
                         if (!(get_window_long( *child, GWL_STYLE ) & WS_VISIBLE))
                             continue;
 
+                        /* The child prints its own frame, so place it by its window rect. */
                         dpi = NtUserGetDpiForWindow( *child );
-                        NtUserGetClientRect( *child, &rect, dpi );
-                        NtUserMapWindowPoints( *child, hwnd, (POINT *)&rect, 2, dpi );
+                        NtUserGetWindowRect( *child, &rect, dpi );
+                        NtUserMapWindowPoints( 0, hwnd, (POINT *)&rect, 2, dpi );
                         offset_viewport_org( (HDC)wparam, rect.left, rect.top, &org );
                         send_message( *child, WM_PRINT, wparam, PRF_NONCLIENT | PRF_CLIENT | PRF_ERASEBKGND | PRF_CHILDREN );
                         set_viewport_org( (HDC)wparam, org.x, org.y, NULL );
@@ -2878,6 +2905,8 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, 
                     free( list );
                 }
             }
+        }
+        if (nc) set_viewport_org( (HDC)wparam, nc_org.x, nc_org.y, NULL );
         }
         break;
 

@@ -2048,3 +2048,14 @@ DECL_HANDLER(list_processes)
         }
     }
 }
+
+#ifdef __wasm32__
+/* gex (door.c): a poisoned server takes its clients with it, by their Unix
+ * pids alone (its own state is not to be trusted any more). */
+void door_kill_clients(void)
+{
+    struct process *process;
+    LIST_FOR_EACH_ENTRY( process, &process_list, struct process, entry )
+        if (process->unix_pid > 0 && process->unix_pid != getpid()) kill( process->unix_pid, SIGKILL );
+}
+#endif

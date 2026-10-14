@@ -225,10 +225,29 @@ void write_reply( struct thread *thread )
         fatal_protocol_error( thread, "reply write: %s\n", strerror( errno ));
 }
 
+#ifdef __wasm32__
+/* a door call's reply goes here (door.c), not to the reply pipe */
+static char *door_reply;
+static int door_replied;
+#endif
+
 /* send a reply to the current thread */
 static void send_reply( union generic_reply *reply )
 {
     int ret;
+
+#ifdef __wasm32__
+    if (door_reply)
+    {
+        memcpy( door_reply, reply, sizeof(*reply) );
+        if (current->reply_size)
+            memcpy( door_reply + sizeof(*reply), current->reply_data, current->reply_size );
+        door_replied = 1;
+        free( current->reply_data );
+        current->reply_data = NULL;
+        return;
+    }
+#endif
 
     if (!current->reply_size)
     {
@@ -277,6 +296,19 @@ static void call_req_handler( struct thread *thread )
     current->reply_size = 0;
     clear_error();
     memset( &reply, 0, sizeof(reply) );
+#ifdef __wasm32__
+    {
+        /* WINEGEX_SERVER_DIE=N: the server dies at its Nth request (a leg:
+         * its clients must end, as when wineserver dies) */
+        static int die_at = -1, served;
+        if (die_at < 0) die_at = getenv( "WINEGEX_SERVER_DIE" ) ? atoi( getenv( "WINEGEX_SERVER_DIE" ) ) : 0;
+        if (die_at && ++served == die_at)
+        {
+            fprintf( stderr, "wineserver: dies at request %d (WINEGEX_SERVER_DIE)\n", served );
+            _exit( 1 );
+        }
+    }
+#endif
 
     if (debug_level) trace_request();
 
@@ -296,6 +328,9 @@ static void call_req_handler( struct thread *thread )
         }
         else
         {
+#ifdef __wasm32__
+            fprintf( stderr, "wineserver: thread %04x: request %d without a reply fd: killed\n", current->id, req );
+#endif
             current->exit_code = 1;
             kill_thread( current, 1 );  /* no way to continue without reply fd */
         }
@@ -351,6 +386,33 @@ error:
     else if (errno != EWOULDBLOCK && (EWOULDBLOCK == EAGAIN || errno != EAGAIN))
         fatal_protocol_error( thread, "read: %s\n", strerror( errno ));
 }
+
+#ifdef __wasm32__
+/* Run the request at buf (a door call, door.c): its header, then its
+ * data; the reply goes after them, 8-aligned. Returns the reply's offset,
+ * or ~1u if the request left no reply (the thread died in it). */
+unsigned int door_run_request( struct thread *thread, char *buf )
+{
+    unsigned int req_size, reply_off;
+
+    memcpy( &thread->req, buf, sizeof(thread->req) );
+    req_size = thread->req.request_header.request_size;
+    reply_off = (sizeof(thread->req) + req_size + 7) & ~7u;
+    thread->req_toread = 0;
+    thread->req_data = req_size ? buf + sizeof(thread->req) : NULL;
+    door_reply = buf + reply_off;
+    door_replied = 0;
+    grab_object( thread );
+    call_req_handler( thread );
+    thread->req_data = NULL;
+    release_object( thread );
+    door_reply = NULL;
+    if (!door_replied)
+        fprintf( stderr, "wineserver: door: thread %04x (unix %d) no reply to request %d\n",
+                 thread->id, thread->unix_tid, thread->req.request_header.req );
+    return door_replied ? reply_off : ~1u;
+}
+#endif
 
 /* receive a file descriptor on the process socket */
 int receive_fd( struct process *process )
@@ -875,12 +937,6 @@ void open_master_socket(void)
     else  /* remain in the foreground */
     {
         acquire_lock();
-#ifdef __wasm32__
-        {
-            extern void wineserver_ready(void);
-            wineserver_ready();  /* the loader's start_server waits for this */
-        }
-#endif
     }
 
     /* init the process tracing mechanism */

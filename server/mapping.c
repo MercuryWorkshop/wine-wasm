@@ -1341,10 +1341,8 @@ struct mapping *create_session_mapping( struct object *root, struct unicode_str 
                                         unsigned int attr, const struct security_descriptor *sd )
 {
 #ifdef __wasm32__
-    /* in-process (wasm32_inproc.h): a client's view aliases the server's
-     * mapping only within one of the server's blocks (a wasm memory cannot
-     * map a page twice), so the session is made large once instead of
-     * growing block by block */
+    /* gex: the session is one block, made large once: clients read it
+     * from the server memory by offset (docs/wineserver-kernel.md §6.1) */
     size_t size = 0x1000000;
 #else
     size_t size = max( sizeof(*shared_session) + sizeof(object_shm_t) * 512, 0x10000 );
@@ -1357,9 +1355,6 @@ struct mapping *create_session_mapping( struct object *root, struct unicode_str 
     return create_named_object( &params );
 }
 
-#ifdef __wasm32__
-static pid_t session_pid;  /* the process the server (and its session) runs in */
-#endif
 
 void set_session_mapping( struct mapping *mapping )
 {
@@ -1380,31 +1375,17 @@ void set_session_mapping( struct mapping *mapping )
     block->used_size = sizeof(*shared_session);
     block->block_size = size;
 
+#ifdef __wasm32__
+    {
+        extern void door_set_session( void *data, size_t size );
+        door_set_session( tmp, size );
+    }
+#endif
     shared_session = tmp;
     session_mapping = mapping;
     list_add_tail( &session.blocks, &block->entry );
-#ifdef __wasm32__
-    session_pid = getpid();
-#endif
 }
 
-#ifdef __wasm32__
-/* In process (wasm32_inproc.h): win32u reads the session here, inside the
- * first block, instead of mapping a view of its own (a wasm memory cannot
- * map the server's pages at a second address). */
-const void *wineserver_session_data( mem_size_t offset, mem_size_t *size )
-{
-    struct session_block *block;
-
-    /* (a child process is a copy of this one, server state and all: a stale
-     * snapshot it must not read) */
-    if (getpid() != session_pid || list_empty( &session.blocks )) return NULL;
-    block = LIST_ENTRY( list_head( &session.blocks ), struct session_block, entry );
-    if (offset >= block->block_size) return NULL;
-    *size = block->block_size - offset;
-    return block->data + offset;
-}
-#endif
 
 /* read the session's shared memory (for a process that cannot map it) */
 DECL_HANDLER(read_session_data)
@@ -1552,14 +1533,17 @@ struct object *create_user_data_mapping( struct object *root, struct unicode_str
                                     .attr = attr, .sd = sd, .init_data = &data };
 
     if (!(mapping = create_named_object( &params ))) return NULL;
-#ifdef __wasm32__
-    /* the server shares the client's memory (wasm32_inproc.h), and a wasm
-     * memory cannot map one page at two addresses: the client's address */
-    ptr = mmap( (void *)0x7ffe0000, mapping->size, PROT_WRITE, MAP_SHARED | MAP_FIXED, get_unix_fd( mapping->fd ), 0 );
-#else
     ptr = mmap( NULL, mapping->size, PROT_WRITE, MAP_SHARED, get_unix_fd( mapping->fd ), 0 );
+    if (ptr != MAP_FAILED)
+    {
+        user_shared_data = ptr;
+#ifdef __wasm32__
+        {
+            extern void door_set_usd( void *data );
+            door_set_usd( ptr );
+        }
 #endif
-    if (ptr != MAP_FAILED) user_shared_data = ptr;
+    }
     return &mapping->obj;
 }
 

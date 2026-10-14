@@ -140,12 +140,42 @@ static void stub_syscall( const char *name )
 #define SYSCALL_STUB(name) static void name(void) { stub_syscall( #name ); }
 ALL_SYSCALL_STUBS
 
+#ifdef __wasm32__
+/* ntdll's dispatcher calls every entry as a function returning a 32-bit
+ * status (signal_wasm32.c, call_table); on wasm a call through a pointer of
+ * another type traps, so the three void system calls get typed wrappers. */
+static NTSTATUS WINAPI wasm32_NtUserNotifyIMEStatus( HWND hwnd, UINT status )
+{
+    NtUserNotifyIMEStatus( hwnd, status );
+    return 0;
+}
+static NTSTATUS WINAPI wasm32_NtUserNotifyWinEvent( DWORD event, HWND hwnd, LONG object_id, LONG child_id )
+{
+    NtUserNotifyWinEvent( event, hwnd, object_id, child_id );
+    return 0;
+}
+static NTSTATUS WINAPI wasm32_NtUserSetInternalWindowPos( HWND hwnd, UINT cmd, RECT *rect, POINT *pt )
+{
+    NtUserSetInternalWindowPos( hwnd, cmd, rect, pt );
+    return 0;
+}
+#define NtUserNotifyIMEStatus wasm32_NtUserNotifyIMEStatus
+#define NtUserNotifyWinEvent wasm32_NtUserNotifyWinEvent
+#define NtUserSetInternalWindowPos wasm32_NtUserSetInternalWindowPos
+#endif
+
 static ULONG_PTR syscalls[] =
 {
 #define SYSCALL_ENTRY(id,name,args) (ULONG_PTR)name,
     ALL_SYSCALLS
 #undef SYSCALL_ENTRY
 };
+
+#ifdef __wasm32__
+#undef NtUserNotifyIMEStatus
+#undef NtUserNotifyWinEvent
+#undef NtUserSetInternalWindowPos
+#endif
 
 static BYTE arguments[ARRAY_SIZE(syscalls)] =
 {

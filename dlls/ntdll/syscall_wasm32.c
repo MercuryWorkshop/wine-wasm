@@ -25,11 +25,13 @@
 #include "wine/gex/syscall.h"
 #include "ntsyscalls.h"
 
-/* Written in signal_wasm32.c: the calls that load a new guest state, and
- * the ones with 64-bit parameters. Their generic stubs get other names. */
+/* Written in signal_wasm32.c: the calls that load a new guest state, the
+ * ones with 64-bit parameters, and NtQueryPerformanceCounter (no system
+ * call). Their generic stubs get other names. */
 #define NtContinue __gexw_generic_NtContinue
 #define NtContinueEx __gexw_generic_NtContinueEx
 #define NtSetContextThread __gexw_generic_NtSetContextThread
+#define NtQueryPerformanceCounter __gexw_generic_NtQueryPerformanceCounter
 #define NtWow64AllocateVirtualMemory64 __gexw_generic_NtWow64AllocateVirtualMemory64
 #define NtWow64ReadVirtualMemory64 __gexw_generic_NtWow64ReadVirtualMemory64
 #define NtWow64WriteVirtualMemory64 __gexw_generic_NtWow64WriteVirtualMemory64

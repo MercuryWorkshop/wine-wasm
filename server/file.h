@@ -146,6 +146,17 @@ static inline timeout_t abstime_to_timeout( abstime_t abstime )
 }
 
 extern void set_current_time( void );
+#ifdef __wasm32__
+/* door calls (door.c) */
+extern timeout_t door_earliest_deadline( void );
+extern void door_init( void );
+extern int door_kick_fd( void );
+extern void door_kicked( void );
+extern unsigned int door_calls( void );
+extern void door_pump_lock( void );
+extern void door_pump_unlock( long long wake );
+extern void door_kill_clients( void );
+#endif
 extern struct timeout_user *add_timeout_user( timeout_t when, timeout_callback func, void *private );
 extern void remove_timeout_user( struct timeout_user *user );
 extern const char *get_timeout_str( timeout_t timeout );
