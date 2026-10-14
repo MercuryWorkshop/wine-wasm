@@ -5743,6 +5743,7 @@ void wined3d_format_convert_from_float(const struct wined3d_format *format,
         {WINED3DFMT_P8_UINT,           {         0.0f,    0.0f,    0.0f, 255.0f}, { 0,  0,  0,  0}},
         {WINED3DFMT_S1_UINT_D15_UNORM, {     32767.0f,    0.0f,    0.0f,   0.0f}, { 0,  0,  0,  0}},
         {WINED3DFMT_D16_UNORM,         {     65535.0f,    0.0f,    0.0f,   0.0f}, { 0,  0,  0,  0}},
+        {WINED3DFMT_D16_LOCKABLE,      {     65535.0f,    0.0f,    0.0f,   0.0f}, { 0,  0,  0,  0}},
     };
     static const struct
     {
