@@ -77,6 +77,7 @@ extern void get_glass_frame_inner( HWND hwnd, RECT *rect );
 extern void get_caption_buttons( HWND hwnd, RECT rects[3], UINT states[3], UINT pushed );
 extern void set_window_glass_pushed( HWND hwnd, UINT button, BOOL down );
 extern BOOL update_window_glass( HWND hwnd );
+extern BOOL is_glass_frame( HWND hwnd );
 extern LRESULT handle_nc_hit_test( HWND hwnd, POINT pt );
 
 /* hook.c */

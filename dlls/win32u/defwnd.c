@@ -1564,8 +1564,10 @@ void get_glass_frame_inner( HWND hwnd, RECT *rect )
         rect->top += get_system_metrics( (ex_style & WS_EX_TOOLWINDOW) ? SM_CYSMCAPTION : SM_CYCAPTION );
 }
 
-/* The caption buttons as draw_*_button() place them, in window coordinates,
- * and their states (struct window_glass's): close, maximize, minimize. */
+/* The caption buttons, in window coordinates, and their states (struct
+ * window_glass's): close, maximize, minimize. With a frame DWM draws, they
+ * are DWM's (Windows 7's sizes, hanging from the top edge, hit tested
+ * here); otherwise where draw_*_button() puts them. */
 void get_caption_buttons( HWND hwnd, RECT rects[3], UINT states[3], UINT pushed )
 {
     DWORD style = get_window_long( hwnd, GWL_STYLE );
@@ -1578,6 +1580,31 @@ void get_caption_buttons( HWND hwnd, RECT rects[3], UINT states[3], UINT pushed 
     memset( states, 0, 3 * sizeof(*states) );
     if ((style & WS_CAPTION) != WS_CAPTION || !(style & WS_SYSMENU)) return;
     get_inside_rect( hwnd, COORDS_WINDOW, &inside, style, ex_style );
+
+    if (is_glass_frame( hwnd ))
+    {
+        RECT window;
+        int top, right, h, close_w, box_w;
+
+        get_window_rect_rel( hwnd, COORDS_WINDOW, &window, get_thread_dpi() );
+        if (ex_style & WS_EX_TOOLWINDOW) { h = 16; close_w = 31; box_w = 0; }
+        else { h = 20; close_w = 43; box_w = 26; }
+        /* A maximized window's edges are off the screen: its buttons sit
+         * inside them. */
+        top = (style & WS_MAXIMIZE) ? inside.top - 2 : window.top;
+        right = (style & WS_MAXIMIZE) ? inside.right - 2 : window.right - 6;
+        SetRect( &rects[0], right - close_w, top, right, top + h );
+        states[0] = 1;
+        if (box_w && (style & (WS_MAXIMIZEBOX | WS_MINIMIZEBOX)))
+        {
+            SetRect( &rects[1], rects[0].left - box_w, top, rects[0].left, top + h );
+            SetRect( &rects[2], rects[1].left - box_w, top, rects[1].left, top + h );
+            states[1] = (style & WS_MAXIMIZEBOX) ? 1 : 4;
+            states[2] = (style & WS_MINIMIZEBOX) ? 1 : 4;
+        }
+        for (i = 0; i < 3; i++) if (pushed == i + 1 && states[i] == 1) states[i] = 3;
+        return;
+    }
 
     SetRect( &rects[0], inside.right - cx, inside.top + 2, inside.right - 2, inside.top + cy - 2 );
     states[0] = 1;
@@ -1982,6 +2009,19 @@ LRESULT handle_nc_hit_test( HWND hwnd, POINT pt )
     ex_style = get_window_long( hwnd, GWL_EXSTYLE );
 
     if (PtInRect( &rects.client, pt )) return HTCLIENT;
+
+    /* DWM's caption buttons hang from the top edge, over the sizing border */
+    if (is_glass_frame( hwnd ))
+    {
+        static const LRESULT hits[3] = { HTCLOSE, HTMAXBUTTON, HTMINBUTTON };
+        RECT buttons[3];
+        UINT states[3], i;
+        POINT rel = { pt.x - rects.window.left, pt.y - rects.window.top };
+
+        get_caption_buttons( hwnd, buttons, states, 0 );
+        for (i = 0; i < 3; i++)
+            if (states[i] && PtInRect( &buttons[i], rel )) return hits[i];
+    }
 
     /* Check borders */
     if (has_thick_frame( style, ex_style ))

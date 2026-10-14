@@ -2449,6 +2449,21 @@ static BOOL window_has_glass_frame( HWND hwnd, const struct set_window_glass_par
     return driver_draws_glass();
 }
 
+/* Whether DWM draws the window's frame: its caption buttons are then DWM's
+ * (get_caption_buttons). */
+BOOL is_glass_frame( HWND hwnd )
+{
+    struct set_window_glass_params glass;
+    DWORD style;
+    WND *win;
+
+    if (!(win = get_win_ptr( hwnd )) || win == WND_OTHER_PROCESS || win == WND_DESKTOP) return FALSE;
+    glass = win->glass;
+    style = win->dwStyle;
+    release_win_ptr( win );
+    return window_has_glass_frame( hwnd, &glass, style );
+}
+
 /* The rectangles of a window's glass, relative to its visible rect: the
  * frame (if it is glass) and the margins it extends into the client area,
  * as up to four bands around an inner box, and the blur-behind rectangle. */
@@ -2565,8 +2580,10 @@ BOOL update_window_glass( HWND hwnd )
         get_caption_buttons( hwnd, draw.buttons, draw.button_states, pushed );
         for (i = 0; i < 3; i++)
             OffsetRect( &draw.buttons[i], rects.window.left - rects.visible.left, rects.window.top - rects.visible.top );
-        draw.client = rects.client;
-        OffsetRect( &draw.client, -rects.visible.left, -rects.visible.top );
+        /* What DWM's frame covers: everything outside the borders and the
+         * caption (a menu bar is the window's own). */
+        get_glass_frame_inner( hwnd, &draw.client );
+        OffsetRect( &draw.client, rects.window.left - rects.visible.left, rects.window.top - rects.visible.top );
     }
     return user_driver->pSetWindowGlass( hwnd, &draw );
 }
