@@ -1,6 +1,8 @@
 /*
  * webgpu.dll's Unix side: the gex WebGPU wire's server, on the host's
- * webgpu.h (Dawn, linked in through DAWN_LIBS).
+ * webgpu.h (Dawn, linked in through DAWN_LIBS), or, in a gex guest, the
+ * wire handed on to the host's server through /dev/gex-gpu
+ * (transport-dev.h).
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -12,8 +14,14 @@
 #pragma makedep unix
 #endif
 
+#include "config.h"
+
+#include <fcntl.h>
 #include <pthread.h>
 #include <stdarg.h>
+#include <stdint.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -23,6 +31,7 @@
 
 #include "wire.h"
 #include "wire-server.h"
+#include "transport-dev.h"
 
 /* Messages are handled on a thread of their own: Dawn keeps some state per
  * thread (error scopes), and the wire's client batches calls from all the
@@ -42,11 +51,20 @@ static struct
     BOOL pending, done;
 } request;
 
+/* gex's device, when the process has one: -1 before the first message,
+ * -2 when there is none. */
+static int device = -1;
+
 static void *server_main(void *arg)
 {
     struct gexgpu_procs procs;
 
+#ifdef HAVE_DAWN
     GEXGPU_PROCS_INIT_DIRECT(&procs);
+#else
+    memset(&procs, 0, sizeof(procs));
+    return NULL;
+#endif
     server = gexgpu_server_create(&procs);
 
     pthread_mutex_lock(&request_lock);
@@ -66,9 +84,45 @@ static void *server_main(void *arg)
     return NULL;
 }
 
+static int device_call(unsigned long request, const void *data, UINT32 size, void *reply,
+        UINT32 reply_capacity, UINT32 *reply_size)
+{
+    struct gex_gpu_submit s = {0};
+
+    s.data = (uintptr_t)data;
+    s.size = size;
+    s.reply = (uintptr_t)reply;
+    s.reply_capacity = reply_capacity;
+    s.version = GEXGPU_WIRE_VERSION;
+    if (ioctl(device, request, &s) < 0)
+        return -1;
+    *reply_size = s.reply_size;
+    return s.status;
+}
+
 static NTSTATUS send_message(const void *data, UINT32 size, void *reply, UINT32 reply_capacity, UINT32 *reply_size)
 {
     pthread_mutex_lock(&lock);
+    if (device == -1 && (device = open("/dev/gex-gpu", O_RDWR | O_CLOEXEC)) < 0)
+        device = -2;
+    if (device >= 0)
+    {
+        int status = device_call(GEX_GPU_SUBMIT, data, size, reply, reply_capacity, reply_size);
+
+        if (status < 0)
+        {
+            pthread_mutex_unlock(&lock);
+            return STATUS_UNSUCCESSFUL;
+        }
+        /* Held by the device, and the lock by us, for get_reply. */
+        if (status != GEX_GPU_STATUS_HELD)
+            pthread_mutex_unlock(&lock);
+        return STATUS_SUCCESS;
+    }
+#ifndef HAVE_DAWN
+    pthread_mutex_unlock(&lock);
+    return STATUS_NOT_SUPPORTED;
+#endif
     if (!server_thread && pthread_create(&server_thread, NULL, server_main, NULL))
     {
         pthread_mutex_unlock(&lock);
@@ -97,6 +151,14 @@ static NTSTATUS send_message(const void *data, UINT32 size, void *reply, UINT32 
 
 static NTSTATUS get_reply(void *reply, UINT32 reply_capacity)
 {
+    if (device >= 0)
+    {
+        UINT32 size;
+        int status = device_call(GEX_GPU_FETCH, NULL, 0, reply, reply_capacity, &size);
+
+        pthread_mutex_unlock(&lock);
+        return status == GEX_GPU_STATUS_OK || status == GEX_GPU_STATUS_MALFORMED ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+    }
     if (last_reply_size <= reply_capacity)
         memcpy(reply, last_reply, last_reply_size);
     pthread_mutex_unlock(&lock);

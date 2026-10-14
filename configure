@@ -10546,6 +10546,12 @@ OPENGL_LIBS=""
 
 
 
+if test -n "$DAWN_LIBS"
+then :
+
+printf '%s\n' "#define HAVE_DAWN 1" >>confdefs.h
+
+fi
 
 
 # Check whether --enable-largefile was given.
