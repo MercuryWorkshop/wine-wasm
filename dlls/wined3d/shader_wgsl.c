@@ -518,7 +518,10 @@ static void fill_ps_parameters(struct shader_wgsl_compile_args *vkd3d_args,
                 VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32, offsetof(struct wined3d_ffp_ps_constants, fog.end));
         fill_buffer_parameter(&parameters[25], ffp_extra_binding, VKD3D_SHADER_PARAMETER_NAME_FOG_SCALE,
                 VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32, offsetof(struct wined3d_ffp_ps_constants, fog.scale));
-        vkd3d_args->parameter_info.parameter_count = 26;
+        /* ps_1_x's projected textures (D3DTTFF_PROJECTED), divided in the shader. */
+        fill_immediate_parameter(&parameters[26], VKD3D_SHADER_PARAMETER_NAME_PROJECTED_TEXTURE_MASK,
+                compile_args->u.fs.args.projected);
+        vkd3d_args->parameter_info.parameter_count = 27;
     }
 }
 
