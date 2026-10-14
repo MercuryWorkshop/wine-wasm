@@ -2261,6 +2261,8 @@ static BOOL is_fullscreen( const MONITORINFO *info, const RECT *rect )
  *
  * Backend implementation of SetWindowPos.
  */
+static BOOL update_window_glass( HWND hwnd );
+
 static BOOL apply_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags, struct window_surface *new_surface,
                               const struct window_rects *new_rects, const RECT *valid_rects )
 {
@@ -2443,9 +2445,120 @@ static BOOL apply_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags, stru
         user_driver->pWindowPosChanged( hwnd, insert_after, owner_hint, swp_flags, &monitor_rects,
                                         get_driver_window_surface( new_surface, raw_dpi ) );
         update_client_surfaces( toplevel );
+        /* glass follows the frame and client rects */
+        if (!(swp_flags & SWP_NOSIZE) || (swp_flags & SWP_FRAMECHANGED)) update_window_glass( hwnd );
     }
 
     return ret;
+}
+
+/* The rectangles of a window's glass, relative to its visible rect: the
+ * frame (if it is glass) and the margins it extends into the client area,
+ * as up to four bands, and the blur-behind rectangle. */
+static UINT get_window_glass_rects( const struct set_window_glass_params *g, const struct window_rects *rects,
+                                    RECT *out )
+{
+    RECT vis = rects->visible, client = rects->client, outer, inner;
+    UINT count = 0;
+
+    OffsetRect( &client, -vis.left, -vis.top );
+    OffsetRect( &vis, -vis.left, -vis.top );
+
+    if ((g->mask & WINDOW_GLASS_MARGINS) && g->margins[0] == -1 && g->margins[1] == -1
+            && g->margins[2] == -1 && g->margins[3] == -1)
+    {
+        out[0] = vis;
+        return 1;
+    }
+
+    outer = g->frame ? vis : client;
+    inner = client;
+    if (g->mask & WINDOW_GLASS_MARGINS)
+    {
+        inner.left += max( 0, g->margins[0] );
+        inner.right -= max( 0, g->margins[1] );
+        inner.top += max( 0, g->margins[2] );
+        inner.bottom -= max( 0, g->margins[3] );
+        if (inner.right < inner.left) inner.right = inner.left;
+        if (inner.bottom < inner.top) inner.bottom = inner.top;
+    }
+    if (g->blur && IsRectEmpty( &g->blur_rect ) && EqualRect( &outer, &vis ))
+    {
+        out[0] = vis;
+        return 1;
+    }
+    /* outer less inner: top, bottom, left, right */
+    SetRect( &out[count], outer.left, outer.top, outer.right, inner.top );
+    if (!IsRectEmpty( &out[count] )) count++;
+    SetRect( &out[count], outer.left, inner.bottom, outer.right, outer.bottom );
+    if (!IsRectEmpty( &out[count] )) count++;
+    SetRect( &out[count], outer.left, inner.top, inner.left, inner.bottom );
+    if (!IsRectEmpty( &out[count] )) count++;
+    SetRect( &out[count], inner.right, inner.top, outer.right, inner.bottom );
+    if (!IsRectEmpty( &out[count] )) count++;
+    if (g->blur)
+    {
+        RECT blur = client;
+
+        if (!IsRectEmpty( &g->blur_rect ))
+        {
+            blur = g->blur_rect;
+            OffsetRect( &blur, client.left, client.top );
+            intersect_rect( &blur, &blur, &client );
+        }
+        if (!IsRectEmpty( &blur )) out[count++] = blur;
+    }
+    return count;
+}
+
+static BOOL update_window_glass( HWND hwnd )
+{
+    struct set_window_glass_params glass;
+    struct window_rects rects;
+    RECT out[5];
+    UINT count;
+    WND *win;
+
+    if (!(win = get_win_ptr( hwnd )) || win == WND_OTHER_PROCESS || win == WND_DESKTOP) return FALSE;
+    glass = win->glass;
+    rects = win->rects;
+    release_win_ptr( win );
+    if (!glass.mask) return FALSE;
+
+    count = get_window_glass_rects( &glass, &rects, out );
+    if (!(glass.mask & WINDOW_GLASS_COLORIZATION))
+    {
+        /* Windows 7's default: sky. */
+        glass.argb = 0x6b74b8fc;
+        glass.balance = 8;
+        glass.blur_balance = 49;
+    }
+    return user_driver->pSetWindowGlass( hwnd, out, count, glass.argb, glass.balance, glass.blur_balance );
+}
+
+static BOOL set_window_glass( HWND hwnd, const struct set_window_glass_params *params )
+{
+    WND *win;
+
+    if (!hwnd) return user_driver->pSetWindowGlass( NULL, NULL, 0, 0, 0, 0 );
+
+    if (!(win = get_win_ptr( hwnd )) || win == WND_OTHER_PROCESS || win == WND_DESKTOP) return FALSE;
+    if (params->mask & WINDOW_GLASS_MARGINS) memcpy( win->glass.margins, params->margins, sizeof(params->margins) );
+    if (params->mask & WINDOW_GLASS_BLUR)
+    {
+        win->glass.blur = params->blur;
+        win->glass.blur_rect = params->blur_rect;
+    }
+    if (params->mask & WINDOW_GLASS_FRAME) win->glass.frame = params->frame;
+    if (params->mask & WINDOW_GLASS_COLORIZATION)
+    {
+        win->glass.argb = params->argb;
+        win->glass.balance = params->balance;
+        win->glass.blur_balance = params->blur_balance;
+    }
+    win->glass.mask |= params->mask;
+    release_win_ptr( win );
+    return update_window_glass( hwnd );
 }
 
 static BOOL expose_window_surface( HWND hwnd, UINT flags, const RECT *rect )
@@ -6433,6 +6546,9 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
         const RECT *bar = (const RECT *)param;
         return get_menu_bar_height( hwnd, max( bar->right - bar->left, 0 ), bar->left, bar->top );
     }
+
+    case NtUserCallHwndParam_SetWindowGlass:
+        return set_window_glass( hwnd, (const struct set_window_glass_params *)param );
 
     default:
         FIXME( "invalid code %u\n", code );

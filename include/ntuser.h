@@ -1436,6 +1436,8 @@ enum
     NtUserCallHwndParam_GetPrivateData,
     NtUserCallHwndParam_SetPrivateData,
     NtUserCallHwndParam_CalcMenuBar,
+    /* not compatible with Windows */
+    NtUserCallHwndParam_SetWindowGlass,
 };
 
 struct get_window_rects_params
@@ -1695,6 +1697,33 @@ static inline LONG_PTR NtUserSetPrivateData( HWND hwnd, UINT offset, UINT size, 
 {
     struct set_private_data_params params = { .offset = offset, .size = size, .value = value };
     return NtUserCallHwndParam( hwnd, (UINT_PTR)&params, NtUserCallHwndParam_SetPrivateData );
+}
+
+/* DWM's glass for a window, from dwmapi: the frame extended into the
+ * client area (DwmExtendFrameIntoClientArea), blur behind the client area
+ * (DwmEnableBlurBehindWindow) and the colorization. The display driver
+ * draws it (pSetWindowGlass); with no driver that can, nothing does. */
+#define WINDOW_GLASS_MARGINS      0x01
+#define WINDOW_GLASS_BLUR         0x02
+#define WINDOW_GLASS_COLORIZATION 0x04
+#define WINDOW_GLASS_FRAME        0x08
+
+struct set_window_glass_params
+{
+    UINT mask;          /* WINDOW_GLASS_* of what is being set */
+    int  margins[4];    /* left, right, top, bottom, in client pixels; all -1: the whole window */
+    BOOL blur;
+    RECT blur_rect;     /* in client coordinates; empty: the whole client area */
+    BOOL frame;         /* the non-client frame is glass */
+    UINT argb;          /* colorization colour */
+    UINT balance;       /* 0..100: colour over the blurred backdrop */
+    UINT blur_balance;  /* 0..100: how much blurred backdrop shows */
+};
+
+/* With a null window and parameters: whether the driver draws glass. */
+static inline BOOL NtUserSetWindowGlass( HWND hwnd, const struct set_window_glass_params *params )
+{
+    return NtUserCallHwndParam( hwnd, (UINT_PTR)params, NtUserCallHwndParam_SetWindowGlass );
 }
 
 #endif /* _NTUSER_ */
