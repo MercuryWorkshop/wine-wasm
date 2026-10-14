@@ -784,6 +784,7 @@ EXTRACFLAGS
 LDEXECFLAGS
 LDDLLFLAGS
 DLLFLAGS
+DAWN_LIBS
 OPENGL_LIBS
 I386_LIBS
 DLLEXT
@@ -1521,6 +1522,7 @@ enable_w32skrnl
 enable_wbemdisp
 enable_wbemprox
 enable_wdscore
+enable_webgpu
 enable_webservices
 enable_websocket
 enable_wer
@@ -1686,6 +1688,7 @@ enable_dxguid
 enable_faudio
 enable_ffmpeg
 enable_fluidsynth
+enable_gexrt
 enable_gsm
 enable_icucommon
 enable_icui18n
@@ -1707,7 +1710,6 @@ enable_unwind
 enable_uuid
 enable_vkd3d
 enable_wbemuuid
-enable_gexrt
 enable_winecrt0
 enable_wmcodecdspuuid
 enable_xml2
@@ -1852,6 +1854,7 @@ CPPFLAGS
 CXX
 CXXFLAGS
 CCC
+DAWN_LIBS
 OBJC
 OBJCFLAGS
 CAPSTONE_PE_CFLAGS
@@ -2669,6 +2672,8 @@ Some influential environment variables:
               you have headers in a nonstandard directory <include dir>
   CXX         C++ compiler command
   CXXFLAGS    C++ compiler flags
+  DAWN_LIBS   linker flags for the webgpu.h webgpu.dll's Unix side uses, such
+              as Dawn's
   OBJC        Objective C compiler command
   OBJCFLAGS   Objective C compiler flags
   CAPSTONE_PE_CFLAGS
@@ -10537,6 +10542,8 @@ fi
 
 
 OPENGL_LIBS=""
+
+
 
 
 
@@ -23053,6 +23060,8 @@ wine_fn_config_makefile dlls/wbemdisp/tests enable_tests
 wine_fn_config_makefile dlls/wbemprox enable_wbemprox
 wine_fn_config_makefile dlls/wbemprox/tests enable_tests
 wine_fn_config_makefile dlls/wdscore enable_wdscore
+wine_fn_config_makefile dlls/webgpu enable_webgpu
+wine_fn_config_makefile dlls/webgpu/tests enable_tests
 wine_fn_config_makefile dlls/webservices enable_webservices
 wine_fn_config_makefile dlls/webservices/tests enable_tests
 wine_fn_config_makefile dlls/websocket enable_websocket
@@ -23290,6 +23299,7 @@ wine_fn_config_makefile libs/dxguid enable_dxguid
 wine_fn_config_makefile libs/faudio enable_faudio
 wine_fn_config_makefile libs/ffmpeg enable_ffmpeg
 wine_fn_config_makefile libs/fluidsynth enable_fluidsynth
+wine_fn_config_makefile libs/gexrt enable_gexrt
 wine_fn_config_makefile libs/gsm enable_gsm
 wine_fn_config_makefile libs/icucommon enable_icucommon
 wine_fn_config_makefile libs/icui18n enable_icui18n
@@ -23311,7 +23321,6 @@ wine_fn_config_makefile libs/unwind enable_unwind
 wine_fn_config_makefile libs/uuid enable_uuid
 wine_fn_config_makefile libs/vkd3d enable_vkd3d
 wine_fn_config_makefile libs/wbemuuid enable_wbemuuid
-wine_fn_config_makefile libs/gexrt enable_gexrt
 wine_fn_config_makefile libs/winecrt0 enable_winecrt0
 wine_fn_config_makefile libs/wmcodecdspuuid enable_wmcodecdspuuid
 wine_fn_config_makefile libs/xml2 enable_xml2
@@ -24343,6 +24352,7 @@ PE_ARCHS = $PE_ARCHS
 DLLEXT = $DLLEXT
 I386_LIBS = $I386_LIBS
 OPENGL_LIBS = $OPENGL_LIBS
+DAWN_LIBS = $DAWN_LIBS
 DLLFLAGS = $DLLFLAGS
 LDDLLFLAGS = $LDDLLFLAGS
 LDEXECFLAGS = $LDEXECFLAGS

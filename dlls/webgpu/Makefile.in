@@ -1,0 +1,10 @@
+MODULE    = webgpu.dll
+UNIXLIB   = webgpu.so
+IMPORTLIB = webgpu
+UNIX_LIBS = $(DAWN_LIBS) $(PTHREAD_LIBS)
+
+SOURCES = \
+	unix_webgpu.c \
+	webgpu_main.c \
+	wire-client.c \
+	wire-server.c
