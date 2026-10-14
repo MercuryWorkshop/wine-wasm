@@ -72,6 +72,10 @@ struct wined3d_format_wgpu
     WGPUVertexFormat vertex_format;
     /* The format of a view of the opposite sRGB-ness, or Undefined. */
     WGPUTextureFormat srgb_toggle_format;
+    /* For formats WebGPU lacks (16-bit packed ones), stored as BGRA8: a row
+     * of "width" pixels converted to and from it. */
+    void (*convert_upload)(const uint8_t *src, uint32_t *dst, unsigned int width);
+    void (*convert_download)(const uint32_t *src, uint8_t *dst, unsigned int width);
 };
 
 static inline const struct wined3d_format_wgpu *wined3d_format_wgpu(const struct wined3d_format *format)

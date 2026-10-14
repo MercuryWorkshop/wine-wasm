@@ -1508,6 +1508,114 @@ wgpu_formats[] =
     {WINED3DFMT_INTZ,                   WGPUTextureFormat_Depth24PlusStencil8, WGPU_VERTEX_FORMAT_NONE},
 };
 
+/* Packed 16-bit and 24-bit formats, as BGRA8. */
+static inline uint32_t expand_bits(uint32_t v, unsigned int bits)
+{
+    return (v * 255 + ((1u << bits) - 1) / 2) / ((1u << bits) - 1);
+}
+
+static inline uint32_t reduce_bits(uint32_t v, unsigned int bits)
+{
+    return (v * ((1u << bits) - 1) + 127) / 255;
+}
+
+static void convert_b5g6r5_upload(const uint8_t *src, uint32_t *dst, unsigned int width)
+{
+    const uint16_t *s = (const uint16_t *)src;
+    unsigned int x;
+
+    for (x = 0; x < width; ++x)
+        dst[x] = 0xff000000 | expand_bits(s[x] >> 11, 5) << 16 | expand_bits((s[x] >> 5) & 0x3f, 6) << 8
+                | expand_bits(s[x] & 0x1f, 5);
+}
+
+static void convert_b5g6r5_download(const uint32_t *src, uint8_t *dst, unsigned int width)
+{
+    uint16_t *d = (uint16_t *)dst;
+    unsigned int x;
+
+    for (x = 0; x < width; ++x)
+        d[x] = reduce_bits((src[x] >> 16) & 0xff, 5) << 11 | reduce_bits((src[x] >> 8) & 0xff, 6) << 5
+                | reduce_bits(src[x] & 0xff, 5);
+}
+
+static void convert_b5g5r5a1_upload(const uint8_t *src, uint32_t *dst, unsigned int width)
+{
+    const uint16_t *s = (const uint16_t *)src;
+    unsigned int x;
+
+    for (x = 0; x < width; ++x)
+        dst[x] = (s[x] & 0x8000 ? 0xff000000 : 0) | expand_bits((s[x] >> 10) & 0x1f, 5) << 16
+                | expand_bits((s[x] >> 5) & 0x1f, 5) << 8 | expand_bits(s[x] & 0x1f, 5);
+}
+
+static void convert_b5g5r5a1_download(const uint32_t *src, uint8_t *dst, unsigned int width)
+{
+    uint16_t *d = (uint16_t *)dst;
+    unsigned int x;
+
+    for (x = 0; x < width; ++x)
+        d[x] = (src[x] >> 31) << 15 | reduce_bits((src[x] >> 16) & 0xff, 5) << 10
+                | reduce_bits((src[x] >> 8) & 0xff, 5) << 5 | reduce_bits(src[x] & 0xff, 5);
+}
+
+static void convert_b4g4r4a4_upload(const uint8_t *src, uint32_t *dst, unsigned int width)
+{
+    const uint16_t *s = (const uint16_t *)src;
+    unsigned int x;
+
+    for (x = 0; x < width; ++x)
+        dst[x] = expand_bits(s[x] >> 12, 4) << 24 | expand_bits((s[x] >> 8) & 0xf, 4) << 16
+                | expand_bits((s[x] >> 4) & 0xf, 4) << 8 | expand_bits(s[x] & 0xf, 4);
+}
+
+static void convert_b4g4r4a4_download(const uint32_t *src, uint8_t *dst, unsigned int width)
+{
+    uint16_t *d = (uint16_t *)dst;
+    unsigned int x;
+
+    for (x = 0; x < width; ++x)
+        d[x] = reduce_bits(src[x] >> 24, 4) << 12 | reduce_bits((src[x] >> 16) & 0xff, 4) << 8
+                | reduce_bits((src[x] >> 8) & 0xff, 4) << 4 | reduce_bits(src[x] & 0xff, 4);
+}
+
+static void convert_b8g8r8_upload(const uint8_t *src, uint32_t *dst, unsigned int width)
+{
+    unsigned int x;
+
+    for (x = 0; x < width; ++x)
+        dst[x] = 0xff000000 | src[3 * x + 2] << 16 | src[3 * x + 1] << 8 | src[3 * x];
+}
+
+static void convert_b8g8r8_download(const uint32_t *src, uint8_t *dst, unsigned int width)
+{
+    unsigned int x;
+
+    for (x = 0; x < width; ++x)
+    {
+        dst[3 * x] = src[x];
+        dst[3 * x + 1] = src[x] >> 8;
+        dst[3 * x + 2] = src[x] >> 16;
+    }
+}
+
+static const struct
+{
+    enum wined3d_format_id id;
+    void (*upload)(const uint8_t *src, uint32_t *dst, unsigned int width);
+    void (*download)(const uint32_t *src, uint8_t *dst, unsigned int width);
+    const char *fixup;
+}
+wgpu_converted_formats[] =
+{
+    {WINED3DFMT_B5G6R5_UNORM,   convert_b5g6r5_upload,   convert_b5g6r5_download},
+    {WINED3DFMT_B5G5R5A1_UNORM, convert_b5g5r5a1_upload, convert_b5g5r5a1_download},
+    {WINED3DFMT_B5G5R5X1_UNORM, convert_b5g5r5a1_upload, convert_b5g5r5a1_download, "XYZ1"},
+    {WINED3DFMT_B4G4R4A4_UNORM, convert_b4g4r4a4_upload, convert_b4g4r4a4_download},
+    {WINED3DFMT_B4G4R4X4_UNORM, convert_b4g4r4a4_upload, convert_b4g4r4a4_download, "XYZ1"},
+    {WINED3DFMT_B8G8R8_UNORM,   convert_b8g8r8_upload,   convert_b8g8r8_download},
+};
+
 static WGPUTextureFormat wgpu_srgb_toggle_format(WGPUTextureFormat format)
 {
     static const WGPUTextureFormat pairs[][2] =
@@ -1703,21 +1811,35 @@ static void init_wgpu_format_info(struct wined3d_adapter *adapter, struct wined3
     uint32_t multisample_types = 0;
     unsigned int caps, i;
 
-    for (i = 0; i < ARRAY_SIZE(wgpu_formats); ++i)
+    for (i = 0; i < ARRAY_SIZE(wgpu_converted_formats); ++i)
     {
-        if (wgpu_formats[i].id == format->f.id)
-            break;
+        if (wgpu_converted_formats[i].id != format->f.id)
+            continue;
+        format->texture_format = WGPUTextureFormat_BGRA8Unorm;
+        format->convert_upload = wgpu_converted_formats[i].upload;
+        format->convert_download = wgpu_converted_formats[i].download;
+        fixup = wgpu_converted_formats[i].fixup;
+        break;
     }
-    if (i == ARRAY_SIZE(wgpu_formats))
+    if (i == ARRAY_SIZE(wgpu_converted_formats))
     {
-        WARN("Unsupported format %s.\n", debug_d3dformat(format->f.id));
-        return;
-    }
+        for (i = 0; i < ARRAY_SIZE(wgpu_formats); ++i)
+        {
+            if (wgpu_formats[i].id == format->f.id)
+                break;
+        }
+        if (i == ARRAY_SIZE(wgpu_formats))
+        {
+            WARN("Unsupported format %s.\n", debug_d3dformat(format->f.id));
+            return;
+        }
 
-    format->texture_format = wgpu_formats[i].texture_format;
-    format->vertex_format = wgpu_formats[i].vertex_format;
-    format->srgb_toggle_format = wgpu_srgb_toggle_format(format->texture_format);
-    fixup = wgpu_formats[i].fixup;
+        format->texture_format = wgpu_formats[i].texture_format;
+        format->vertex_format = wgpu_formats[i].vertex_format;
+        fixup = wgpu_formats[i].fixup;
+    }
+    format->srgb_toggle_format = format->convert_upload ? WGPUTextureFormat_Undefined
+            : wgpu_srgb_toggle_format(format->texture_format);
     if (fixup && !wgpu_info->texture_component_swizzle)
         WARN("No texture swizzle for format %s.\n", debug_d3dformat(format->f.id));
     format->f.color_fixup = fixup ? wined3d_color_fixup_from_string(fixup) : COLOR_FIXUP_IDENTITY;
