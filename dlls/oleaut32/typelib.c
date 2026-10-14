@@ -364,7 +364,11 @@ static HRESULT query_typelib_path( REFGUID guid, WORD wMaj, WORD wMin,
         }
         else
         {
-            *path = SysAllocString( Path );
+            /* registered paths are often REG_EXPAND_SZ (%SystemRoot%\...) */
+            WCHAR expanded[MAX_PATH];
+            DWORD len = ExpandEnvironmentStringsW( Path, expanded, ARRAY_SIZE(expanded) );
+
+            *path = SysAllocString( len && len <= ARRAY_SIZE(expanded) ? expanded : Path );
             hr = S_OK;
         }
     }
