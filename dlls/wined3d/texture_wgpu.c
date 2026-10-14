@@ -78,14 +78,10 @@ BOOL wined3d_texture_wgpu_prepare_texture(struct wined3d_texture_wgpu *texture_w
     switch (resource->type)
     {
         case WINED3D_RTYPE_TEXTURE_1D:
-            desc.dimension = WGPUTextureDimension_1D;
-            if (texture_wgpu->t.level_count > 1 || texture_wgpu->t.layer_count > 1)
-            {
-                /* WebGPU's 1D textures have neither mipmaps nor layers. */
-                FIXME("Treating a 1D texture with %u levels and %u layers as 2D.\n",
-                        texture_wgpu->t.level_count, texture_wgpu->t.layer_count);
-                desc.dimension = WGPUTextureDimension_2D;
-            }
+            /* WebGPU's 1D textures have neither mipmaps nor layers, and
+             * cannot be rendered to: 1D textures are 2D, one texel high,
+             * and shaders read them so. */
+            desc.dimension = WGPUTextureDimension_2D;
             desc.size.width = resource->width;
             desc.size.height = 1;
             desc.size.depthOrArrayLayers = texture_wgpu->t.layer_count;
@@ -114,9 +110,8 @@ BOOL wined3d_texture_wgpu_prepare_texture(struct wined3d_texture_wgpu *texture_w
     caps = resource->format->caps[WINED3D_GL_RES_TYPE_TEX_2D];
     desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopySrc | WGPUTextureUsage_CopyDst;
     /* Clears and blits render, whether or not the application does. */
-    if (desc.dimension != WGPUTextureDimension_1D
-            && ((resource->bind_flags & (WINED3D_BIND_RENDER_TARGET | WINED3D_BIND_DEPTH_STENCIL))
-            || (caps & (WINED3D_FORMAT_CAP_RENDERTARGET | WINED3D_FORMAT_CAP_DEPTH_STENCIL))))
+    if ((resource->bind_flags & (WINED3D_BIND_RENDER_TARGET | WINED3D_BIND_DEPTH_STENCIL))
+            || (caps & (WINED3D_FORMAT_CAP_RENDERTARGET | WINED3D_FORMAT_CAP_DEPTH_STENCIL)))
         desc.usage |= WGPUTextureUsage_RenderAttachment;
     if ((resource->bind_flags & WINED3D_BIND_UNORDERED_ACCESS) && desc.sampleCount == 1)
         desc.usage |= WGPUTextureUsage_StorageBinding;
@@ -201,6 +196,8 @@ WGPUTextureView wined3d_texture_wgpu_get_default_view(struct wined3d_texture_wgp
 
     if (!(*view = wgpuTextureCreateView(texture_wgpu->texture, &desc)))
         ERR("Failed to create a texture view.\n");
+    if (srv)
+        texture_wgpu->default_srv_dimension = desc.dimension;
 
     return *view;
 }

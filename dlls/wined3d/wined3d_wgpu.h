@@ -254,6 +254,11 @@ struct wined3d_context_wgpu
     uint32_t slot_streams[WINED3D_MAX_STREAMS];
     uint32_t null_slot;
     bool vertex_input_valid;
+    /* For each slot, the bytes a vertex reads, and the bytes bound; a draw
+     * past the end is an error in WebGPU, and is skipped. */
+    uint64_t slot_vertex_size[WINED3D_MAX_STREAMS];
+    uint64_t slot_bound_size[WINED3D_MAX_STREAMS];
+    uint64_t index_bound_size;
 
     /* Render targets smaller than the depth buffer are drawn in proxies of
      * its size (WebGPU's attachments are all one size), and copied back when
@@ -274,6 +279,9 @@ struct wined3d_context_wgpu
 
     unsigned int rt_count;
     unsigned int sample_count;
+    /* Whether the pass has the depth/stencil view: not when it is smaller
+     * than the render targets, which WebGPU does not take. */
+    bool pass_has_ds;
     /* The render pass's attachment size, which viewports and scissors are
      * clamped to. */
     unsigned int fb_width, fb_height;
@@ -289,6 +297,8 @@ static inline struct wined3d_context_wgpu *wined3d_context_wgpu(struct wined3d_c
     return CONTAINING_RECORD(context, struct wined3d_context_wgpu, c);
 }
 
+bool wined3d_context_wgpu_check_draw(const struct wined3d_context_wgpu *context_wgpu,
+        const struct wined3d_state *state, const struct wined3d_draw_parameters *parameters);
 bool wined3d_context_wgpu_apply_compute_state(struct wined3d_context_wgpu *context_wgpu,
         const struct wined3d_state *state, struct wined3d_buffer *indirect);
 bool wined3d_context_wgpu_apply_draw_state(struct wined3d_context_wgpu *context_wgpu,
@@ -381,6 +391,7 @@ struct wined3d_texture_wgpu
      * format's swizzle; of the depth aspect only, for depth formats). */
     WGPUTextureView default_view;
     WGPUTextureView default_srv;
+    WGPUTextureViewDimension default_srv_dimension;
 };
 
 static inline struct wined3d_texture_wgpu *wined3d_texture_wgpu(struct wined3d_texture *texture)
@@ -434,6 +445,11 @@ struct wined3d_view_wgpu
 {
     WGPUTexture source;
     WGPUTextureView view;
+    WGPUTextureViewDimension dimension;
+    /* A view of the same range in another dimension (2D as 2D array, say),
+     * for a shader that declares it so. */
+    WGPUTextureView alt_view;
+    WGPUTextureViewDimension alt_dimension;
 };
 
 struct wined3d_rendertarget_view_wgpu
@@ -467,7 +483,7 @@ static inline struct wined3d_shader_resource_view_wgpu *wined3d_shader_resource_
 }
 
 WGPUTextureView wined3d_shader_resource_view_wgpu_get_view(struct wined3d_shader_resource_view_wgpu *srv_wgpu,
-        struct wined3d_context_wgpu *context_wgpu);
+        struct wined3d_context_wgpu *context_wgpu, WGPUTextureViewDimension dimension);
 HRESULT wined3d_shader_resource_view_wgpu_init(struct wined3d_shader_resource_view_wgpu *view_wgpu,
         const struct wined3d_view_desc *desc, struct wined3d_resource *resource,
         void *parent, const struct wined3d_parent_ops *parent_ops);

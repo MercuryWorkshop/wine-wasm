@@ -1018,6 +1018,12 @@ static void adapter_wgpu_draw_primitive(struct wined3d_device *device,
         return;
     }
 
+    if (!wined3d_context_wgpu_check_draw(context_wgpu, state, parameters))
+    {
+        context_release(&context_wgpu->c);
+        return;
+    }
+
     if (parameters->indirect)
     {
         struct wined3d_bo_wgpu *bo = wined3d_bo_wgpu(indirect->buffer_object);
@@ -1336,7 +1342,7 @@ static void wined3d_adapter_wgpu_init_d3d_info(struct wined3d_adapter_wgpu *adap
     else if (shader_model <= 1)
         d3d_info->feature_level = WINED3D_FEATURE_LEVEL_8;
     else
-        d3d_info->feature_level = WINED3D_FEATURE_LEVEL_9_3;
+        d3d_info->feature_level = min(WINED3D_FEATURE_LEVEL_11_1, wined3d_settings.webgpu_feature_level);
 }
 
 static BOOL wined3d_adapter_wgpu_init(struct wined3d_adapter_wgpu *adapter_wgpu,
@@ -1730,8 +1736,7 @@ static void init_wgpu_format_info(struct wined3d_adapter *adapter, struct wined3
 
     TRACE("Caps %#08x are supported for format %s.\n", caps, debug_d3dformat(format->f.id));
 
-    format->f.caps[WINED3D_GL_RES_TYPE_TEX_1D] |= caps & ~(WINED3D_FORMAT_CAP_RENDERTARGET
-            | WINED3D_FORMAT_CAP_DEPTH_STENCIL | WINED3D_FORMAT_CAP_GEN_MIPMAP);
+    format->f.caps[WINED3D_GL_RES_TYPE_TEX_1D] |= caps;
     format->f.caps[WINED3D_GL_RES_TYPE_TEX_2D] |= caps;
     if (!(format->f.attrs & WINED3D_FORMAT_ATTR_COMPRESSED) || wgpu_info->texture_compression_bc_3d)
         format->f.caps[WINED3D_GL_RES_TYPE_TEX_3D] |= caps & ~WINED3D_FORMAT_CAP_DEPTH_STENCIL;
@@ -1803,7 +1808,9 @@ WGPUTextureViewDimension wgpu_view_dimension_from_wined3d(enum wined3d_resource_
     switch (type)
     {
         case WINED3D_RTYPE_TEXTURE_1D:
-            return WGPUTextureViewDimension_1D;
+            /* 1D textures are made 2D. */
+            return flags & WINED3D_VIEW_TEXTURE_ARRAY ? WGPUTextureViewDimension_2DArray
+                    : WGPUTextureViewDimension_2D;
         case WINED3D_RTYPE_TEXTURE_2D:
             if (flags & WINED3D_VIEW_TEXTURE_CUBE)
                 return layer_count > 6 ? WGPUTextureViewDimension_CubeArray : WGPUTextureViewDimension_Cube;
