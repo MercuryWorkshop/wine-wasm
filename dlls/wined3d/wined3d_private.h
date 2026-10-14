@@ -2625,11 +2625,18 @@ BOOL wined3d_get_primary_adapter_luid(LUID *luid);
 
 struct wined3d_adapter *wined3d_adapter_vk_create(unsigned int ordinal,
         unsigned int wined3d_creation_flags);
+struct wined3d_adapter *wined3d_adapter_wgpu_create(unsigned int ordinal,
+        unsigned int wined3d_creation_flags);
 
 struct wined3d_adapter *wined3d_adapter_gl_create(unsigned int ordinal,
         unsigned int wined3d_creation_flags);
 
 BOOL wined3d_adapter_no3d_init_format_info(struct wined3d_adapter *adapter);
+struct wined3d_format *wined3d_adapter_get_format_by_idx(const struct wined3d_adapter *adapter, int idx);
+BOOL wined3d_adapter_init_formats(struct wined3d_adapter *adapter, size_t format_size);
+BOOL wined3d_adapter_init_typeless_formats(struct wined3d_adapter *adapter);
+struct color_fixup_desc wined3d_color_fixup_from_string(const char *s);
+unsigned int wined3d_format_count(void);
 ssize_t adapter_adjust_mapped_memory(struct wined3d_adapter *adapter, ssize_t size);
 UINT64 adapter_adjust_memory(struct wined3d_adapter *adapter, INT64 amount);
 

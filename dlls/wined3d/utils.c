@@ -7142,3 +7142,29 @@ bool wined3d_allocator_init(struct wined3d_allocator *allocator,
 
     return true;
 }
+
+/* For backends whose format tables live in their own files. */
+struct wined3d_format *wined3d_adapter_get_format_by_idx(const struct wined3d_adapter *adapter, int idx)
+{
+    return get_format_by_idx(adapter, idx);
+}
+
+BOOL wined3d_adapter_init_formats(struct wined3d_adapter *adapter, size_t format_size)
+{
+    return wined3d_adapter_init_format_info(adapter, format_size);
+}
+
+BOOL wined3d_adapter_init_typeless_formats(struct wined3d_adapter *adapter)
+{
+    return init_typeless_formats(adapter);
+}
+
+struct color_fixup_desc wined3d_color_fixup_from_string(const char *s)
+{
+    return create_color_fixup_desc_from_string(s);
+}
+
+unsigned int wined3d_format_count(void)
+{
+    return WINED3D_FORMAT_COUNT;
+}

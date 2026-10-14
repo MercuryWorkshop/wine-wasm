@@ -23,6 +23,7 @@
 #include "wined3d_private.h"
 #include "wined3d_gl.h"
 #include "wined3d_vk.h"
+#include "wined3d_wgpu.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d);
 WINE_DECLARE_DEBUG_CHANNEL(d3d_perf);
@@ -143,6 +144,11 @@ void wined3d_swapchain_vk_cleanup(struct wined3d_swapchain_vk *swapchain_vk)
     wined3d_cs_finish(cs, WINED3D_CS_QUEUE_DEFAULT);
 
     wined3d_swapchain_cleanup(&swapchain_vk->s);
+}
+
+void wined3d_swapchain_wgpu_cleanup(struct wined3d_swapchain_wgpu *swapchain_wgpu)
+{
+    wined3d_swapchain_cleanup(&swapchain_wgpu->s);
 }
 
 ULONG CDECL wined3d_swapchain_incref(struct wined3d_swapchain *swapchain)
@@ -1312,6 +1318,83 @@ static const struct wined3d_swapchain_ops swapchain_vk_ops =
     swapchain_frontbuffer_updated,
 };
 
+static void wined3d_swapchain_wgpu_rotate(struct wined3d_swapchain *swapchain,
+        struct wined3d_context_wgpu *context_wgpu)
+{
+    struct wined3d_texture_sub_resource *sub_resource;
+    struct wined3d_texture_wgpu *texture, *texture_prev;
+    WGPUTextureView view0, srv0;
+    WGPUTexture texture0;
+    DWORD locations0;
+    unsigned int i;
+
+    static const DWORD supported_locations = WINED3D_LOCATION_TEXTURE_RGB;
+
+    if (swapchain->state.desc.backbuffer_count < 2)
+        return;
+
+    texture_prev = wined3d_texture_wgpu(swapchain->back_buffers[0]);
+
+    /* Back buffer 0 is already in the draw binding. */
+    texture0 = texture_prev->texture;
+    view0 = texture_prev->default_view;
+    srv0 = texture_prev->default_srv;
+    locations0 = texture_prev->t.sub_resources[0].locations;
+
+    for (i = 1; i < swapchain->state.desc.backbuffer_count; ++i)
+    {
+        texture = wined3d_texture_wgpu(swapchain->back_buffers[i]);
+        sub_resource = &texture->t.sub_resources[0];
+
+        if (!(sub_resource->locations & supported_locations))
+            wined3d_texture_load_location(&texture->t, 0, &context_wgpu->c, texture->t.resource.draw_binding);
+
+        texture_prev->texture = texture->texture;
+        texture_prev->default_view = texture->default_view;
+        texture_prev->default_srv = texture->default_srv;
+
+        wined3d_texture_validate_location(&texture_prev->t, 0, sub_resource->locations & supported_locations);
+        wined3d_texture_invalidate_location(&texture_prev->t, 0, ~(sub_resource->locations & supported_locations));
+
+        texture_prev = texture;
+    }
+
+    texture_prev->texture = texture0;
+    texture_prev->default_view = view0;
+    texture_prev->default_srv = srv0;
+
+    wined3d_texture_validate_location(&texture_prev->t, 0, locations0 & supported_locations);
+    wined3d_texture_invalidate_location(&texture_prev->t, 0, ~(locations0 & supported_locations));
+
+    device_invalidate_state(swapchain->device, STATE_FRAMEBUFFER);
+}
+
+/* Presents through GDI, reading the back buffer back; the page's compositor
+ * will take the texture itself. */
+static void swapchain_wgpu_present(struct wined3d_swapchain *swapchain, const RECT *src_rect,
+        const RECT *dst_rect, unsigned int swap_interval, uint32_t flags)
+{
+    struct wined3d_context_wgpu *context_wgpu;
+
+    context_wgpu = wined3d_context_wgpu(context_acquire(swapchain->device, swapchain->back_buffers[0], 0));
+
+    swapchain_blit_gdi(swapchain, &context_wgpu->c, src_rect, dst_rect);
+    wined3d_swapchain_wgpu_rotate(swapchain, context_wgpu);
+
+    wined3d_texture_validate_location(swapchain->front_buffer, 0, WINED3D_LOCATION_DRAWABLE);
+    wined3d_texture_invalidate_location(swapchain->front_buffer, 0, ~WINED3D_LOCATION_DRAWABLE);
+
+    TRACE("Starting new frame.\n");
+
+    context_release(&context_wgpu->c);
+}
+
+static const struct wined3d_swapchain_ops swapchain_wgpu_ops =
+{
+    swapchain_wgpu_present,
+    swapchain_frontbuffer_updated,
+};
+
 static void swapchain_gdi_frontbuffer_updated(struct wined3d_swapchain *swapchain)
 {
     struct wined3d_dc_info *front;
@@ -1843,6 +1926,17 @@ HRESULT wined3d_swapchain_vk_init(struct wined3d_swapchain_vk *swapchain_vk, str
     }
 
     return WINED3D_OK;
+}
+
+HRESULT wined3d_swapchain_wgpu_init(struct wined3d_swapchain_wgpu *swapchain_wgpu, struct wined3d_device *device,
+        const struct wined3d_swapchain_desc *desc, struct wined3d_swapchain_state_parent *state_parent,
+        void *parent, const struct wined3d_parent_ops *parent_ops)
+{
+    TRACE("swapchain_wgpu %p, device %p, desc %p, state_parent %p, parent %p, parent_ops %p.\n",
+            swapchain_wgpu, device, desc, state_parent, parent, parent_ops);
+
+    return wined3d_swapchain_init(&swapchain_wgpu->s, device, desc, state_parent, parent,
+            parent_ops, &swapchain_wgpu_ops);
 }
 
 HRESULT CDECL wined3d_swapchain_create(struct wined3d_device *device,

@@ -21,6 +21,7 @@
 #include "wined3d_private.h"
 #include "wined3d_gl.h"
 #include "wined3d_vk.h"
+#include "wined3d_wgpu.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d);
 
@@ -1981,6 +1982,90 @@ HRESULT wined3d_query_vk_create(struct wined3d_device *device, enum wined3d_quer
 
     TRACE("Created query %p.\n", query_vk);
     *query = &query_vk->q;
+
+    return WINED3D_OK;
+}
+
+static inline struct wined3d_query_wgpu *wined3d_query_wgpu(struct wined3d_query *query)
+{
+    return CONTAINING_RECORD(query, struct wined3d_query_wgpu, q);
+}
+
+static BOOL wined3d_query_event_wgpu_poll(struct wined3d_query *query, uint32_t flags)
+{
+    struct wined3d_query_wgpu *query_wgpu = wined3d_query_wgpu(query);
+    struct wined3d_context_wgpu *context_wgpu;
+    BOOL signalled;
+
+    context_wgpu = wined3d_context_wgpu(context_acquire(query->device, NULL, 0));
+    /* An event in the open encoder signals once it is submitted. */
+    if (query_wgpu->encoder_id == context_wgpu->encoder_id)
+        wined3d_context_wgpu_submit(context_wgpu);
+    wined3d_context_wgpu_poll(context_wgpu);
+    signalled = context_wgpu->completed_encoder_id >= query_wgpu->encoder_id;
+    context_release(&context_wgpu->c);
+
+    return *(BOOL *)query->data = signalled;
+}
+
+static BOOL wined3d_query_event_wgpu_issue(struct wined3d_query *query, uint32_t flags)
+{
+    struct wined3d_query_wgpu *query_wgpu = wined3d_query_wgpu(query);
+    struct wined3d_context_wgpu *context_wgpu;
+
+    TRACE("query %p, flags %#x.\n", query, flags);
+
+    if (!(flags & WINED3DISSUE_END))
+        return FALSE;
+
+    context_wgpu = wined3d_context_wgpu(context_acquire(query->device, NULL, 0));
+    query_wgpu->encoder_id = context_wgpu->encoder_id;
+    context_release(&context_wgpu->c);
+
+    return TRUE;
+}
+
+static void wined3d_query_wgpu_destroy(struct wined3d_query *query)
+{
+    free(wined3d_query_wgpu(query));
+}
+
+static const struct wined3d_query_ops wined3d_query_event_wgpu_ops =
+{
+    .query_poll = wined3d_query_event_wgpu_poll,
+    .query_issue = wined3d_query_event_wgpu_issue,
+    .query_destroy = wined3d_query_wgpu_destroy,
+};
+
+HRESULT wined3d_query_wgpu_create(struct wined3d_device *device, enum wined3d_query_type type,
+        void *parent, const struct wined3d_parent_ops *parent_ops, struct wined3d_query **query)
+{
+    const struct wined3d_query_ops *ops;
+    struct wined3d_query_wgpu *query_wgpu;
+    unsigned int data_size;
+
+    TRACE("device %p, type %#x, parent %p, parent_ops %p, query %p.\n",
+            device, type, parent, parent_ops, query);
+
+    switch (type)
+    {
+        case WINED3D_QUERY_TYPE_EVENT:
+            ops = &wined3d_query_event_wgpu_ops;
+            data_size = sizeof(BOOL);
+            break;
+
+        default:
+            FIXME("Unhandled query type %#x.\n", type);
+            return WINED3DERR_NOTAVAILABLE;
+    }
+
+    if (!(query_wgpu = calloc(1, sizeof(*query_wgpu) + data_size)))
+        return E_OUTOFMEMORY;
+
+    wined3d_query_init(&query_wgpu->q, device, type, query_wgpu + 1, data_size, ops, parent, parent_ops);
+
+    TRACE("Created query %p.\n", query_wgpu);
+    *query = &query_wgpu->q;
 
     return WINED3D_OK;
 }

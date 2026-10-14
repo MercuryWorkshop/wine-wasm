@@ -20,6 +20,7 @@
 #include "wined3d_private.h"
 #include "wined3d_gl.h"
 #include "wined3d_vk.h"
+#include "wined3d_wgpu.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d);
 
@@ -321,6 +322,101 @@ void wined3d_sampler_vk_init(struct wined3d_sampler_vk *sampler_vk, struct wined
 
     wined3d_sampler_init(&sampler_vk->s, device, desc, parent, parent_ops);
     wined3d_cs_init_object(device->cs, wined3d_sampler_vk_cs_init, sampler_vk);
+}
+
+static WGPUFilterMode wgpu_filter_from_wined3d(enum wined3d_texture_filter_type f)
+{
+    switch (f)
+    {
+        default:
+            ERR("Invalid filter type %#x.\n", f);
+        case WINED3D_TEXF_NONE:
+        case WINED3D_TEXF_POINT:
+            return WGPUFilterMode_Nearest;
+        case WINED3D_TEXF_LINEAR:
+        case WINED3D_TEXF_ANISOTROPIC:
+            return WGPUFilterMode_Linear;
+    }
+}
+
+static WGPUMipmapFilterMode wgpu_mipmap_filter_from_wined3d(enum wined3d_texture_filter_type f)
+{
+    switch (f)
+    {
+        default:
+            ERR("Invalid filter type %#x.\n", f);
+        case WINED3D_TEXF_NONE:
+        case WINED3D_TEXF_POINT:
+            return WGPUMipmapFilterMode_Nearest;
+        case WINED3D_TEXF_LINEAR:
+            return WGPUMipmapFilterMode_Linear;
+    }
+}
+
+static WGPUAddressMode wgpu_address_mode_from_wined3d(enum wined3d_texture_address a)
+{
+    switch (a)
+    {
+        default:
+            ERR("Invalid address mode %#x.\n", a);
+        case WINED3D_TADDRESS_WRAP:
+            return WGPUAddressMode_Repeat;
+        case WINED3D_TADDRESS_MIRROR:
+            return WGPUAddressMode_MirrorRepeat;
+        case WINED3D_TADDRESS_CLAMP:
+            return WGPUAddressMode_ClampToEdge;
+        case WINED3D_TADDRESS_BORDER:
+        case WINED3D_TADDRESS_MIRROR_ONCE:
+            /* WebGPU has neither. */
+            return WGPUAddressMode_ClampToEdge;
+    }
+}
+
+static void wined3d_sampler_wgpu_cs_init(void *object)
+{
+    struct wined3d_sampler_wgpu *sampler_wgpu = object;
+    WGPUSamplerDescriptor sampler_desc = WGPU_SAMPLER_DESCRIPTOR_INIT;
+    const struct wined3d_sampler_desc *desc;
+    struct wined3d_device_wgpu *device_wgpu;
+
+    TRACE("sampler_wgpu %p.\n", sampler_wgpu);
+
+    device_wgpu = wined3d_device_wgpu(sampler_wgpu->s.device);
+    desc = &sampler_wgpu->s.desc;
+
+    sampler_desc.addressModeU = wgpu_address_mode_from_wined3d(desc->address_u);
+    sampler_desc.addressModeV = wgpu_address_mode_from_wined3d(desc->address_v);
+    sampler_desc.addressModeW = wgpu_address_mode_from_wined3d(desc->address_w);
+    sampler_desc.magFilter = wgpu_filter_from_wined3d(desc->mag_filter);
+    sampler_desc.minFilter = wgpu_filter_from_wined3d(desc->min_filter);
+    sampler_desc.mipmapFilter = wgpu_mipmap_filter_from_wined3d(desc->mip_filter);
+    sampler_desc.lodMinClamp = max(desc->min_lod, 0.0f);
+    sampler_desc.lodMaxClamp = max(min(desc->max_lod, 32.0f), sampler_desc.lodMinClamp);
+    if (desc->reduction_mode == WINED3D_FILTER_REDUCTION_COMPARISON)
+        sampler_desc.compare = wgpu_compare_function_from_wined3d(desc->comparison_func);
+    /* Anisotropy needs every filter linear. */
+    if (desc->max_anisotropy > 1 && sampler_desc.magFilter == WGPUFilterMode_Linear
+            && sampler_desc.minFilter == WGPUFilterMode_Linear
+            && sampler_desc.mipmapFilter == WGPUMipmapFilterMode_Linear)
+        sampler_desc.maxAnisotropy = min(desc->max_anisotropy, 16);
+
+    if (desc->lod_bias)
+        FIXME("Unhandled LOD bias %.8e.\n", desc->lod_bias);
+    if (desc->mip_base_level)
+        FIXME("Unhandled mip_base_level %u.\n", desc->mip_base_level);
+
+    if (!(sampler_wgpu->sampler = wgpuDeviceCreateSampler(device_wgpu->device, &sampler_desc)))
+        ERR("Failed to create sampler.\n");
+}
+
+void wined3d_sampler_wgpu_init(struct wined3d_sampler_wgpu *sampler_wgpu, struct wined3d_device *device,
+        const struct wined3d_sampler_desc *desc, void *parent, const struct wined3d_parent_ops *parent_ops)
+{
+    TRACE("sampler_wgpu %p, device %p, desc %p, parent %p, parent_ops %p.\n",
+            sampler_wgpu, device, desc, parent, parent_ops);
+
+    wined3d_sampler_init(&sampler_wgpu->s, device, desc, parent, parent_ops);
+    wined3d_cs_init_object(device->cs, wined3d_sampler_wgpu_cs_init, sampler_wgpu);
 }
 
 HRESULT CDECL wined3d_sampler_create(struct wined3d_device *device, const struct wined3d_sampler_desc *desc,
