@@ -241,9 +241,8 @@ static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *dat
      * it as needed. */
     if (data->hwnd == NtUserGetForegroundWindow()) reapply_cursor_clipping();
 
-    if (data->glass_count && !surface->gex_glass_v1)
-        wayland_surface_set_glass(surface, data->glass, data->glass_count, data->glass_argb,
-                                  data->glass_balance, data->glass_blur_balance);
+    if (data->glass.count && !surface->gex_glass_v1)
+        wayland_surface_set_glass(surface, &data->glass);
 
     TRACE("hwnd=%p surface=%p=>%p\n", data->hwnd, data->wayland_surface, surface);
     data->wayland_surface = surface;
@@ -717,22 +716,19 @@ void WAYLAND_SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha, DWO
 /***********************************************************************
  *           WAYLAND_SetWindowGlass
  */
-BOOL WAYLAND_SetWindowGlass(HWND hwnd, const RECT *rects, UINT count, UINT argb, UINT balance, UINT blur_balance)
+BOOL WAYLAND_SetWindowGlass(HWND hwnd, const struct window_glass *glass)
 {
     struct wayland_win_data *data;
 
     if (!hwnd) return process_wayland.gex_glass_manager_v1 != NULL;
     if (!(data = wayland_win_data_get(hwnd))) return FALSE;
 
-    TRACE("hwnd=%p count=%u argb=%08x\n", hwnd, count, argb);
-    data->glass_count = min(count, ARRAY_SIZE(data->glass));
-    memcpy(data->glass, rects, data->glass_count * sizeof(*rects));
-    data->glass_argb = argb;
-    data->glass_balance = balance;
-    data->glass_blur_balance = blur_balance;
+    TRACE("hwnd=%p count=%u argb=%08x frame=%#x\n", hwnd, glass->count, glass->argb, glass->frame);
+    data->glass = *glass;
+    data->glass.count = min(data->glass.count, ARRAY_SIZE(data->glass.rects));
     if (data->wayland_surface)
     {
-        wayland_surface_set_glass(data->wayland_surface, data->glass, data->glass_count, argb, balance, blur_balance);
+        wayland_surface_set_glass(data->wayland_surface, &data->glass);
         wl_display_flush(process_wayland.wl_display);
     }
 

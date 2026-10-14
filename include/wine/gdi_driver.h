@@ -359,6 +359,23 @@ struct gdi_device_manager
 struct vulkan_driver_funcs;
 struct opengl_driver_funcs;
 
+/* DWM's glass for a window, as the display driver draws it: rectangles
+ * relative to the window's visible rect. */
+#define WINDOW_GLASS_DRAW_FRAME     0x01  /* the driver draws the frame on the glass */
+#define WINDOW_GLASS_DRAW_ACTIVE    0x02
+#define WINDOW_GLASS_DRAW_MAXIMIZED 0x04
+#define WINDOW_GLASS_DRAW_TOOL      0x08
+
+struct window_glass
+{
+    RECT rects[5];
+    UINT count;
+    UINT argb, balance, blur_balance;
+    UINT frame;             /* WINDOW_GLASS_DRAW_* */
+    RECT buttons[3];        /* close, maximize, minimize */
+    UINT button_states[3];  /* 0 none, 1 normal, 2 hot, 3 pushed, 4 disabled */
+};
+
 struct user_driver_funcs
 {
     struct gdi_dc_funcs dc_funcs;
@@ -428,10 +445,9 @@ struct user_driver_funcs
     BOOL    (*pCreateWindowSurface)(HWND,BOOL,const RECT *,struct window_surface**);
     void    (*pMoveWindowBits)(HWND,const struct window_rects *,const struct window_rects *,const RECT *);
     void    (*pWindowPosChanged)(HWND,HWND,HWND,UINT,const struct window_rects*,struct window_surface*);
-    /* glass: rectangles relative to the visible rect, the colorization's
-     * ARGB, balance and blur balance; a null window asks whether the driver
+    /* glass (struct window_glass); a null window asks whether the driver
      * draws glass */
-    BOOL    (*pSetWindowGlass)(HWND,const RECT*,UINT,UINT,UINT,UINT);
+    BOOL    (*pSetWindowGlass)(HWND,const struct window_glass*);
     /* system parameters */
     BOOL    (*pSystemParametersInfo)(UINT,UINT,void*,UINT);
     /* wintab support */
