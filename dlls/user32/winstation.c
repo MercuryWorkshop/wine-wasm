@@ -227,12 +227,13 @@ BOOL WINAPI EnumWindowStationsW( WINSTAENUMPROCW func, LPARAM lparam )
 /***********************************************************************
  *              IsThreadDesktopComposited  (USER32.@)
  *
- * Whether the Desktop Window Manager composes the thread's desktop. It
- * never does: there is no DWM, as in Windows 7's Basic mode.
+ * Whether the Desktop Window Manager composes the thread's desktop: where
+ * the display driver draws DWM's glass (gex's compositor), as dwmapi's
+ * DwmIsCompositionEnabled says; else never, as in Windows 7's Basic mode.
  */
 BOOL WINAPI IsThreadDesktopComposited(void)
 {
-    return FALSE;
+    return NtUserSetWindowGlass( NULL, NULL );
 }
 
 
