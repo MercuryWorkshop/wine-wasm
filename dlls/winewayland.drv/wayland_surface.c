@@ -1642,7 +1642,8 @@ void wayland_surface_set_glass(struct wayland_surface *surface, const struct win
                       glass->rects[i].right - glass->rects[i].left, glass->rects[i].bottom - glass->rects[i].top);
     gex_glass_v1_set_region(surface->gex_glass_v1, region);
     wl_region_destroy(region);
-    gex_glass_v1_set_colorization(surface->gex_glass_v1, glass->argb, glass->balance, glass->blur_balance);
+    gex_glass_v1_set_colorization(surface->gex_glass_v1, glass->argb, glass->balance, glass->blur_balance,
+                                  glass->afterglow, glass->afterglow_balance);
     gex_glass_v1_set_frame(surface->gex_glass_v1, glass->frame,
             b[0].left, b[0].top, b[0].right - b[0].left, b[0].bottom - b[0].top, st[0],
             b[1].left, b[1].top, b[1].right - b[1].left, b[1].bottom - b[1].top, st[1],
