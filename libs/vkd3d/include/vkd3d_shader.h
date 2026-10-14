@@ -152,6 +152,10 @@ enum vkd3d_shader_structure_type
      * The structure is a vkd3d_shader_wgsl_target_info structure.
      */
     VKD3D_SHADER_STRUCTURE_TYPE_WGSL_TARGET_INFO,
+    /**
+     * The structure is a vkd3d_shader_wgsl_binding_info structure.
+     */
+    VKD3D_SHADER_STRUCTURE_TYPE_WGSL_BINDING_INFO,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_STRUCTURE_TYPE),
 };
@@ -3072,6 +3076,15 @@ struct vkd3d_shader_varying_interpolation_info
     uint32_t centroid_mask;
     /** Varyings interpolated at each sample. */
     uint32_t sample_mask;
+    /**
+     * Varyings the pixel shader reads. The stage before declares each, with
+     * zero in those it does not write: WebGPU requires a pixel shader's
+     * inputs to be the previous stage's outputs.
+     */
+    uint32_t location_mask;
+    /** Of \ref location_mask, the signed and unsigned integer varyings. */
+    uint32_t int_mask;
+    uint32_t uint_mask;
 };
 
 /** The texel format of a typed UAV, which a WGSL storage texture declares. */
@@ -3102,6 +3115,84 @@ struct vkd3d_shader_wgsl_target_info
      */
     const struct vkd3d_shader_wgsl_uav_format *uav_formats;
     unsigned int uav_format_count;
+
+    /**
+     * Vertex shader inputs, by location, that are fed unsigned or signed
+     * integer attributes but read as float, as Direct3D 9 allows (UBYTE4,
+     * SHORT2): they are declared as integers and converted.
+     */
+    uint32_t vertex_uint_to_float_mask;
+    uint32_t vertex_sint_to_float_mask;
+};
+
+/** What a binding of a WGSL module is, as a WebGPU bind group layout entry
+ * needs to know it. */
+enum vkd3d_shader_wgsl_binding_type
+{
+    /** var<uniform>: a CBV, or the buffer of buffer shader parameters. */
+    VKD3D_SHADER_WGSL_BINDING_UNIFORM_BUFFER,
+    /** var<storage, read>: a raw or structured buffer SRV. */
+    VKD3D_SHADER_WGSL_BINDING_READ_ONLY_STORAGE_BUFFER,
+    /** var<storage, read_write>: a raw or structured buffer UAV. */
+    VKD3D_SHADER_WGSL_BINDING_STORAGE_BUFFER,
+    VKD3D_SHADER_WGSL_BINDING_SAMPLER,
+    VKD3D_SHADER_WGSL_BINDING_COMPARISON_SAMPLER,
+    /** A sampled texture, of the resource data type's sample type. */
+    VKD3D_SHADER_WGSL_BINDING_TEXTURE,
+    /**
+     * A depth texture: the view that an SRV sampled with comparison is
+     * read through. Its binding is 128 past the SRV's own.
+     */
+    VKD3D_SHADER_WGSL_BINDING_DEPTH_TEXTURE,
+    VKD3D_SHADER_WGSL_BINDING_WRITE_ONLY_STORAGE_TEXTURE,
+    VKD3D_SHADER_WGSL_BINDING_READ_WRITE_STORAGE_TEXTURE,
+
+    VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_WGSL_BINDING_TYPE),
+};
+
+/** A binding that a WGSL module declares. */
+struct vkd3d_shader_wgsl_binding
+{
+    unsigned int group;
+    unsigned int binding;
+    enum vkd3d_shader_wgsl_binding_type type;
+
+    /**
+     * The descriptor it is for. The buffer of buffer shader parameters has
+     * type VKD3D_SHADER_DESCRIPTOR_TYPE_CBV and register space and index
+     * ~0u.
+     */
+    enum vkd3d_shader_descriptor_type descriptor_type;
+    unsigned int register_space;
+    unsigned int register_index;
+
+    /** For textures and storage textures, the dimension. */
+    enum vkd3d_shader_resource_type resource_type;
+    /** For textures and storage textures, the sampled type. */
+    enum vkd3d_shader_resource_data_type resource_data_type;
+    /** For storage textures, the WGSL texel format, such as "rgba8unorm". */
+    const char *format;
+};
+
+/**
+ * A chained structure that a WGSL compilation fills with the bindings the
+ * module declares, from which a WebGPU bind group layout can be made. It
+ * should be freed with vkd3d_shader_free_wgsl_binding_info().
+ *
+ * This structure is passed to vkd3d_shader_compile() and extends
+ * vkd3d_shader_compile_info.
+ */
+struct vkd3d_shader_wgsl_binding_info
+{
+    /** Must be set to VKD3D_SHADER_STRUCTURE_TYPE_WGSL_BINDING_INFO. */
+    enum vkd3d_shader_structure_type type;
+    /** Optional pointer to a structure containing further parameters. */
+    const void *next;
+
+    /** Output; the bindings. */
+    struct vkd3d_shader_wgsl_binding *bindings;
+    /** Output; the number of bindings. */
+    unsigned int binding_count;
 };
 
 /**
@@ -3739,6 +3830,14 @@ VKD3D_SHADER_API void vkd3d_shader_build_varying_map(const struct vkd3d_shader_s
  */
 VKD3D_SHADER_API void vkd3d_shader_free_scan_combined_resource_sampler_info(
         struct vkd3d_shader_scan_combined_resource_sampler_info *info);
+
+/**
+ * Free the bindings that a WGSL compilation returned in a
+ * vkd3d_shader_wgsl_binding_info structure.
+ *
+ * \param info Binding information to free.
+ */
+VKD3D_SHADER_API void vkd3d_shader_free_wgsl_binding_info(struct vkd3d_shader_wgsl_binding_info *info);
 
 #endif  /* VKD3D_SHADER_NO_PROTOTYPES */
 
