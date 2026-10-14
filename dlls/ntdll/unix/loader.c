@@ -55,7 +55,7 @@
 # include <sys/resource.h>
 #endif
 #include <limits.h>
-#ifdef __wasm32__
+#ifdef __wasm__
 # include <pthread.h>
 # include <sched.h>
 # include <sys/syscall.h>
@@ -388,7 +388,7 @@ static void init_paths(void)
 {
     Dl_info info;
 
-#ifdef __wasm32__
+#ifdef __wasm__
     /* A closed-world wasm32 program (gex): ntdll.so is linked into the
      * loader, which sits where ntdll.so would. */
     (void)info;
@@ -412,7 +412,7 @@ static void init_paths(void)
         wineloader = build_path( ntdll_dir, "wine" );
     }
 
-#ifdef __wasm32__
+#ifdef __wasm__
     /* gex: the loader that starts other Windows processes is this one */
     wineloader = realpath( "/proc/self/exe", NULL );
 #endif
@@ -515,7 +515,7 @@ NTSTATUS exec_wineloader( char **argv, int socketfd, const struct pe_image_info 
 }
 
 
-#ifdef __wasm32__
+#ifdef __wasm__
 /***********************************************************************
  *           prepare_wineloader_exec
  *
@@ -660,7 +660,7 @@ static int exec_wineserver( pid_t *pid, char **argv )
  *
  * Start a new wine server.
  */
-#ifdef __wasm32__
+#ifdef __wasm__
 /* wasm32 (gex): wineserver is its own process again, on the server memory
  * every Worker of the session can map; clients call into it directly (door
  * calls, server.c; gex docs/wineserver-kernel.md). It runs in the foreground
@@ -1854,7 +1854,7 @@ static void load_ntdll_functions( HMODULE module )
         *p__wine_unix_call_dispatcher = *p__wine_unix_call_dispatcher_arm64ec;
         *p__wine_unix_call_dispatcher_arm64ec = __wine_unix_call_dispatcher;
     }
-#ifdef __wasm32__
+#ifdef __wasm__
     /* i386 code calls through it too: gex's trampoline page's Unix-call
      * entry, which comes back to __wine_unix_call_dispatcher (wasm code
      * reaches it through its indirect-call check, as guest code) */
@@ -2119,7 +2119,7 @@ static ULONG_PTR get_image_address(void)
     return 0;
 }
 
-#ifdef __wasm32__
+#ifdef __wasm__
 /* WINEGEX_STAGES=1: one stderr line per start-up stage, wall-clock
  * milliseconds, so a new process's start can be laid against its parent's
  * (where the page's process creation spends its seconds). */
@@ -2306,7 +2306,7 @@ static void reexec_loader( int argc, char *argv[], char *extra_arg )
     WORD machine = current_machine;
     char **new_argv;
 
-#ifdef __wasm32__
+#ifdef __wasm__
     /* gex: no preloader and no other loader; this one goes on */
     if (!extra_arg) return;
 #endif
@@ -2399,7 +2399,7 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
 {
     main_argc = argc;
     main_argv = argv;
-#ifdef __wasm32__
+#ifdef __wasm__
     wineserver_starter_env();
 #endif
 

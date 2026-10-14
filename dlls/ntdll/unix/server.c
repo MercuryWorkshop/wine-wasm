@@ -282,7 +282,7 @@ static inline unsigned int wait_reply( int reply_fd, struct __server_request_inf
 /***********************************************************************
  *           server_call_unlocked
  */
-#ifdef __wasm32__
+#ifdef __wasm__
 /* Requests that may change the session, process-wide (all but reads of
  * it): win32u's copy of the session in a child (winstation.c) is fresh
  * only while this has not moved. */
@@ -333,14 +333,14 @@ static void reqstats_note( int code, unsigned long long ns )
     }
 }
 
-#ifdef __wasm32__
+#ifdef __wasm__
 /* gex door calls (gex docs/wineserver-kernel.md): the request runs in the
  * server memory on this thread, no pipes. 0: done, the reply in place; 1:
  * no door (not published to this Worker yet, too large, or the server does
  * not know this thread yet): use the pipes; 2: the thread died in the
  * request, as a closed reply pipe. WINEGEX_DOOR=0 turns it off. */
 __attribute__((import_module("gex"), import_name("door_call")))
-extern int gex_door_call( void *req, int unix_pid, int unix_tid );
+extern int gex_door_call( int req, int unix_pid, int unix_tid );
 
 static int door_on = -1;
 static int door_pid;
@@ -357,6 +357,11 @@ static void door_init( void )
     {
         const char *env = getenv( "WINEGEX_DOOR" );
         door_on = !(env && !strcmp( env, "0" ));
+#ifdef __wasm64__
+        /* W64: a 64-bit client's requests are LP64; gex's door_call reads
+         * ILP32 ones. Pipes until door_call64 (W64.3). */
+        door_on = 0;
+#endif
         door_pid = getpid();
     }
     if (door_on && !door_tid) door_tid = syscall( SYS_gettid );
@@ -369,7 +374,7 @@ static int door_try( struct __server_request_info *req, unsigned int *ret )
 
     door_init();
     if (!door_on) return 0;
-    r = gex_door_call( req, door_pid, door_tid );
+    r = gex_door_call( GEX_ADDR(req), door_pid, door_tid );
     if (r == 2) abort_thread( 0 );
     if (r) return 0;
     *ret = req->u.reply.reply_header.error;
@@ -388,12 +393,12 @@ unsigned int server_call_unlocked( void *req_ptr )
     int code = req->u.req.request_header.req;
     if (reqstats_on) t0 = reqstats_now();
 
-#ifdef __wasm32__
+#ifdef __wasm__
     if (req->u.req.request_header.req != REQ_read_session_data)
         __atomic_add_fetch( &__wine_session_writes, 1, __ATOMIC_SEQ_CST );
 #endif
 
-#ifdef __wasm32__
+#ifdef __wasm__
     if (door_try( req, &ret ))
     {
         if (reqstats_on) reqstats_note( code, reqstats_now() - t0 );
@@ -417,7 +422,7 @@ unsigned int CDECL wine_server_call( void *req_ptr )
     sigset_t old_set;
     unsigned int ret;
 
-#ifdef __wasm32__
+#ifdef __wasm__
     /* A door call is one host call: no signal handler can run inside it and
      * reuse a half-written request pipe, so it needs no blocked signals (two
      * system calls). The pipes still do. */
@@ -488,7 +493,7 @@ void server_leave_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigse
  */
 static void server_enter_section_nosig( pthread_mutex_t *mutex, sigset_t *sigset )
 {
-#ifdef __wasm32__
+#ifdef __wasm__
     door_init();
     if (door_on && !reqstats_on && !section_nosig)
     {
@@ -503,7 +508,7 @@ static void server_enter_section_nosig( pthread_mutex_t *mutex, sigset_t *sigset
 
 static void server_leave_section_nosig( pthread_mutex_t *mutex, sigset_t *sigset )
 {
-#ifdef __wasm32__
+#ifdef __wasm__
     if (section_nosig)
     {
         int masked = section_masked;
@@ -1618,7 +1623,7 @@ static int server_connect(void)
         if (st.st_uid != getuid())
             fatal_error( "'%s/%s' is not owned by you\n", server_dir, SOCKETNAME );
 
-#ifdef __wasm32__
+#ifdef __wasm__
         /* gex: a process that started the server runs its program again as
          * a child with the door, before it connects (loader.c) */
         {

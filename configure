@@ -6500,6 +6500,7 @@ case "$host_cpu" in
   i[3456789]86*) HOST_ARCH=i386 ;;
   x86_64)          HOST_ARCH=x86_64 ;;
   wasm32)          HOST_ARCH=wasm32 ;;
+  wasm64)          HOST_ARCH=wasm64 ;;
 esac
 
 
@@ -20783,7 +20784,7 @@ if test "x$ac_cv_cflags__Wno_format" = xyes
 then :
   MSVCRTFLAGS="$MSVCRTFLAGS -Wno-format"
 fi
-    if test "$HOST_ARCH" = wasm32
+    if test "$HOST_ARCH" = wasm32 -o "$HOST_ARCH" = wasm64
     then
             :
     elif test "$HOST_ARCH" = i386
@@ -22137,6 +22138,41 @@ printf '%s\n' "$ac_cv_cpp_def___wasm32__" >&6; }
 if test "x$ac_cv_cpp_def___wasm32__" = xyes
 then :
   EXTRACFLAGS="$EXTRACFLAGS -D__wasm32__"
+fi ;;
+  *wasm64*)         { printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking whether we need to define __wasm64__" >&5
+printf %s "checking whether we need to define __wasm64__... " >&6; }
+if test ${ac_cv_cpp_def___wasm64__+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e) cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#ifdef __wasm64__
+#error no
+#endif
+int
+main (void)
+{
+
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"
+then :
+  ac_cv_cpp_def___wasm64__=yes
+else case e in #(
+  e) ac_cv_cpp_def___wasm64__=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam conftest.$ac_ext ;;
+esac
+fi
+{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: $ac_cv_cpp_def___wasm64__" >&5
+printf '%s\n' "$ac_cv_cpp_def___wasm64__" >&6; }
+if test "x$ac_cv_cpp_def___wasm64__" = xyes
+then :
+  EXTRACFLAGS="$EXTRACFLAGS -D__wasm64__"
 fi ;;
 esac
 

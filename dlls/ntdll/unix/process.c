@@ -56,7 +56,7 @@
 # include <libprocstat.h>
 #endif
 #include <unistd.h>
-#ifdef __wasm32__
+#ifdef __wasm__
 # include <sched.h>
 # include <sys/mman.h>
 #endif
@@ -404,7 +404,7 @@ static BOOL is_unix_console_handle( HANDLE handle )
 /***********************************************************************
  *           spawn_process
  */
-#ifdef __wasm32__
+#ifdef __wasm__
 /* wasm32 (gex): fork() unwinds the whole wasm stack and rewinds it in both
  * processes (asyncify), which cannot cross gex's frames and Wine's PE
  * module under a system call. A child process here is a clone
@@ -562,7 +562,7 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
         isatty(1) && is_unix_console_handle( params->hStdOutput ))
         stdout_fd = 1;
 
-#ifdef __wasm32__
+#ifdef __wasm__
     {
         struct spawn_args a = { params, socketfd, unixdir, stdin_fd, stdout_fd, -1, -1, winedebug, pe_info };
         struct wineloader_exec_plan plan;
@@ -660,7 +660,7 @@ NTSTATUS WINAPI __wine_unix_spawnvp( char * const argv[], int wait )
         fcntl( fd[1], F_SETFD, FD_CLOEXEC );
     }
 
-#ifdef __wasm32__
+#ifdef __wasm__
     {
         struct spawn_args a = { .errfd = fd[1], .rdfd = fd[0], .argv = argv, .wait = wait };
         pid = fork_call( spawnvp_child, &a );
@@ -772,7 +772,7 @@ static NTSTATUS fork_and_exec( OBJECT_ATTRIBUTES *attr, const char *unix_name, i
         isatty(1) && is_unix_console_handle( params->hStdOutput ))
         stdout_fd = 1;
 
-#ifdef __wasm32__
+#ifdef __wasm__
     {
         struct spawn_args a = { params, -1, unixdir, stdin_fd, stdout_fd, fd[1], fd[0], NULL, NULL, unix_name };
         a.exec_argv = build_argv( &params->CommandLine, 0 );

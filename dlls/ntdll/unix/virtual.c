@@ -627,7 +627,7 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
 }
 
 static unsigned int gex_reserve_tries, gex_reserve_ok;
-#ifdef __wasm32__
+#ifdef __wasm__
 static int gex_reserve_limit;
 #endif
 static void reserve_area( void *addr, void *end )
@@ -696,7 +696,7 @@ static void reserve_area( void *addr, void *end )
         gex_reserve_ok++;
         return;
     }
-#ifdef __wasm32__
+#ifdef __wasm__
     /* ENOMEM is the end of the address space gex gives this process: past
      * that address nothing maps, so once the lower half met it the upper
      * half is not tried. Splitting the space above the limit down to the
@@ -723,7 +723,7 @@ static void reserve_area( void *addr, void *end )
 }
 
 
-#ifdef __wasm32__
+#ifdef __wasm__
 /* reserve_area over only the gaps /proc/self/maps shows in [addr, end):
  * each failed mmap is a system call that costs about a millisecond in the
  * page, and bisecting around the program's own mappings was over a
@@ -810,7 +810,7 @@ static void mmap_init( const struct preload_info *preload_info )
 
 #endif
 }
-#ifdef __wasm32__
+#ifdef __wasm__
 #undef reserve_area
 #endif
 
@@ -3456,7 +3456,7 @@ static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_inf
  *
  * Map a PE image section into memory.
  */
-#ifdef __wasm32__
+#ifdef __wasm__
 __attribute__((import_module("gex"), import_name("image_mapped"))) void gex_image_mapped( int base, int fd );
 #endif
 
@@ -3505,9 +3505,9 @@ static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size
 
     status = map_image_into_view( view, &pe_mapping->nt_name, unix_fd, &pe_mapping->image,
                                   machine, shared_fd, needs_close );
-#ifdef __wasm32__
+#ifdef __wasm__
     /* gex: a native DLL's skeleton gets Wine's PE module at its exports */
-    if (status == STATUS_SUCCESS) gex_image_mapped( (int)(ULONG_PTR)view->base, unix_fd );
+    if (status == STATUS_SUCCESS) gex_image_mapped( GEX_ADDR(view->base), unix_fd );
 #endif
     if (status == STATUS_SUCCESS)
     {
@@ -4223,7 +4223,7 @@ struct thread_data *virtual_alloc_thread_data(void)
     SIZE_T size = signal_stack_mask + 1 + kernel_stack_size;
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
-#ifdef __wasm32__
+#ifdef __wasm__
     /* gex keeps its dispatch directory at 0x100000-0x300000: bottom-up, this
      * would take the 0x400000 an exe is linked at */
     status = map_view( &view, NULL, size, MEM_TOP_DOWN, VPROT_READ | VPROT_WRITE | VPROT_COMMITTED, limit_4g, 0, 0 );
@@ -4534,15 +4534,15 @@ done:
 static const WCHAR shared_data_nameW[] = {'\\','K','e','r','n','e','l','O','b','j','e','c','t','s',
                                           '\\','_','_','w','i','n','e','_','u','s','e','r','_','s','h','a','r','e','d','_','d','a','t','a',0};
 
-#ifdef __wasm32__
+#ifdef __wasm__
 /* gex door calls (docs/wineserver-kernel.md §6.2): the USD is a page of the
  * server's memory, which no process can map; each copies it at start
  * (usd_copy), and the first boot's fill is written back to it (usd_publish).
  * Both return the bytes copied, or -1 without a door session. */
 __attribute__((import_module("gex"), import_name("usd_copy")))
-extern int gex_usd_copy( void *dst, unsigned int size );
+extern int gex_usd_copy( int dst, unsigned int size );
 __attribute__((import_module("gex"), import_name("usd_publish")))
-extern int gex_usd_publish( const void *src, unsigned int size );
+extern int gex_usd_publish( int src, unsigned int size );
 
 /* a process's own USD clocks (virtual_map_user_shared_data) */
 static void usd_store( volatile KSYSTEM_TIME *t, ULONGLONG v )
@@ -4610,7 +4610,7 @@ void virtual_map_user_shared_data(void)
     }
     if (needs_close) close( fd );
     NtClose( section );
-#ifdef __wasm32__
+#ifdef __wasm__
     {
         /* The USD is written by the server, in its own wasm memory: what a
          * process mapped is a copy, its clocks stopped. Each keeps them
@@ -4624,7 +4624,7 @@ void virtual_map_user_shared_data(void)
         {
             /* the server's own page if there is a door; else what the
              * mapping held (the file, which the server's writes never reach) */
-            if (gex_usd_copy( copy, page_size ) != page_size)
+            if (gex_usd_copy( GEX_ADDR(copy), page_size ) != page_size)
                 memcpy( copy, (void *)user_shared_data, page_size );
             if (mmap( user_shared_data, page_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0 ) == user_shared_data)
             {
@@ -4687,7 +4687,7 @@ void virtual_init_user_shared_data(void)
     }
 
     init_shared_data_cpuinfo( data );
-#ifdef __wasm32__
+#ifdef __wasm__
     /* The mapping is a copy here (gex has no cross-process MAP_SHARED): the
      * fill goes to the server's page through the door, wineboot's version
      * fields with it (its own write, create_user_shared_data, goes to a copy
@@ -4709,14 +4709,14 @@ void virtual_init_user_shared_data(void)
             memcpy( data->NtSystemRoot, rootW, sizeof(rootW) );
         }
         /* keep the server's clocks: only the fields filled here move */
-        if (server && gex_usd_copy( server, sizeof(*server) ) == sizeof(*server))
+        if (server && gex_usd_copy( GEX_ADDR(server), sizeof(*server) ) == sizeof(*server))
         {
             data->InterruptTime = server->InterruptTime;
             data->SystemTime    = server->SystemTime;
             data->TickCount     = server->TickCount;
             data->TimeZoneBias  = server->TimeZoneBias;
             data->TimeZoneId    = server->TimeZoneId;
-            gex_usd_publish( data, sizeof(*data) );
+            gex_usd_publish( GEX_ADDR(data), sizeof(*data) );
         }
         free( server );
         if (mine)
@@ -7187,15 +7187,15 @@ NTSTATUS WINAPI NtSetInformationVirtualMemory( HANDLE process,
 /**********************************************************************
  *           NtFlushInstructionCache  (NTDLL.@)
  */
-#ifdef __wasm32__
+#ifdef __wasm__
 __attribute__((import_module("gex"), import_name("code_changed"))) void gex_code_changed( int addr, int len );
 #endif
 
 NTSTATUS WINAPI NtFlushInstructionCache( HANDLE handle, const void *addr, SIZE_T size )
 {
-#ifdef __wasm32__
+#ifdef __wasm__
     /* gex translated the code: the range's translations are retired */
-    if (handle == GetCurrentProcess() && size) gex_code_changed( (int)(ULONG_PTR)addr, (int)size );
+    if (handle == GetCurrentProcess() && size) gex_code_changed( GEX_ADDR(addr), (int)size );
 #elif defined(__x86_64__) || defined(__i386__)
     /* no-op */
 #elif defined(HAVE___CLEAR_CACHE)

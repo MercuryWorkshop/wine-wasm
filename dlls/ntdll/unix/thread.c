@@ -1309,7 +1309,7 @@ static NTSTATUS create_server_thread( HANDLE *handle, struct thread_data **data_
 /***********************************************************************
  *           spawn_thread
  */
-#ifdef __wasm32__
+#ifdef __wasm__
 /* wasm calls through a pointer only at the function's own type */
 static void *server_init_thread_start( void *data )
 {
@@ -1555,7 +1555,7 @@ static DECLSPEC_NORETURN void exit_thread( int status )
  */
 void exit_process( int status )
 {
-#ifdef __wasm32__
+#ifdef __wasm__
     {
         /* the process's own wineserver goes with it: its registry first */
         extern void wineserver_flush(void);

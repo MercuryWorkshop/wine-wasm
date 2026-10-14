@@ -55,8 +55,15 @@ static const WORD current_machine = IMAGE_FILE_MACHINE_ARM64;
 /* Native wasm32 under gex: the machine is the guest's, i386 (gex runs the
  * program's x86 code; Wine's own code is wasm). */
 static const WORD current_machine = IMAGE_FILE_MACHINE_I386;
+#elif defined(__wasm64__)
+/* W64 (gex docs/wine-native-x64.md): LP64 lowered to wasm32; the guest's
+ * machine is x86-64. */
+static const WORD current_machine = IMAGE_FILE_MACHINE_AMD64;
 #endif
 extern WORD native_machine;
+#ifdef __wasm__
+#include "wine/gex/addr.h"
+#endif
 
 static const BOOL is_win64 = (sizeof(void *) > sizeof(int));
 
@@ -236,7 +243,7 @@ extern void *create_startup_info( const UNICODE_STRING *nt_image, ULONG process_
                                   const struct pe_image_info *pe_info, DWORD *info_size );
 extern char *get_alternate_wineloader( WORD machine );
 extern NTSTATUS exec_wineloader( char **argv, int socketfd, const struct pe_image_info *pe_info );
-#ifdef __wasm32__
+#ifdef __wasm__
 struct wineloader_exec_plan
 {
     char  *loader[2];      /* the alternate loader (or NULL), then the loader */
@@ -370,7 +377,7 @@ extern void DECLSPEC_NORETURN signal_start_thread( PRTL_THREAD_START_ROUTINE ent
 extern SYSTEM_SERVICE_TABLE KeServiceDescriptorTable[4];
 extern void __wine_syscall_dispatcher(void);
 extern void __wine_syscall_dispatcher_return(void);
-#ifdef __wasm32__
+#ifdef __wasm__
 /* a C function the PE side calls (its __wine_unix_call_dispatcher pointer) */
 extern NTSTATUS WINAPI __wine_unix_call_dispatcher( unixlib_handle_t handle, unsigned int code, void *args );
 #else
