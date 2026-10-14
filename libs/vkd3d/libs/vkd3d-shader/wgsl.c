@@ -1643,7 +1643,54 @@ static void wgsl_ld(struct wgsl_generator *gen, const struct vsir_instruction *i
         return;
     read = vkd3d_string_buffer_get(&gen->string_buffers);
 
-    vkd3d_string_buffer_printf(read, "textureLoad(");
+    /* D3D gives zero for a texel out of range, where WebGPU's robustness
+     * clamps: the load is scaled by whether the coordinates, level and layer
+     * are in range. (Multiplying rather than selecting serves the scalar
+     * loads of depth textures as well as vector ones.) */
+    vkd3d_string_buffer_printf(read, "(%s(", wgsl_scalar_name(gen, data_type));
+    if (sample_count <= 1)
+    {
+        vkd3d_string_buffer_printf(read, "u32(");
+        if (ins->opcode == VSIR_OP_LD2DMS)
+            vkd3d_string_buffer_printf(read, "0i");
+        else
+            wgsl_print_src_with_type(read, gen, &ins->src[0], VKD3DSP_WRITEMASK_3, VSIR_DATA_I32);
+        vkd3d_string_buffer_printf(read, ") < textureNumLevels(");
+        wgsl_print_descriptor_name(read, VKD3D_SHADER_DESCRIPTOR_TYPE_SRV, resource_id, resource_idx);
+        vkd3d_string_buffer_printf(read, ") && ");
+    }
+    vkd3d_string_buffer_printf(read, "all(");
+    if (resource_type_info->coord_size > 1 || wgsl_is_1d_as_2d(gen, resource_type))
+        vkd3d_string_buffer_printf(read, "vec%u<u32>(",
+                wgsl_is_1d_as_2d(gen, resource_type) ? 2 : resource_type_info->coord_size);
+    else
+        vkd3d_string_buffer_printf(read, "u32(");
+    wgsl_print_texture_coord(read, gen, &ins->src[0], resource_type_info, VSIR_DATA_I32,
+            wgsl_is_1d_as_2d(gen, resource_type), "0i");
+    vkd3d_string_buffer_printf(read, ") < textureDimensions(");
+    wgsl_print_descriptor_name(read, VKD3D_SHADER_DESCRIPTOR_TYPE_SRV, resource_id, resource_idx);
+    if (sample_count <= 1)
+    {
+        vkd3d_string_buffer_printf(read, ", min(u32(");
+        if (ins->opcode == VSIR_OP_LD2DMS)
+            vkd3d_string_buffer_printf(read, "0i");
+        else
+            wgsl_print_src_with_type(read, gen, &ins->src[0], VKD3DSP_WRITEMASK_3, VSIR_DATA_I32);
+        vkd3d_string_buffer_printf(read, "), textureNumLevels(");
+        wgsl_print_descriptor_name(read, VKD3D_SHADER_DESCRIPTOR_TYPE_SRV, resource_id, resource_idx);
+        vkd3d_string_buffer_printf(read, ") - 1u)");
+    }
+    vkd3d_string_buffer_printf(read, "))");
+    if (resource_type_info->array)
+    {
+        vkd3d_string_buffer_printf(read, " && u32(");
+        wgsl_print_src_with_type(read, gen, &ins->src[0],
+                VKD3DSP_WRITEMASK_0 << resource_type_info->coord_size, VSIR_DATA_I32);
+        vkd3d_string_buffer_printf(read, ") < textureNumLayers(");
+        wgsl_print_descriptor_name(read, VKD3D_SHADER_DESCRIPTOR_TYPE_SRV, resource_id, resource_idx);
+        vkd3d_string_buffer_printf(read, ")");
+    }
+    vkd3d_string_buffer_printf(read, ") * textureLoad(");
     wgsl_print_descriptor_name(read, VKD3D_SHADER_DESCRIPTOR_TYPE_SRV, resource_id, resource_idx);
     vkd3d_string_buffer_printf(read, ", ");
     wgsl_print_texture_coord(read, gen, &ins->src[0], resource_type_info, VSIR_DATA_I32,
@@ -1663,7 +1710,7 @@ static void wgsl_ld(struct wgsl_generator *gen, const struct vsir_instruction *i
         vkd3d_string_buffer_printf(read, "0i");
     else
         wgsl_print_src_with_type(read, gen, &ins->src[2], VKD3DSP_WRITEMASK_0, VSIR_DATA_I32);
-    vkd3d_string_buffer_printf(read, ")");
+    vkd3d_string_buffer_printf(read, "))");
 
     wgsl_print_texel_result(gen, &dst, ins, data_type, read->buffer, ins->src[1].swizzle, false);
 
