@@ -66,7 +66,7 @@
 #    define __int32 int
 #  endif
 #  ifndef __int64
-#    if defined(_WIN64) && !defined(__MINGW64__)
+#    if defined(_WIN64) && !defined(__MINGW64__) && !defined(__GEX_LLP64__) /* W64: the LLP64 PE side */
 #      define __int64 long
 #    else
 #      define __int64 long long

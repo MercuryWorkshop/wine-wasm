@@ -57,6 +57,9 @@ extern "C" {
 # elif defined(__wasm32__)
 /* wasm32: another DLL's function is an import of this DLL's module */
 #  define DECLSPEC_IMPORT __attribute__((visibility ("default")))
+# elif defined(__wasm64__)
+/* wasm64 (W64, the LLP64 PE side): as on wasm32 */
+#  define DECLSPEC_IMPORT __attribute__((visibility ("default")))
 # elif defined(__GNUC__)
 #  define DECLSPEC_IMPORT __attribute__((visibility ("hidden")))
 # elif __has_declspec_attribute(dllimport)
@@ -1422,7 +1425,8 @@ typedef struct DECLSPEC_ALIGN(16) _AMD64_CONTEXT {
     DWORD64 LastExceptionFromRip; /* 4c8 */
 } AMD64_CONTEXT;
 
-#ifdef __x86_64__
+/* wasm64 (W64): the CONTEXT is the guest's x86-64 register file (gex's). */
+#if defined(__x86_64__) || defined(__wasm64__)
 
 #define CONTEXT_CONTROL CONTEXT_AMD64_CONTROL
 #define CONTEXT_INTEGER CONTEXT_AMD64_INTEGER
@@ -2106,7 +2110,7 @@ typedef union _DISPATCHER_CONTEXT_NONVOLREG_ARM64
     } DUMMYSTRUCTNAME;
 } DISPATCHER_CONTEXT_NONVOLREG_ARM64;
 
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(__wasm64__)
 
 typedef struct _DISPATCHER_CONTEXT
 {
@@ -2645,6 +2649,15 @@ static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
 struct _TEB * WINAPI __wine_wasm_current_teb(void);
 /* wasm has no return addresses: the caller that matters is the guest's,
  * the return address of the innermost call from x86 into native code. */
+void * WINAPI __wine_wasm_return_address(void);
+#define __builtin_return_address(n) __wine_wasm_return_address()
+static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
+{
+    return __wine_wasm_current_teb();
+}
+#elif defined(__wasm64__)
+/* wasm64 (W64): as on wasm32; the TEB is the guest thread's (GS base). */
+struct _TEB * WINAPI __wine_wasm_current_teb(void);
 void * WINAPI __wine_wasm_return_address(void);
 #define __builtin_return_address(n) __wine_wasm_return_address()
 static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
