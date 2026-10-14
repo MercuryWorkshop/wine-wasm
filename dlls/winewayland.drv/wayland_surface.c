@@ -1547,5 +1547,7 @@ void wayland_surface_set_glass(struct wayland_surface *surface, const struct win
     gex_glass_v1_set_frame(surface->gex_glass_v1, glass->frame,
             b[0].left, b[0].top, b[0].right - b[0].left, b[0].bottom - b[0].top, st[0],
             b[1].left, b[1].top, b[1].right - b[1].left, b[1].bottom - b[1].top, st[1],
-            b[2].left, b[2].top, b[2].right - b[2].left, b[2].bottom - b[2].top, st[2]);
+            b[2].left, b[2].top, b[2].right - b[2].left, b[2].bottom - b[2].top, st[2],
+            glass->client.left, glass->client.top, glass->client.right - glass->client.left,
+            glass->client.bottom - glass->client.top);
 }

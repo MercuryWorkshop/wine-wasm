@@ -2565,6 +2565,8 @@ BOOL update_window_glass( HWND hwnd )
         get_caption_buttons( hwnd, draw.buttons, draw.button_states, pushed );
         for (i = 0; i < 3; i++)
             OffsetRect( &draw.buttons[i], rects.window.left - rects.visible.left, rects.window.top - rects.visible.top );
+        draw.client = rects.client;
+        OffsetRect( &draw.client, -rects.visible.left, -rects.visible.top );
     }
     return user_driver->pSetWindowGlass( hwnd, &draw );
 }

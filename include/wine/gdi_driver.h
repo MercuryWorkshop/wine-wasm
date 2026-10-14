@@ -374,6 +374,7 @@ struct window_glass
     UINT frame;             /* WINDOW_GLASS_DRAW_* */
     RECT buttons[3];        /* close, maximize, minimize */
     UINT button_states[3];  /* 0 none, 1 normal, 2 hot, 3 pushed, 4 disabled */
+    RECT client;            /* with a frame: the client area, outside which DWM's frame covers the window */
 };
 
 struct user_driver_funcs
