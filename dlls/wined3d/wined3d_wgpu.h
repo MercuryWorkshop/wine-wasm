@@ -211,9 +211,24 @@ struct wined3d_shader_bindings_wgpu
     bool layout_valid;
 };
 
+/* Draws and dispatches recorded before a submit, as context_vk.c's. */
+#define WINED3D_WGPU_PERIODIC_SUBMIT_WORK_COUNT 512
+
+/* Submitted encoders whose completion is awaited. */
+struct wined3d_submission_wgpu
+{
+    uint64_t encoder_id;
+    WGPUFuture future;
+};
+
 struct wined3d_context_wgpu
 {
     struct wined3d_context c;
+
+    /* The context's own: a destroyed device's submissions must not linger
+     * for the next device's context. */
+    struct wined3d_submission_wgpu submissions[64];
+    unsigned int submission_head, submission_count;
 
     const struct wined3d_wgpu_info *wgpu_info;
 
