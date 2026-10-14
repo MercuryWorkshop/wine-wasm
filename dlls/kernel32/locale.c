@@ -527,3 +527,321 @@ INT WINAPI GetGeoInfoA(GEOID geoid, GEOTYPE geotype, LPSTR data, int data_len, L
     if (!GetGeoInfoW( geoid, geotype, buffer, ARRAY_SIZE(buffer), lang )) return 0;
     return WideCharToMultiByte( CP_ACP, 0, buffer, -1, data, data_len, NULL, NULL );
 }
+
+
+/* The CALDATETIME calendar functions Windows 7 added (its comctl32 v6 month
+ * calendar, e.g. the taskbar clock's, imports them all). Gregorian arithmetic
+ * for every calendar; argument counts as Windows 7's kernel32 has them. */
+
+typedef struct
+{
+    CALID CalId;
+    UINT  Era;
+    UINT  Year;
+    UINT  Month;
+    UINT  Day;
+    UINT  DayOfWeek;  /* NLS numbering: 0 is Monday */
+    UINT  Hour;
+    UINT  Minute;
+    UINT  Second;
+    ULONG Tick;
+} CALDATETIME;
+
+enum { EraUnit, YearUnit, MonthUnit, WeekUnit, DayUnit, HourUnit, MinuteUnit, SecondUnit, TickUnit };
+
+static BOOL cal_leap( UINT year )
+{
+    return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+}
+
+static UINT cal_days_in_month( UINT year, UINT month )
+{
+    static const BYTE days[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    if (month < 1 || month > 12) return 0;
+    return days[month - 1] + (month == 2 && cal_leap( year ));
+}
+
+/* days since 1 January of year 1 (proleptic Gregorian) */
+static LONGLONG cal_day_number( UINT year, UINT month, UINT day )
+{
+    LONGLONG y = year - 1, n = y * 365 + y / 4 - y / 100 + y / 400;
+    UINT m;
+    for (m = 1; m < month; m++) n += cal_days_in_month( year, m );
+    return n + day - 1;
+}
+
+static void cal_from_day_number( LONGLONG n, CALDATETIME *dt )
+{
+    UINT year = (UINT)(n / 366) + 1, month = 1;
+    while (cal_day_number( year + 1, 1, 1 ) <= n) year++;
+    n -= cal_day_number( year, 1, 1 );
+    while (n >= cal_days_in_month( year, month )) n -= cal_days_in_month( year, month++ );
+    dt->Year = year;
+    dt->Month = month;
+    dt->Day = (UINT)n + 1;
+}
+
+static UINT cal_nls_day_of_week( UINT year, UINT month, UINT day )
+{
+    return (UINT)(cal_day_number( year, month, day ) % 7);  /* 1 January 1 was a Monday */
+}
+
+static BOOL cal_valid( const CALDATETIME *dt )
+{
+    return dt && dt->Year >= 1 && dt->Year <= 9999 && dt->Month >= 1 && dt->Month <= 12 &&
+           dt->Day >= 1 && dt->Day <= cal_days_in_month( dt->Year, dt->Month ) &&
+           dt->Hour < 24 && dt->Minute < 60 && dt->Second < 60;
+}
+
+/***********************************************************************
+ *           ConvertNLSDayOfWeekToWin32DayOfWeek   (KERNEL32.@)
+ */
+DWORD WINAPI ConvertNLSDayOfWeekToWin32DayOfWeek( DWORD day )
+{
+    if (day > 6) return 0;
+    return (day + 1) % 7;
+}
+
+/***********************************************************************
+ *           IsValidCalDateTime   (KERNEL32.@)
+ */
+BOOL WINAPI IsValidCalDateTime( const CALDATETIME *dt, DWORD flags )
+{
+    return cal_valid( dt );
+}
+
+/***********************************************************************
+ *           UpdateCalendarDayOfWeek   (KERNEL32.@)
+ */
+BOOL WINAPI UpdateCalendarDayOfWeek( CALDATETIME *dt )
+{
+    if (!cal_valid( dt ))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    dt->DayOfWeek = cal_nls_day_of_week( dt->Year, dt->Month, dt->Day );
+    return TRUE;
+}
+
+/***********************************************************************
+ *           ConvertSystemTimeToCalDateTime   (KERNEL32.@)
+ */
+BOOL WINAPI ConvertSystemTimeToCalDateTime( const SYSTEMTIME *st, CALID id, CALDATETIME *dt )
+{
+    if (!st || !dt)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    dt->CalId = id;
+    dt->Era = 1;
+    dt->Year = st->wYear;
+    dt->Month = st->wMonth;
+    dt->Day = st->wDay;
+    dt->Hour = st->wHour;
+    dt->Minute = st->wMinute;
+    dt->Second = st->wSecond;
+    dt->Tick = st->wMilliseconds * 10000;
+    return UpdateCalendarDayOfWeek( dt );
+}
+
+/***********************************************************************
+ *           ConvertCalDateTimeToSystemTime   (KERNEL32.@)
+ */
+BOOL WINAPI ConvertCalDateTimeToSystemTime( const CALDATETIME *dt, SYSTEMTIME *st )
+{
+    if (!cal_valid( dt ) || !st)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    st->wYear = dt->Year;
+    st->wMonth = dt->Month;
+    st->wDay = dt->Day;
+    st->wDayOfWeek = ConvertNLSDayOfWeekToWin32DayOfWeek( cal_nls_day_of_week( dt->Year, dt->Month, dt->Day ));
+    st->wHour = dt->Hour;
+    st->wMinute = dt->Minute;
+    st->wSecond = dt->Second;
+    st->wMilliseconds = dt->Tick / 10000;
+    return TRUE;
+}
+
+/***********************************************************************
+ *           GetCalendarDaysInMonth   (KERNEL32.@)
+ */
+UINT WINAPI GetCalendarDaysInMonth( CALID id, UINT year, UINT month, UINT era )
+{
+    UINT days = cal_days_in_month( year, month );
+    if (!days) SetLastError( ERROR_INVALID_PARAMETER );
+    return days;
+}
+
+/***********************************************************************
+ *           GetCalendarMonthsInYear   (KERNEL32.@)
+ */
+UINT WINAPI GetCalendarMonthsInYear( CALID id, UINT year, UINT era )
+{
+    return 12;
+}
+
+/***********************************************************************
+ *           GetCalendarSupportedDateRange   (KERNEL32.@)
+ */
+BOOL WINAPI GetCalendarSupportedDateRange( CALID id, CALDATETIME *min, CALDATETIME *max )
+{
+    if (!min || !max)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    memset( min, 0, sizeof(*min) );
+    memset( max, 0, sizeof(*max) );
+    min->CalId = max->CalId = id;
+    min->Era = max->Era = 1;
+    min->Year = 1601; min->Month = 1; min->Day = 1;
+    max->Year = 9999; max->Month = 12; max->Day = 31;
+    max->Hour = 23; max->Minute = 59; max->Second = 59; max->Tick = 9999999;
+    UpdateCalendarDayOfWeek( min );
+    return UpdateCalendarDayOfWeek( max );
+}
+
+/***********************************************************************
+ *           GetCalendarDifferenceInDays   (KERNEL32.@)
+ */
+BOOL WINAPI GetCalendarDifferenceInDays( const CALDATETIME *start, const CALDATETIME *end, INT *diff )
+{
+    if (!cal_valid( start ) || !cal_valid( end ) || !diff)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    *diff = (INT)(cal_day_number( end->Year, end->Month, end->Day ) -
+                  cal_day_number( start->Year, start->Month, start->Day ));
+    return TRUE;
+}
+
+/***********************************************************************
+ *           AdjustCalendarDate   (KERNEL32.@)
+ */
+BOOL WINAPI AdjustCalendarDate( CALDATETIME *dt, DWORD unit, INT amount )
+{
+    LONGLONG n, secs;
+    INT months;
+
+    if (!cal_valid( dt ))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    switch (unit)
+    {
+    case EraUnit:
+        if (amount) goto bad;
+        return TRUE;
+    case YearUnit:
+    case MonthUnit:
+        months = (INT)(dt->Year * 12 + dt->Month - 1) + (unit == YearUnit ? amount * 12 : amount);
+        if (months < 12 || months >= 10000 * 12) goto bad;
+        dt->Year = months / 12;
+        dt->Month = months % 12 + 1;
+        dt->Day = min( dt->Day, cal_days_in_month( dt->Year, dt->Month ));
+        break;
+    case WeekUnit:
+    case DayUnit:
+        n = cal_day_number( dt->Year, dt->Month, dt->Day ) + (LONGLONG)amount * (unit == WeekUnit ? 7 : 1);
+        if (n < 0 || n > cal_day_number( 9999, 12, 31 )) goto bad;
+        cal_from_day_number( n, dt );
+        break;
+    case HourUnit:
+    case MinuteUnit:
+    case SecondUnit:
+        secs = cal_day_number( dt->Year, dt->Month, dt->Day ) * 86400 +
+               dt->Hour * 3600 + dt->Minute * 60 + dt->Second +
+               (LONGLONG)amount * (unit == HourUnit ? 3600 : unit == MinuteUnit ? 60 : 1);
+        if (secs < 0 || secs / 86400 > cal_day_number( 9999, 12, 31 )) goto bad;
+        cal_from_day_number( secs / 86400, dt );
+        dt->Hour = secs % 86400 / 3600;
+        dt->Minute = secs % 3600 / 60;
+        dt->Second = secs % 60;
+        break;
+    default:
+        goto bad;
+    }
+    return UpdateCalendarDayOfWeek( dt );
+bad:
+    SetLastError( ERROR_INVALID_PARAMETER );
+    return FALSE;
+}
+
+/***********************************************************************
+ *           GetCalendarWeekNumber   (KERNEL32.@)
+ *
+ * first_day: the week's first day (NLS numbering); first_week: 0, the week
+ * holding 1 January is week 1; 1, the first full week; 2, the first week with
+ * four days or more (LOCALE_IFIRSTWEEKOFYEAR's values).
+ */
+BOOL WINAPI GetCalendarWeekNumber( const CALDATETIME *dt, INT *week, INT first_day, INT first_week )
+{
+    LONGLONG day, jan1, start;
+    UINT year;
+    int i;
+
+    if (!cal_valid( dt ) || !week || first_day < 0 || first_day > 6 || first_week < 0 || first_week > 2)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    day = cal_day_number( dt->Year, dt->Month, dt->Day );
+    /* the start of week 1 of this year, or of the previous one if day is before it */
+    for (i = 0, year = dt->Year + 1; i < 3; i++, year--)
+    {
+        INT offset;
+        if (year < 1) break;
+        jan1 = cal_day_number( year, 1, 1 );
+        offset = ((INT)(jan1 % 7) - first_day + 7) % 7;  /* days of the week before 1 January */
+        start = jan1 - offset;
+        if (first_week == 1 && offset) start += 7;
+        if (first_week == 2 && offset > 3) start += 7;
+        if (start <= day)
+        {
+            *week = (INT)((day - start) / 7) + 1;
+            return TRUE;
+        }
+    }
+    *week = 1;
+    return TRUE;
+}
+
+/***********************************************************************
+ *           GetCalendarDateFormat   (KERNEL32.@)
+ */
+INT WINAPI GetCalendarDateFormat( LCID lcid, DWORD flags, const CALDATETIME *dt, const WCHAR *format,
+                                  WCHAR *buffer, INT len )
+{
+    SYSTEMTIME st;
+
+    if (!ConvertCalDateTimeToSystemTime( dt, &st )) return 0;
+    return GetDateFormatW( lcid, flags, &st, format, buffer, len );
+}
+
+/***********************************************************************
+ *           GetCalendarDateFormatEx   (KERNEL32.@)
+ */
+INT WINAPI GetCalendarDateFormatEx( const WCHAR *locale, DWORD flags, const CALDATETIME *dt,
+                                    const WCHAR *format, WCHAR *buffer, INT len )
+{
+    SYSTEMTIME st;
+
+    if (!ConvertCalDateTimeToSystemTime( dt, &st )) return 0;
+    return GetDateFormatEx( locale, flags, &st, format, buffer, len, NULL );
+}
+
+/***********************************************************************
+ *           IsCalendarLeapYear   (KERNEL32.@)
+ */
+BOOL WINAPI IsCalendarLeapYear( CALID id, UINT year, UINT era )
+{
+    return cal_leap( year );
+}
+
