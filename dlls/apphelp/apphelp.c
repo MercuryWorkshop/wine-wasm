@@ -51,6 +51,15 @@ BOOL WINAPI ApphelpCheckMsiPackage( void* ptr, LPCWSTR path )
     return TRUE;
 }
 
+/* Whether a program may run, or needs a shim or a compatibility dialog first
+ * (Windows 7's shell32 asks before it starts one). No compatibility database
+ * here: every program runs as it is. */
+BOOL WINAPI ApphelpCheckExe( LPCWSTR path, BOOL shim, BOOL use_module_name, BOOL no_ui )
+{
+    TRACE("%s %d %d %d\n", debugstr_w(path), shim, use_module_name, no_ui);
+    return TRUE;
+}
+
 PDB WINAPI SdbCreateDatabase( LPCWSTR path, PATH_TYPE type )
 {
     FIXME("stub: %s %u\n", debugstr_w(path), type);
