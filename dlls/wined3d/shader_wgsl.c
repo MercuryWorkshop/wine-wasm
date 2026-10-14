@@ -85,6 +85,13 @@ struct shader_wgsl_compile_arguments
         uint32_t first_component;
     } srv_buffers[8];
     unsigned int srv_buffer_count;
+    /* Samplers with a level of detail bias, which WebGPU's samplers lack. */
+    struct
+    {
+        uint32_t sampler_idx;
+        float bias;
+    } lod_biases[8];
+    unsigned int lod_bias_count;
 };
 
 struct shader_wgsl_variant
@@ -127,6 +134,7 @@ struct shader_wgsl_compile_args
     struct vkd3d_shader_wgsl_binding_info *binding_info;
     struct vkd3d_shader_parameter1 parameters[32];
     struct vkd3d_shader_wgsl_buffer_format srv_buffer_formats[8];
+    struct vkd3d_shader_wgsl_sampler_lod_bias lod_biases[8];
 };
 
 static void shader_wgsl_handle_instruction(const struct wined3d_shader_instruction *ins)
@@ -257,6 +265,33 @@ static void shader_wgsl_srv_buffer_args(struct shader_wgsl_compile_arguments *ar
     }
 }
 
+/* The level of detail bias of each sampler the shader declares, as bound. */
+static void shader_wgsl_lod_bias_args(struct shader_wgsl_compile_arguments *args,
+        const struct wined3d_shader *shader, const struct wined3d_state *state)
+{
+    enum wined3d_shader_type type = shader->reg_maps.shader_version.type;
+    const struct vkd3d_shader_scan_descriptor_info *info;
+    const struct wined3d_sampler *sampler;
+    unsigned int i;
+
+    if (!shader->backend_data || type == WINED3D_SHADER_TYPE_COMPUTE)
+        return;
+    info = &((const struct shader_wgsl_graphics_program *)shader->backend_data)->descriptor_info;
+    for (i = 0; i < info->descriptor_count; ++i)
+    {
+        const struct vkd3d_shader_descriptor_info *d = &info->descriptors[i];
+
+        if (d->type != VKD3D_SHADER_DESCRIPTOR_TYPE_SAMPLER || d->register_index >= MAX_SAMPLER_OBJECTS
+                || args->lod_bias_count >= ARRAY_SIZE(args->lod_biases))
+            continue;
+        if (!(sampler = state->sampler[type][d->register_index]) || sampler->desc.lod_bias == 0.0f)
+            continue;
+        args->lod_biases[args->lod_bias_count].sampler_idx = d->register_index;
+        args->lod_biases[args->lod_bias_count].bias = sampler->desc.lod_bias;
+        ++args->lod_bias_count;
+    }
+}
+
 static void shader_wgsl_compile_arguments_init(struct shader_wgsl_compile_arguments *args,
         const struct wined3d_context *context, const struct wined3d_shader *shader,
         const struct wined3d_state *state, unsigned int sample_count,
@@ -355,6 +390,7 @@ static void shader_wgsl_compile_arguments_init(struct shader_wgsl_compile_argume
     }
 
     shader_wgsl_srv_buffer_args(args, context, shader, state);
+    shader_wgsl_lod_bias_args(args, shader, state);
 }
 
 static void fill_buffer_parameter(struct vkd3d_shader_parameter1 *parameter, uint32_t binding,
@@ -505,6 +541,13 @@ static void shader_wgsl_init_compile_args(struct shader_wgsl_compile_args *args,
     }
     args->wgsl_target.srv_buffer_formats = args->srv_buffer_formats;
     args->wgsl_target.srv_buffer_format_count = compile_args->srv_buffer_count;
+    for (i = 0; i < compile_args->lod_bias_count; ++i)
+    {
+        args->lod_biases[i].register_index = compile_args->lod_biases[i].sampler_idx;
+        args->lod_biases[i].bias = compile_args->lod_biases[i].bias;
+    }
+    args->wgsl_target.sampler_lod_biases = args->lod_biases;
+    args->wgsl_target.sampler_lod_bias_count = compile_args->lod_bias_count;
 
     args->parameter_info.type = VKD3D_SHADER_STRUCTURE_TYPE_PARAMETER_INFO;
     args->parameter_info.next = &args->d3dbc_info;

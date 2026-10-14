@@ -1851,8 +1851,30 @@ static void wgsl_ld(struct wgsl_generator *gen, const struct vsir_instruction *i
     wgsl_dst_cleanup(&dst, &gen->string_buffers);
 }
 
+/* A sampler's level of detail bias, from the target info, clamped to what
+ * WGSL takes. */
+static float wgsl_sampler_lod_bias(struct wgsl_generator *gen, const struct vsir_descriptor *d, unsigned int idx)
+{
+    const struct vkd3d_shader_wgsl_target_info *info = gen->target_info;
+    unsigned int i;
+
+    if (!info || !d)
+        return 0.0f;
+    for (i = 0; i < info->sampler_lod_bias_count; ++i)
+    {
+        const struct vkd3d_shader_wgsl_sampler_lod_bias *b = &info->sampler_lod_biases[i];
+
+        if (b->register_space == d->register_space && b->register_index == idx)
+            return b->bias < -16.0f ? -16.0f : b->bias > 15.99f ? 15.99f : b->bias;
+    }
+    return 0.0f;
+}
+
 static void wgsl_sample(struct wgsl_generator *gen, const struct vsir_instruction *ins)
 {
+    const struct vsir_descriptor *sampler_d;
+    bool sampler_bias_only = false;
+    float lod_bias;
     bool bias, compare, dynamic_offset, gather, grad, lod, lod_zero, offset;
     const struct wgsl_resource_type_info *resource_type_info;
     unsigned int resource_id, resource_idx, sampler_id, sampler_idx;
@@ -1917,7 +1939,12 @@ static void wgsl_sample(struct wgsl_generator *gen, const struct vsir_instructio
         resource_type_info = wgsl_get_resource_type_info(VKD3D_SHADER_RESOURCE_TEXTURE_2D);
     }
 
-    wgsl_find_descriptor(gen, VKD3D_SHADER_DESCRIPTOR_TYPE_SAMPLER, sampler, &sampler_id, &sampler_idx);
+    sampler_d = wgsl_find_descriptor(gen, VKD3D_SHADER_DESCRIPTOR_TYPE_SAMPLER, sampler, &sampler_id, &sampler_idx);
+    /* The sampler's bias: a plain sample becomes a biased one (where there
+     * are implicit derivatives), and a biased or explicit level one adds it. */
+    lod_bias = wgsl_sampler_lod_bias(gen, sampler_d, sampler_idx);
+    if (lod_bias != 0.0f && !gather && !compare && !grad && !lod && !lod_zero && !bias)
+        sampler_bias_only = true;
 
     if (!wgsl_dst_init(&dst, gen, ins, &ins->dst[0]))
         return;
@@ -1936,7 +1963,7 @@ static void wgsl_sample(struct wgsl_generator *gen, const struct vsir_instructio
         vkd3d_string_buffer_printf(sample, "textureSampleGrad(");
     else if (lod || lod_zero)
         vkd3d_string_buffer_printf(sample, "textureSampleLevel(");
-    else if (bias)
+    else if (bias || sampler_bias_only)
         vkd3d_string_buffer_printf(sample, "textureSampleBias(");
     else
         vkd3d_string_buffer_printf(sample, "textureSample(");
@@ -1978,11 +2005,18 @@ static void wgsl_sample(struct wgsl_generator *gen, const struct vsir_instructio
     {
         vkd3d_string_buffer_printf(sample, ", ");
         wgsl_print_src_with_type(sample, gen, &ins->src[3], VKD3DSP_WRITEMASK_0, VSIR_DATA_F32);
+        if (lod_bias != 0.0f)
+            vkd3d_string_buffer_printf(sample, " + %.8ef", lod_bias);
     }
     if (bias)
     {
-        vkd3d_string_buffer_printf(sample, ", ");
+        vkd3d_string_buffer_printf(sample, ", clamp(");
         wgsl_print_src_with_type(sample, gen, &ins->src[3], VKD3DSP_WRITEMASK_0, VSIR_DATA_F32);
+        vkd3d_string_buffer_printf(sample, " + %.8ef, -16.0f, 15.99f)", lod_bias);
+    }
+    else if (sampler_bias_only)
+    {
+        vkd3d_string_buffer_printf(sample, ", %.8ef", lod_bias);
     }
     if (offset)
     {
