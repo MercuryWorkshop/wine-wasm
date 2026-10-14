@@ -183,8 +183,8 @@
 # @ stub CredUnprotectA
 # @ stub CredUnprotectW
 @ stdcall CredWriteA(ptr long)
-# @ stub CredWriteDomainCredentialsA
-# @ stub CredWriteDomainCredentialsW
+@ stdcall CredWriteDomainCredentialsA(ptr ptr long)
+@ stdcall CredWriteDomainCredentialsW(ptr ptr long)
 @ stdcall CredWriteW(ptr long)
 # @ stub CredpConvertCredential
 # @ stub CredpConvertOneCredentialSize
