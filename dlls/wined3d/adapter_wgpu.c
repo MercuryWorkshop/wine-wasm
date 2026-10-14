@@ -1948,6 +1948,29 @@ static void init_wgpu_format_info(struct wined3d_adapter *adapter, struct wined3
         format->vertex_format = wgpu_formats[i].vertex_format;
         fixup = wgpu_formats[i].fixup;
     }
+    /* Direct3D 9 and before read the channels a format lacks as 1, as the
+     * GL and Vulkan renderers' legacy fixups do; later versions as 0. */
+    if (!fixup && (adapter->d3d_info.wined3d_creation_flags & WINED3D_LEGACY_UNBOUND_RESOURCE_COLOR))
+    {
+        switch (format->f.id)
+        {
+            case WINED3DFMT_R16_FLOAT:
+            case WINED3DFMT_R32_FLOAT:
+                fixup = "X11W";
+                break;
+            case WINED3DFMT_R16G16_UNORM:
+            case WINED3DFMT_R16G16_FLOAT:
+            case WINED3DFMT_R32G32_FLOAT:
+                fixup = "XY1W";
+                break;
+            case WINED3DFMT_R8G8_SNORM:
+            case WINED3DFMT_R16G16_SNORM:
+                fixup = "XY11";
+                break;
+            default:
+                break;
+        }
+    }
     format->srgb_toggle_format = format->convert_upload ? WGPUTextureFormat_Undefined
             : wgpu_srgb_toggle_format(format->texture_format);
     if (fixup && !wgpu_info->texture_component_swizzle)
