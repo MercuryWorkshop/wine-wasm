@@ -685,7 +685,7 @@ static void wayland_surface_reconfigure_size(struct wayland_surface *surface,
  *
  * Reconfigures the subsurface covering the client area.
  */
-static void wayland_surface_reconfigure_client(struct wayland_surface *surface,
+static BOOL wayland_surface_reconfigure_client(struct wayland_surface *surface,
                                                struct wayland_client_surface *client,
                                                const RECT *client_rect)
 {
@@ -693,6 +693,19 @@ static void wayland_surface_reconfigure_client(struct wayland_surface *surface,
 
     /* The offset of the client area origin relatively to the window origin. */
     rect = map_rect_to_surface(surface, rect);
+
+    /* Every swap updates the client surface (win32u's opengl_drawable_swap
+       and client_surface_present both do), and resending the same position,
+       stacking and size meant a commit of the parent surface each time --
+       twice a frame -- which a compositor takes as the parent's buffer
+       committed again (gex's uploads all 4 MiB of Noita's window each
+       time). Send them only when they change. */
+    if (client->applied && client->applied_parent == surface->wl_surface &&
+        EqualRect(&client->applied_rect, &rect))
+    {
+        if (client_rect) client->rect = *client_rect;
+        return FALSE;
+    }
 
     TRACE("hwnd=%p rect=%s\n", surface->hwnd, wine_dbgstr_rect(&rect));
 
@@ -708,6 +721,10 @@ static void wayland_surface_reconfigure_client(struct wayland_surface *surface,
         wp_viewport_set_destination(client->wp_viewport, 1, 1);
 
     client->rect = *client_rect;
+    client->applied_rect = rect;
+    client->applied_parent = surface->wl_surface;
+    client->applied = TRUE;
+    return TRUE;
 }
 
 /**********************************************************************
@@ -1294,6 +1311,7 @@ void wayland_client_surface_attach(struct wayland_client_surface *client, HWND t
         }
 
         client->toplevel = 0;
+        client->applied = FALSE;
         return;
     }
 
@@ -1319,9 +1337,9 @@ void wayland_client_surface_attach(struct wayland_client_surface *client, HWND t
         client->toplevel = toplevel;
     }
 
-    wayland_surface_reconfigure_client(surface, client, rect);
-    /* Commit to apply subsurface positioning. */
-    wl_surface_commit(surface->wl_surface);
+    /* Commit to apply subsurface positioning, when there is any. */
+    if (wayland_surface_reconfigure_client(surface, client, rect))
+        wl_surface_commit(surface->wl_surface);
 
 done:
     wayland_win_data_release(toplevel_data);

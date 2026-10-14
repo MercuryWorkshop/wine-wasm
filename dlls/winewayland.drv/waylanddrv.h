@@ -256,6 +256,11 @@ struct wayland_client_surface
     struct wl_surface *wl_surface;
     struct wl_subsurface *wl_subsurface;
     struct wp_viewport *wp_viewport;
+    /* The subsurface geometry last sent (in surface coordinates), and the
+       parent it was sent for; applied is FALSE until the first. */
+    RECT applied_rect;
+    struct wl_surface *applied_parent;
+    BOOL applied;
 };
 
 extern struct wayland_client_surface *impl_from_client_surface(struct client_surface *client);
