@@ -135,7 +135,20 @@ extern void heap_thread_detach(void);
     TRACE( "esi=%08lx edi=%08lx cs=%04x ds=%04x es=%04x fs=%04x gs=%04x ss=%04x\n", \
            (c)->Esi, (c)->Edi, LOWORD((c)->SegCs), LOWORD((c)->SegDs), LOWORD((c)->SegEs), \
            LOWORD((c)->SegFs), LOWORD((c)->SegGs), LOWORD((c)->SegSs) ); \
+    TRACE_STACK(c); \
     } while(0)
+/* The top of the stack and the frame chain's return addresses, while the
+ * frames stay above the stack pointer and within a megabyte of it: where a
+ * call to a bad address (eip 0) came from. Only with +seh: the walk reads
+ * guest memory, so it is not done for every exception and unwind. */
+# define TRACE_STACK(c) do { if (TRACE_ON(seh)) { \
+    const DWORD *sp_ = (const DWORD *)(ULONG_PTR)(c)->Esp, *fp_ = (const DWORD *)(ULONG_PTR)(c)->Ebp; \
+    DWORD ret_[6] = {0}; int i_; \
+    for (i_ = 0; i_ < 6 && fp_ >= sp_ && (ULONG_PTR)fp_ - (ULONG_PTR)sp_ < 0x100000 && !((ULONG_PTR)fp_ & 3); i_++) \
+    { ret_[i_] = fp_[1]; if ((const DWORD *)(ULONG_PTR)fp_[0] <= fp_) break; fp_ = (const DWORD *)(ULONG_PTR)fp_[0]; } \
+    if (sp_ && !((ULONG_PTR)sp_ & 3)) TRACE( "stack %08lx %08lx %08lx %08lx frames %08lx %08lx %08lx %08lx %08lx %08lx\n", \
+           sp_[0], sp_[1], sp_[2], sp_[3], ret_[0], ret_[1], ret_[2], ret_[3], ret_[4], ret_[5] ); \
+    } } while(0)
 #elif defined(__x86_64__)
 # define TRACE_CONTEXT(c) do { \
     TRACE( "rip=%016I64x rsp=%016I64x rbp=%016I64x eflags=%08lx\n", (c)->Rip, (c)->Rsp, (c)->Rbp, (c)->EFlags ); \
