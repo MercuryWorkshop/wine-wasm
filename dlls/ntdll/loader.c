@@ -2132,6 +2132,19 @@ NTSTATUS WINAPI LdrGetProcedureAddress(HMODULE module, const ANSI_STRING *name,
 }
 
 
+/******************************************************************
+ *		LdrGetProcedureAddressEx  (NTDLL.@)
+ *
+ * LdrGetProcedureAddress with flags (Windows 7's gameux.dll imports it); no
+ * flag changes what is found.
+ */
+NTSTATUS WINAPI LdrGetProcedureAddressEx( HMODULE module, const ANSI_STRING *name, ULONG ord,
+                                          void **address, ULONG flags )
+{
+    return LdrGetProcedureAddress( module, name, ord, address );
+}
+
+
 /***********************************************************************
  *           set_security_cookie
  *

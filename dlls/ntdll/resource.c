@@ -508,6 +508,34 @@ NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrFindResource_U( HMODULE hmod, const LDR_RES
 }
 
 
+/**********************************************************************
+ *	LdrResFindResource  (NTDLL.@)
+ *
+ * A resource's data and size by type, name and language in one call
+ * (Windows 7's gameux.dll imports it). The culture outputs and the flags
+ * are not used: no MUI fallback beyond LdrFindResource_U's.
+ */
+NTSTATUS WINAPI LdrResFindResource( HMODULE hmod, ULONG_PTR type, ULONG_PTR name, ULONG_PTR lang,
+                                    void **data, ULONG *size, void *culture, ULONG *culture_len,
+                                    ULONG flags )
+{
+    const IMAGE_RESOURCE_DATA_ENTRY *entry;
+    LDR_RESOURCE_INFO info;
+    NTSTATUS status;
+    ULONG len;
+    void *ptr;
+
+    info.Type = type;
+    info.Name = name;
+    info.Language = lang;
+    if ((status = LdrFindResource_U( hmod, &info, 3, &entry ))) return status;
+    if ((status = LdrAccessResource( hmod, entry, &ptr, &len ))) return status;
+    if (data) *data = ptr;
+    if (size) *size = len;
+    if (culture_len) *culture_len = 0;
+    return STATUS_SUCCESS;
+}
+
 /* don't penalize other platforms with stuff needed on i386 for compatibility */
 #ifdef __i386__
 NTSTATUS WINAPI access_resource( HMODULE hmod, const IMAGE_RESOURCE_DATA_ENTRY *entry,
