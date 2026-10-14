@@ -3424,6 +3424,8 @@ static const char *wgsl_vertex_input_conversion(const struct wgsl_generator *gen
         return NULL;
     if (gen->target_info->vertex_uint_to_float_mask & bit)
         return "u32";
+    if (gen->target_info->vertex_r11g11b10_float_mask & bit)
+        return "packed";
     if (gen->target_info->vertex_sint_to_float_mask & bit)
         return "i32";
     return NULL;
@@ -3512,7 +3514,9 @@ static void wgsl_generate_input_struct_declarations(struct wgsl_generator *gen)
             wgsl_record_interpolation(gen, e);
         }
         vkd3d_string_buffer_printf(buffer, " in_%u: ", e->target_location);
-        if (wgsl_vertex_input_conversion(gen, e))
+        if (wgsl_vertex_input_conversion(gen, e) && !strcmp(wgsl_vertex_input_conversion(gen, e), "packed"))
+            vkd3d_string_buffer_printf(buffer, "u32");
+        else if (wgsl_vertex_input_conversion(gen, e))
             vkd3d_string_buffer_printf(buffer, "vec4<%s>", wgsl_vertex_input_conversion(gen, e));
         else
             wgsl_print_io_type(buffer, gen, e);
@@ -4113,7 +4117,25 @@ static void wgsl_generate_entrypoint(struct wgsl_generator *gen)
         {
             if (!(e->mask & (VKD3DSP_WRITEMASK_0 << c)))
                 continue;
-            if (wgsl_vertex_input_conversion(gen, l))
+            if (wgsl_vertex_input_conversion(gen, l) && !strcmp(wgsl_vertex_input_conversion(gen, l), "packed"))
+            {
+                /* Two 11-bit floats and a 10-bit one, each a half float
+                 * with its low mantissa bits gone. */
+                static const char *const unpack[] =
+                {
+                    "unpack2x16float((%s & 0x7ffu) << 4u).x",
+                    "unpack2x16float(((%s >> 11u) & 0x7ffu) << 4u).x",
+                    "unpack2x16float(((%s >> 22u) & 0x3ffu) << 5u).x",
+                };
+
+                vkd3d_string_buffer_printf(buffer, "    v[%u].%c = bitcast<u32>(", i, components[j++]);
+                if (c < 3)
+                    vkd3d_string_buffer_printf(buffer, unpack[c], source);
+                else
+                    vkd3d_string_buffer_printf(buffer, "1.0f");
+                vkd3d_string_buffer_printf(buffer, ");\n");
+            }
+            else if (wgsl_vertex_input_conversion(gen, l))
                 vkd3d_string_buffer_printf(buffer, "    v[%u].%c = bitcast<u32>(f32(%s.%c));\n", i,
                         components[j++], source, components[c]);
             else

@@ -65,7 +65,7 @@ struct shader_wgsl_compile_arguments
             uint32_t flat_mask, noperspective_mask, centroid_mask, sample_mask;
             uint32_t location_mask, int_mask, uint_mask;
             /* Inputs read as float that integer attributes feed. */
-            uint32_t uint_to_float_mask, sint_to_float_mask;
+            uint32_t uint_to_float_mask, sint_to_float_mask, r11g11b10_float_mask;
         } vs;
         struct
         {
@@ -241,6 +241,22 @@ static void shader_wgsl_compile_arguments_init(struct shader_wgsl_compile_argume
                 args->u.vs.location_mask = ps_interpolation->location_mask;
                 args->u.vs.int_mask = ps_interpolation->int_mask;
                 args->u.vs.uint_mask = ps_interpolation->uint_mask;
+            }
+
+            /* R11G11B10_FLOAT attributes arrive as uint32 to unpack, at
+             * the locations the stream elements are given. */
+            if (state->vertex_declaration)
+            {
+                struct wined3d_stream_info stream_info;
+                unsigned int i;
+
+                wined3d_stream_info_from_declaration(&stream_info, state, context->d3d_info);
+                for (i = 0; i < ARRAY_SIZE(stream_info.elements); ++i)
+                {
+                    if ((stream_info.use_map & (1u << i))
+                            && stream_info.elements[i].format->id == WINED3DFMT_R11G11B10_FLOAT)
+                        args->u.vs.r11g11b10_float_mask |= 1u << i;
+                }
             }
 
             /* Direct3D 9 converts integer attributes (UBYTE4, SHORT2) to
@@ -470,6 +486,7 @@ static void shader_wgsl_init_compile_args(struct shader_wgsl_compile_args *args,
 
         args->wgsl_target.vertex_uint_to_float_mask = compile_args->u.vs.uint_to_float_mask;
         args->wgsl_target.vertex_sint_to_float_mask = compile_args->u.vs.sint_to_float_mask;
+        args->wgsl_target.vertex_r11g11b10_float_mask = compile_args->u.vs.r11g11b10_float_mask;
     }
 }
 
