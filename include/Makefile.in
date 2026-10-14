@@ -996,6 +996,7 @@ SOURCES = \
 	wct.h \
 	wdbgexts.h \
 	weakreference.idl \
+	webgpu.h \
 	webservices.h \
 	websocket.h \
 	werapi.h \
@@ -1121,12 +1122,12 @@ SOURCES = \
 	wine/dplaysp.h \
 	wine/epm.idl \
 	wine/exception.h \
+	wine/fil_data.idl \
+	wine/gdi_driver.h \
 	wine/gex/gex_abi.h \
 	wine/gex/provider.h \
 	wine/gex/runtime.h \
 	wine/gex/syscall.h \
-	wine/fil_data.idl \
-	wine/gdi_driver.h \
 	wine/glu.h \
 	wine/hid.h \
 	wine/http.h \
