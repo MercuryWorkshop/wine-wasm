@@ -73,6 +73,18 @@ struct shader_wgsl_compile_arguments
             unsigned int sample_count;
         } fs;
     } u;
+    /* The typed buffer views the shader reads, which it decodes itself:
+     * their formats and where they start in the bound range
+     * (wined3d_wgpu_buffer_srv_range()). */
+    struct
+    {
+        uint8_t resource_idx;
+        uint8_t component_count;
+        uint8_t component_size;
+        uint8_t type; /* 0 float, 1 uint, 2 sint; | 4 normalised */
+        uint32_t first_component;
+    } srv_buffers[8];
+    unsigned int srv_buffer_count;
 };
 
 struct shader_wgsl_variant
@@ -114,6 +126,7 @@ struct shader_wgsl_compile_args
     struct vkd3d_shader_varying_interpolation_info interpolation;
     struct vkd3d_shader_wgsl_binding_info *binding_info;
     struct vkd3d_shader_parameter1 parameters[32];
+    struct vkd3d_shader_wgsl_buffer_format srv_buffer_formats[8];
 };
 
 static void shader_wgsl_handle_instruction(const struct wined3d_shader_instruction *ins)
@@ -188,6 +201,60 @@ static void shader_wgsl_build_varying_map(const struct wined3d_context *context,
     for (i = 0; i < *count; ++i)
         TRACE("  output %u -> register %u mask %#x.\n", map[i].output_signature_index,
                 map[i].input_register_index, map[i].input_mask);
+}
+
+/* The typed buffer views a shader declares, as bound: what the shader
+ * needs to decode them. Packed formats (R10G10B10A2, R11G11B10) are left
+ * to the default, four 32-bit components. */
+static void shader_wgsl_srv_buffer_args(struct shader_wgsl_compile_arguments *args,
+        const struct wined3d_context *context, const struct wined3d_shader *shader, const struct wined3d_state *state)
+{
+    enum wined3d_shader_type type = shader->reg_maps.shader_version.type;
+    const struct vkd3d_shader_scan_descriptor_info *info;
+    unsigned int i;
+
+    if (!shader->backend_data || type == WINED3D_SHADER_TYPE_COMPUTE)
+        return;
+    info = &((const struct shader_wgsl_graphics_program *)shader->backend_data)->descriptor_info;
+    for (i = 0; i < info->descriptor_count; ++i)
+    {
+        const struct vkd3d_shader_descriptor_info *d = &info->descriptors[i];
+        const struct wined3d_shader_resource_view *srv;
+        const struct wined3d_format *format;
+        unsigned int first_component, count;
+        uint64_t offset, size;
+
+        if (d->type != VKD3D_SHADER_DESCRIPTOR_TYPE_SRV || d->resource_type != VKD3D_SHADER_RESOURCE_BUFFER
+                || (d->flags & VKD3D_SHADER_DESCRIPTOR_INFO_FLAG_RAW_BUFFER)
+                || d->register_index >= MAX_SHADER_RESOURCE_VIEWS
+                || args->srv_buffer_count >= ARRAY_SIZE(args->srv_buffers))
+            continue;
+        if (!(srv = state->shader_resource_view[type][d->register_index])
+                || srv->resource->type != WINED3D_RTYPE_BUFFER
+                || !wined3d_wgpu_buffer_srv_range(wined3d_context_wgpu((struct wined3d_context *)context), srv, &offset, &size,
+                &first_component))
+            continue;
+        format = srv->format;
+        count = !!format->red_size + !!format->green_size + !!format->blue_size + !!format->alpha_size;
+        /* Components in R, G, B, A order, all of one size. */
+        if (!count || format->red_size % 8 || format->red_size > 32 || format->red_offset
+                || (format->green_size && (format->green_size != format->red_size
+                || format->green_offset != format->red_size))
+                || (format->blue_size && (format->blue_size != format->red_size
+                || format->blue_offset != 2 * format->red_size))
+                || (format->alpha_size && (format->alpha_size != format->red_size
+                || format->alpha_offset != 3 * format->red_size)))
+            continue;
+        args->srv_buffers[args->srv_buffer_count].resource_idx = d->register_index;
+        args->srv_buffers[args->srv_buffer_count].component_count = count;
+        args->srv_buffers[args->srv_buffer_count].component_size = format->red_size / 8;
+        args->srv_buffers[args->srv_buffer_count].type = (format->attrs & WINED3D_FORMAT_ATTR_FLOAT) ? 0
+                : (format->attrs & WINED3D_FORMAT_ATTR_UNSIGNED) ? 1 : 2;
+        if (format->attrs & WINED3D_FORMAT_ATTR_NORMALISED)
+            args->srv_buffers[args->srv_buffer_count].type |= 4;
+        args->srv_buffers[args->srv_buffer_count].first_component = first_component;
+        ++args->srv_buffer_count;
+    }
 }
 
 static void shader_wgsl_compile_arguments_init(struct shader_wgsl_compile_arguments *args,
@@ -286,6 +353,8 @@ static void shader_wgsl_compile_arguments_init(struct shader_wgsl_compile_argume
         default:
             break;
     }
+
+    shader_wgsl_srv_buffer_args(args, context, shader, state);
 }
 
 static void fill_buffer_parameter(struct vkd3d_shader_parameter1 *parameter, uint32_t binding,
@@ -420,6 +489,22 @@ static void shader_wgsl_init_compile_args(struct shader_wgsl_compile_args *args,
     args->wgsl_target.next = &args->parameter_info;
     /* 1D textures are made 2D (texture_wgpu.c). */
     args->wgsl_target.textures_1d_as_2d = true;
+    for (i = 0; i < compile_args->srv_buffer_count; ++i)
+    {
+        struct vkd3d_shader_wgsl_buffer_format *f = &args->srv_buffer_formats[i];
+        unsigned int type = compile_args->srv_buffers[i].type;
+
+        f->register_space = 0;
+        f->register_index = compile_args->srv_buffers[i].resource_idx;
+        f->component_type = (type & 3) == 1 ? VKD3D_SHADER_COMPONENT_UINT
+                : (type & 3) == 2 ? VKD3D_SHADER_COMPONENT_INT : VKD3D_SHADER_COMPONENT_FLOAT;
+        f->component_count = compile_args->srv_buffers[i].component_count;
+        f->component_size = compile_args->srv_buffers[i].component_size;
+        f->normalised = !!(type & 4);
+        f->first_component = compile_args->srv_buffers[i].first_component;
+    }
+    args->wgsl_target.srv_buffer_formats = args->srv_buffer_formats;
+    args->wgsl_target.srv_buffer_format_count = compile_args->srv_buffer_count;
 
     args->parameter_info.type = VKD3D_SHADER_STRUCTURE_TYPE_PARAMETER_INFO;
     args->parameter_info.next = &args->d3dbc_info;
