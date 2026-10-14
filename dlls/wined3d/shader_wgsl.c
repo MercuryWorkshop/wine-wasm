@@ -824,7 +824,9 @@ static bool shader_wgsl_resource_bindings_init(struct shader_wgsl_resource_bindi
     {
         bindings->binding_base[shader_type] = bindings->next_binding;
 
-        if (!(shader_mask & (1u << shader_type)) || !(shader = state->shader[shader_type]))
+        /* A shader with no backend data (its precompile failed, or a reset
+         * dropped it) has no bindings. */
+        if (!(shader_mask & (1u << shader_type)) || !(shader = state->shader[shader_type]) || !shader->backend_data)
             continue;
 
         if (shader_type == WINED3D_SHADER_TYPE_COMPUTE)
