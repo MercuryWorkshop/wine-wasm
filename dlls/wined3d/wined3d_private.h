@@ -480,6 +480,9 @@ struct wined3d_settings
     unsigned int max_sm_gs;
     unsigned int max_sm_ps;
     unsigned int max_sm_cs;
+    /* The feature level the WebGPU renderer reports, which may be above
+     * what it can do (it has no geometry or tessellation shaders). */
+    enum wined3d_feature_level webgpu_feature_level;
     enum wined3d_renderer renderer;
     enum wined3d_shader_backend shader_backend;
     bool check_float_constants;

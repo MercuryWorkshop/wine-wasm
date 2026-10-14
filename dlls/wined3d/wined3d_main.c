@@ -127,6 +127,7 @@ struct wined3d_settings wined3d_settings =
     .max_sm_hs = UINT_MAX,
     .max_sm_gs = UINT_MAX,
     .max_sm_cs = UINT_MAX,
+    .webgpu_feature_level = WINED3D_FEATURE_LEVEL_9_3,
     .renderer = WINED3D_RENDERER_AUTO,
     .shader_backend = WINED3D_SHADER_BACKEND_AUTO,
 };
@@ -440,6 +441,34 @@ static BOOL wined3d_dll_init(HINSTANCE hInstDLL)
             TRACE("Limiting PS shader model to %u.\n", wined3d_settings.max_sm_ps);
         if (!get_config_key_dword(hkey, appkey, env, "MaxShaderModelCS", &wined3d_settings.max_sm_cs))
             TRACE("Limiting CS shader model to %u.\n", wined3d_settings.max_sm_cs);
+        if (!get_config_key(hkey, appkey, env, "webgpu_feature_level", buffer, size))
+        {
+            static const struct
+            {
+                const char *name;
+                enum wined3d_feature_level level;
+            }
+            levels[] =
+            {
+                {"9_1", WINED3D_FEATURE_LEVEL_9_1},
+                {"9_2", WINED3D_FEATURE_LEVEL_9_2},
+                {"9_3", WINED3D_FEATURE_LEVEL_9_3},
+                {"10_0", WINED3D_FEATURE_LEVEL_10},
+                {"10_1", WINED3D_FEATURE_LEVEL_10_1},
+                {"11_0", WINED3D_FEATURE_LEVEL_11},
+                {"11_1", WINED3D_FEATURE_LEVEL_11_1},
+            };
+            unsigned int i;
+
+            for (i = 0; i < ARRAY_SIZE(levels); ++i)
+            {
+                if (!strcmp(buffer, levels[i].name))
+                {
+                    TRACE("WebGPU feature level %s.\n", buffer);
+                    wined3d_settings.webgpu_feature_level = levels[i].level;
+                }
+            }
+        }
         if (!get_config_key(hkey, appkey, env, "renderer", buffer, size))
         {
             if (!strcmp(buffer, "vulkan"))

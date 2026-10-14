@@ -1991,24 +1991,53 @@ static inline struct wined3d_query_wgpu *wined3d_query_wgpu(struct wined3d_query
     return CONTAINING_RECORD(query, struct wined3d_query_wgpu, q);
 }
 
-static BOOL wined3d_query_event_wgpu_poll(struct wined3d_query *query, uint32_t flags)
+/* Queries complete when the commands before their end complete. Only
+ * events are exact: occlusion queries report every draw visible, which is
+ * right for culling; timestamps are the host's clock; statistics are zero. */
+static BOOL wined3d_query_wgpu_poll(struct wined3d_query *query, uint32_t flags)
 {
     struct wined3d_query_wgpu *query_wgpu = wined3d_query_wgpu(query);
     struct wined3d_context_wgpu *context_wgpu;
     BOOL signalled;
 
     context_wgpu = wined3d_context_wgpu(context_acquire(query->device, NULL, 0));
-    /* An event in the open encoder signals once it is submitted. */
+    /* A query in the open encoder completes once it is submitted. */
     if (query_wgpu->encoder_id == context_wgpu->encoder_id)
         wined3d_context_wgpu_submit(context_wgpu);
     wined3d_context_wgpu_poll(context_wgpu);
     signalled = context_wgpu->completed_encoder_id >= query_wgpu->encoder_id;
     context_release(&context_wgpu->c);
 
-    return *(BOOL *)query->data = signalled;
+    if (!signalled)
+        return FALSE;
+
+    switch (query->type)
+    {
+        case WINED3D_QUERY_TYPE_EVENT:
+            *(BOOL *)query->data = TRUE;
+            break;
+
+        case WINED3D_QUERY_TYPE_OCCLUSION:
+            *(uint64_t *)query->data = 0x10000;
+            break;
+
+        case WINED3D_QUERY_TYPE_TIMESTAMP:
+        {
+            LARGE_INTEGER counter, frequency;
+
+            QueryPerformanceCounter(&counter);
+            QueryPerformanceFrequency(&frequency);
+            *(uint64_t *)query->data = counter.QuadPart * (1000000000 / frequency.QuadPart);
+            break;
+        }
+
+        default:
+            break;
+    }
+    return TRUE;
 }
 
-static BOOL wined3d_query_event_wgpu_issue(struct wined3d_query *query, uint32_t flags)
+static BOOL wined3d_query_wgpu_issue(struct wined3d_query *query, uint32_t flags)
 {
     struct wined3d_query_wgpu *query_wgpu = wined3d_query_wgpu(query);
     struct wined3d_context_wgpu *context_wgpu;
@@ -2030,10 +2059,31 @@ static void wined3d_query_wgpu_destroy(struct wined3d_query *query)
     free(wined3d_query_wgpu(query));
 }
 
-static const struct wined3d_query_ops wined3d_query_event_wgpu_ops =
+static const struct wined3d_query_ops wined3d_query_wgpu_ops =
 {
-    .query_poll = wined3d_query_event_wgpu_poll,
-    .query_issue = wined3d_query_event_wgpu_issue,
+    .query_poll = wined3d_query_wgpu_poll,
+    .query_issue = wined3d_query_wgpu_issue,
+    .query_destroy = wined3d_query_wgpu_destroy,
+};
+
+static BOOL wined3d_query_timestamp_disjoint_wgpu_poll(struct wined3d_query *query, uint32_t flags)
+{
+    struct wined3d_query_data_timestamp_disjoint *data = (void *)query->data;
+
+    data->frequency = 1000000000;
+    data->disjoint = FALSE;
+    return TRUE;
+}
+
+static BOOL wined3d_query_timestamp_disjoint_wgpu_issue(struct wined3d_query *query, uint32_t flags)
+{
+    return FALSE;
+}
+
+static const struct wined3d_query_ops wined3d_query_timestamp_disjoint_wgpu_ops =
+{
+    .query_poll = wined3d_query_timestamp_disjoint_wgpu_poll,
+    .query_issue = wined3d_query_timestamp_disjoint_wgpu_issue,
     .query_destroy = wined3d_query_wgpu_destroy,
 };
 
@@ -2047,11 +2097,38 @@ HRESULT wined3d_query_wgpu_create(struct wined3d_device *device, enum wined3d_qu
     TRACE("device %p, type %#x, parent %p, parent_ops %p, query %p.\n",
             device, type, parent, parent_ops, query);
 
+    ops = &wined3d_query_wgpu_ops;
     switch (type)
     {
         case WINED3D_QUERY_TYPE_EVENT:
-            ops = &wined3d_query_event_wgpu_ops;
+        case WINED3D_QUERY_TYPE_SO_OVERFLOW:
+        case WINED3D_QUERY_TYPE_SO_OVERFLOW_STREAM0:
+        case WINED3D_QUERY_TYPE_SO_OVERFLOW_STREAM1:
+        case WINED3D_QUERY_TYPE_SO_OVERFLOW_STREAM2:
+        case WINED3D_QUERY_TYPE_SO_OVERFLOW_STREAM3:
             data_size = sizeof(BOOL);
+            break;
+
+        case WINED3D_QUERY_TYPE_OCCLUSION:
+        case WINED3D_QUERY_TYPE_TIMESTAMP:
+            data_size = sizeof(uint64_t);
+            break;
+
+        case WINED3D_QUERY_TYPE_TIMESTAMP_DISJOINT:
+            ops = &wined3d_query_timestamp_disjoint_wgpu_ops;
+            data_size = sizeof(struct wined3d_query_data_timestamp_disjoint);
+            break;
+
+        case WINED3D_QUERY_TYPE_PIPELINE_STATISTICS:
+            data_size = sizeof(struct wined3d_query_data_pipeline_statistics);
+            break;
+
+        case WINED3D_QUERY_TYPE_SO_STATISTICS:
+        case WINED3D_QUERY_TYPE_SO_STATISTICS_STREAM0:
+        case WINED3D_QUERY_TYPE_SO_STATISTICS_STREAM1:
+        case WINED3D_QUERY_TYPE_SO_STATISTICS_STREAM2:
+        case WINED3D_QUERY_TYPE_SO_STATISTICS_STREAM3:
+            data_size = sizeof(struct wined3d_query_data_so_statistics);
             break;
 
         default:

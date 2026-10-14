@@ -2592,7 +2592,10 @@ void wined3d_view_wgpu_cleanup(struct wined3d_view_wgpu *view_wgpu)
 {
     if (view_wgpu->view)
         wgpuTextureViewRelease(view_wgpu->view);
+    if (view_wgpu->alt_view)
+        wgpuTextureViewRelease(view_wgpu->alt_view);
     view_wgpu->view = NULL;
+    view_wgpu->alt_view = NULL;
     view_wgpu->source = NULL;
 }
 
@@ -2615,7 +2618,7 @@ static WGPUComponentSwizzle wgpu_swizzle_from_channel_source(enum fixup_channel_
  * view format's swizzle and only the aspect the view format names. */
 static WGPUTextureView wined3d_view_wgpu_create_texture_view(struct wined3d_context_wgpu *context_wgpu,
         const struct wined3d_view_desc *desc, struct wined3d_texture_wgpu *texture_wgpu,
-        const struct wined3d_format *view_format, bool rtv, bool storage)
+        const struct wined3d_format *view_format, bool rtv, bool storage, WGPUTextureViewDimension *dimension)
 {
     const struct wined3d_format_wgpu *view_format_wgpu = wined3d_format_wgpu(view_format);
     WGPUTextureComponentSwizzleDescriptor swizzle_desc = WGPU_TEXTURE_COMPONENT_SWIZZLE_DESCRIPTOR_INIT;
@@ -2663,11 +2666,27 @@ static WGPUTextureView wined3d_view_wgpu_create_texture_view(struct wined3d_cont
 
     view_desc.dimension = wgpu_view_dimension_from_wined3d(resource->type, desc->flags,
             desc->u.texture.layer_count, false);
-    if ((rtv || storage) && view_desc.dimension == WGPUTextureViewDimension_3D && rtv)
-        view_desc.dimension = desc->u.texture.layer_count > 1
-                ? WGPUTextureViewDimension_2DArray : WGPUTextureViewDimension_2D;
+    /* Another dimension a shader wants, from the same range. */
+    if (*dimension)
+        view_desc.dimension = *dimension;
+    *dimension = view_desc.dimension;
     view_desc.baseMipLevel = desc->u.texture.level_idx;
     view_desc.mipLevelCount = desc->u.texture.level_count;
+    /* An attachment is one level and one layer (of a 3D texture, the whole
+     * level, with the slice given when the pass begins). */
+    if (rtv)
+    {
+        view_desc.mipLevelCount = 1;
+        if (view_desc.dimension != WGPUTextureViewDimension_3D)
+        {
+            if (desc->u.texture.layer_count > 1)
+                FIXME("Rendering to %u layers is not supported.\n", desc->u.texture.layer_count);
+            view_desc.dimension = *dimension = WGPUTextureViewDimension_2D;
+            view_desc.baseArrayLayer = desc->u.texture.layer_idx;
+            view_desc.arrayLayerCount = 1;
+            return wgpuTextureCreateView(texture_wgpu->texture, &view_desc);
+        }
+    }
     if (view_desc.dimension == WGPUTextureViewDimension_3D)
     {
         view_desc.baseArrayLayer = 0;
@@ -2702,15 +2721,18 @@ static bool wined3d_view_wgpu_is_default(const struct wined3d_view_desc *desc,
     return resource->format->id == format->id && desc->flags == default_flags
             && !desc->u.texture.level_idx && desc->u.texture.level_count == texture->level_count
             && !desc->u.texture.layer_idx && desc->u.texture.layer_count == texture->layer_count
-            && !is_stencil_view_format(format) && !(rtv && resource->type == WINED3D_RTYPE_TEXTURE_3D)
+            && !is_stencil_view_format(format) && (!rtv || (resource->type != WINED3D_RTYPE_TEXTURE_3D
+            && texture->layer_count == 1 && texture->level_count == 1))
             && (!rtv || is_identity_fixup(format->color_fixup));
 }
 
 static WGPUTextureView wined3d_view_wgpu_get_view(struct wined3d_view_wgpu *view_wgpu,
         struct wined3d_context_wgpu *context_wgpu, const struct wined3d_view_desc *desc,
-        struct wined3d_resource *resource, const struct wined3d_format *format, bool rtv, bool storage)
+        struct wined3d_resource *resource, const struct wined3d_format *format, bool rtv, bool storage,
+        WGPUTextureViewDimension dimension)
 {
     struct wined3d_texture_wgpu *texture_wgpu;
+    WGPUTextureView view;
 
     if (resource->type == WINED3D_RTYPE_BUFFER)
     {
@@ -2723,37 +2745,53 @@ static WGPUTextureView wined3d_view_wgpu_get_view(struct wined3d_view_wgpu *view
         return NULL;
 
     if (!storage && wined3d_view_wgpu_is_default(desc, resource, format, rtv))
-        return wined3d_texture_wgpu_get_default_view(texture_wgpu, context_wgpu, !rtv);
+    {
+        view = wined3d_texture_wgpu_get_default_view(texture_wgpu, context_wgpu, !rtv);
+        if (rtv || !dimension || dimension == texture_wgpu->default_srv_dimension)
+            return view;
+    }
 
-    if (view_wgpu->view && view_wgpu->source == texture_wgpu->texture)
+    if (view_wgpu->source != texture_wgpu->texture)
+    {
+        wined3d_view_wgpu_cleanup(view_wgpu);
+        view_wgpu->dimension = 0;
+        if ((view_wgpu->view = wined3d_view_wgpu_create_texture_view(context_wgpu,
+                desc, texture_wgpu, format, rtv, storage, &view_wgpu->dimension)))
+            view_wgpu->source = texture_wgpu->texture;
+    }
+    if (!dimension || dimension == view_wgpu->dimension)
         return view_wgpu->view;
 
-    wined3d_view_wgpu_cleanup(view_wgpu);
-    if ((view_wgpu->view = wined3d_view_wgpu_create_texture_view(context_wgpu,
-            desc, texture_wgpu, format, rtv, storage)))
-        view_wgpu->source = texture_wgpu->texture;
-    return view_wgpu->view;
+    if (!view_wgpu->alt_view || view_wgpu->alt_dimension != dimension)
+    {
+        if (view_wgpu->alt_view)
+            wgpuTextureViewRelease(view_wgpu->alt_view);
+        view_wgpu->alt_dimension = dimension;
+        view_wgpu->alt_view = wined3d_view_wgpu_create_texture_view(context_wgpu,
+                desc, texture_wgpu, format, rtv, storage, &view_wgpu->alt_dimension);
+    }
+    return view_wgpu->alt_view;
 }
 
 WGPUTextureView wined3d_rendertarget_view_wgpu_get_view(struct wined3d_rendertarget_view_wgpu *rtv_wgpu,
         struct wined3d_context_wgpu *context_wgpu)
 {
     return wined3d_view_wgpu_get_view(&rtv_wgpu->view_wgpu, context_wgpu,
-            &rtv_wgpu->v.desc, rtv_wgpu->v.resource, rtv_wgpu->v.format, true, false);
+            &rtv_wgpu->v.desc, rtv_wgpu->v.resource, rtv_wgpu->v.format, true, false, 0);
 }
 
 WGPUTextureView wined3d_shader_resource_view_wgpu_get_view(struct wined3d_shader_resource_view_wgpu *srv_wgpu,
-        struct wined3d_context_wgpu *context_wgpu)
+        struct wined3d_context_wgpu *context_wgpu, WGPUTextureViewDimension dimension)
 {
     return wined3d_view_wgpu_get_view(&srv_wgpu->view_wgpu, context_wgpu,
-            &srv_wgpu->v.desc, srv_wgpu->v.resource, srv_wgpu->v.format, false, false);
+            &srv_wgpu->v.desc, srv_wgpu->v.resource, srv_wgpu->v.format, false, false, dimension);
 }
 
 WGPUTextureView wined3d_unordered_access_view_wgpu_get_view(struct wined3d_unordered_access_view_wgpu *uav_wgpu,
         struct wined3d_context_wgpu *context_wgpu)
 {
     return wined3d_view_wgpu_get_view(&uav_wgpu->view_wgpu, context_wgpu,
-            &uav_wgpu->v.desc, uav_wgpu->v.resource, uav_wgpu->v.format, false, true);
+            &uav_wgpu->v.desc, uav_wgpu->v.resource, uav_wgpu->v.format, false, true, 0);
 }
 
 HRESULT wined3d_rendertarget_view_wgpu_init(struct wined3d_rendertarget_view_wgpu *view_wgpu,
