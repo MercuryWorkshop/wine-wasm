@@ -1010,7 +1010,7 @@
 @ stub NlsDispatchAnsiEnumProc
 @ stub NlsEventDataDescCreate
 @ stub NlsGetACPFromLocale
-@ stub NlsGetCacheUpdateCount
+@ stdcall NlsGetCacheUpdateCount()
 @ stub NlsIsUserDefaultLocale
 @ stub NlsUpdateLocale
 @ stub NlsUpdateSystemLocale

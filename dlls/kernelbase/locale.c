@@ -782,6 +782,9 @@ static int locale_return_data( const WCHAR *data, int datalen, LCTYPE type, WCHA
 }
 
 
+/* changes to the user's locale settings, for NlsGetCacheUpdateCount */
+static LONG cache_update_count;
+
 static BOOL set_registry_entry( struct registry_entry *entry, const WCHAR *data )
 {
     DWORD size = (wcslen(data) + 1) * sizeof(WCHAR);
@@ -799,6 +802,7 @@ static BOOL set_registry_entry( struct registry_entry *entry, const WCHAR *data 
     {
         wcscpy( entry->data, data );
         entry->status = CACHED;
+        InterlockedIncrement( &cache_update_count );
     }
     RtlLeaveCriticalSection( &locale_section );
     if (ret) SetLastError( ret );
@@ -7155,6 +7159,18 @@ INT WINAPI DECLSPEC_HOTPATCH ResolveLocaleName( LPCWSTR name, LPWSTR buffer, INT
         return 0;
     }
     return datalen;
+}
+
+
+/******************************************************************************
+ *	NlsGetCacheUpdateCount   (kernelbase.@)
+ *
+ * How many times the user's locale settings have changed: a caller that
+ * caches them refreshes its copy when the count moves (Windows 7's shell).
+ */
+ULONG WINAPI NlsGetCacheUpdateCount(void)
+{
+    return cache_update_count;
 }
 
 
