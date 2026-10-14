@@ -24,32 +24,79 @@
 #include "wire.h"
 #include "wire-server.h"
 
+/* Messages are handled on a thread of their own: Dawn keeps some state per
+ * thread (error scopes), and the wire's client batches calls from all the
+ * process's threads, so they must all reach Dawn from one. */
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t request_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t request_cond = PTHREAD_COND_INITIALIZER;
+static pthread_t server_thread;
 static struct gexgpu_server *server;
 static const void *last_reply;
 static size_t last_reply_size;
 
+static struct
+{
+    const void *data;
+    size_t size;
+    BOOL pending, done;
+} request;
+
+static void *server_main(void *arg)
+{
+    struct gexgpu_procs procs;
+
+    GEXGPU_PROCS_INIT_DIRECT(&procs);
+    server = gexgpu_server_create(&procs);
+
+    pthread_mutex_lock(&request_lock);
+    for (;;)
+    {
+        while (!request.pending)
+            pthread_cond_wait(&request_cond, &request_lock);
+        request.pending = FALSE;
+        pthread_mutex_unlock(&request_lock);
+
+        gexgpu_server_handle(server, request.data, request.size, &last_reply, &last_reply_size);
+
+        pthread_mutex_lock(&request_lock);
+        request.done = TRUE;
+        pthread_cond_broadcast(&request_cond);
+    }
+    return NULL;
+}
+
 static NTSTATUS send_message(const void *data, UINT32 size, void *reply, UINT32 reply_capacity, UINT32 *reply_size)
 {
     pthread_mutex_lock(&lock);
-    if (!server)
+    if (!server_thread && pthread_create(&server_thread, NULL, server_main, NULL))
     {
-        struct gexgpu_procs procs;
-
-        GEXGPU_PROCS_INIT_DIRECT(&procs);
-        server = gexgpu_server_create(&procs);
+        pthread_mutex_unlock(&lock);
+        return STATUS_UNSUCCESSFUL;
     }
-    gexgpu_server_handle(server, data, size, &last_reply, &last_reply_size);
+
+    pthread_mutex_lock(&request_lock);
+    request.data = data;
+    request.size = size;
+    request.done = FALSE;
+    request.pending = TRUE;
+    pthread_cond_broadcast(&request_cond);
+    while (!request.done)
+        pthread_cond_wait(&request_cond, &request_lock);
+    pthread_mutex_unlock(&request_lock);
+
     *reply_size = last_reply_size;
-    if (last_reply_size <= reply_capacity)
-        memcpy(reply, last_reply, last_reply_size);
+    /* A reply too big for the caller's buffer is held, with the lock, for
+     * the get_reply call that follows at once. */
+    if (last_reply_size > reply_capacity)
+        return STATUS_SUCCESS;
+    memcpy(reply, last_reply, last_reply_size);
     pthread_mutex_unlock(&lock);
     return STATUS_SUCCESS;
 }
 
 static NTSTATUS get_reply(void *reply, UINT32 reply_capacity)
 {
-    pthread_mutex_lock(&lock);
     if (last_reply_size <= reply_capacity)
         memcpy(reply, last_reply, last_reply_size);
     pthread_mutex_unlock(&lock);
