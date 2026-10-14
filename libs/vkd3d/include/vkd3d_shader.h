@@ -63,6 +63,7 @@ enum vkd3d_shader_api_version
     VKD3D_SHADER_API_VERSION_1_18,
     VKD3D_SHADER_API_VERSION_1_19,
     VKD3D_SHADER_API_VERSION_2_0,
+    VKD3D_SHADER_API_VERSION_2_1,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_API_VERSION),
 };
@@ -138,6 +139,19 @@ enum vkd3d_shader_structure_type
      * \since 2.0
      */
     VKD3D_SHADER_STRUCTURE_TYPE_SCAN_DENORMAL_MODE_INFO,
+    /**
+     * The structure is a vkd3d_shader_scan_global_flags_info structure.
+     * \since 2.2
+     */
+    VKD3D_SHADER_STRUCTURE_TYPE_SCAN_GLOBAL_FLAGS_INFO,
+    /**
+     * The structure is a vkd3d_shader_varying_interpolation_info structure.
+     */
+    VKD3D_SHADER_STRUCTURE_TYPE_VARYING_INTERPOLATION_INFO,
+    /**
+     * The structure is a vkd3d_shader_wgsl_target_info structure.
+     */
+    VKD3D_SHADER_STRUCTURE_TYPE_WGSL_TARGET_INFO,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_STRUCTURE_TYPE),
 };
@@ -240,6 +254,17 @@ enum vkd3d_shader_compile_option_backward_compatibility
      *  \since 2.0
      */
     VKD3D_SHADER_COMPILE_OPTION_CONST_GLOBAL_UNIFORMS = 0x00000004,
+    /**
+     *  Causes all 'half' globals to be handled as 'float'. This option
+     *  applies to HLSL sources with shader model 1-5 target profiles. Without
+     *  this option using the 'half' type on globals produces compilation
+     *  errors in these target profiles.
+     *
+     *  This option is disabled by default.
+     *
+     *  \since 2.1
+     */
+    VKD3D_SHADER_COMPILE_OPTION_BACKCOMPAT_ALLOW_HALF_GLOBALS = 0x00000008,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_BACKWARD_COMPATIBILITY),
 };
@@ -421,6 +446,38 @@ enum vkd3d_shader_compile_option_name
      * \since 2.0
      */
     VKD3D_SHADER_COMPILE_OPTION_DENORMAL_MODE_F64 = 0x00000010,
+    /**
+     * A mask of global flags to override. The new values of these flags are
+     * specified by the
+     * VKD3D_SHADER_COMPILE_OPTION_GLOBAL_FLAGS0_OVERRIDE_VALUE option.
+     *
+     * \a value is a mask of values from enum vkd3d_shader_global_flags0.
+     *
+     * \since 2.2
+     */
+    VKD3D_SHADER_COMPILE_OPTION_GLOBAL_FLAGS0_OVERRIDE_MASK = 0x00000011,
+    /**
+     * Global flags to use instead of those specified by the source shader.
+     * Flags not included in the mask specified by the
+     * VKD3D_SHADER_COMPILE_OPTION_GLOBAL_FLAGS0_OVERRIDE_MASK option are
+     * ignored.
+     *
+     * \a value is a mask of values from enum vkd3d_shader_global_flags0.
+     *
+     * \since 2.2
+     */
+    VKD3D_SHADER_COMPILE_OPTION_GLOBAL_FLAGS0_OVERRIDE_VALUE = 0x00000012,
+    /**
+     * If \a value is non-zero, comply with IEEE 754 floating-point rules when
+     * compiling HLSL sources. For example, when this option is enabled,
+     * "0 * x" can be transformed into "0" only when it can be determined that
+     * "x" is neither a NaN nor an infinity.
+     *
+     * The default value is 1.
+     *
+     * \since 2.2
+     */
+    VKD3D_SHADER_COMPILE_OPTION_IEEE_754_FP = 0x00000013,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_NAME),
 };
@@ -1636,6 +1693,10 @@ enum vkd3d_shader_target_type
      * A 'Metal Shading Language' shader. \since 1.14
      */
     VKD3D_SHADER_TARGET_MSL,
+    /**
+     * A 'WebGPU Shading Language' shader.
+     */
+    VKD3D_SHADER_TARGET_WGSL,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_TARGET_TYPE),
 };
@@ -1728,7 +1789,27 @@ enum vkd3d_shader_spirv_extension
     VKD3D_SHADER_SPIRV_EXTENSION_EXT_VIEWPORT_INDEX_LAYER,
     /** \since 1.12 */
     VKD3D_SHADER_SPIRV_EXTENSION_EXT_FRAGMENT_SHADER_INTERLOCK,
-    /** \since 2.0 */
+    /**
+     * Advertises support for the SPV_KHR_float_controls SPIR-V extension, as
+     * well as the following related VkPhysicalDeviceFloatControlsProperties:
+     *
+     *   - shaderDenormPreserveFloat16
+     *   - shaderDenormPreserveFloat32
+     *   - shaderDenormPreserveFloat64
+     *   - shaderDenormFlushToZeroFloat16
+     *   - shaderDenormFlushToZeroFloat32
+     *   - shaderDenormFlushToZeroFloat64
+     *   - denormBehaviorIndependence = VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL
+     *
+     * Starting with VKD3D_SHADER_API_VERSION_2_2, this also implies support
+     * for the following properties:
+     *
+     *   - shaderSignedZeroInfNanPreserveFloat16
+     *   - shaderSignedZeroInfNanPreserveFloat32
+     *   - shaderSignedZeroInfNanPreserveFloat64
+     *
+     * \since 2.0
+     */
     VKD3D_SHADER_SPIRV_EXTENSION_KHR_FLOAT_CONTROLS,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_SPIRV_EXTENSION),
@@ -2497,6 +2578,49 @@ struct vkd3d_shader_scan_denormal_mode_info
 };
 
 /**
+ * Flags describing the behaviour and/or requirements of a shader as a whole.
+ * Returned as part of struct vkd3d_shader_scan_global_flags_info.
+ *
+ * \since 2.2
+ */
+enum vkd3d_shader_global_flags0
+{
+    /**
+     * Instructions are allowed to be reordered or simplified by downstream
+     * compilers and/or drivers, even if doing so would violate IEEE 754
+     * floating-point rules. */
+    VKD3D_SHADER_GLOBAL_FLAGS0_REFACTORING_ALLOWED = 0x1,
+
+    VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_GLOBAL_FLAGS0),
+};
+
+/**
+ * A chained structure describing the behaviour and/or requirements of a
+ * shader as a whole.
+ *
+ * This structure extends vkd3d_shader_compile_info.
+ *
+ * \since 2.2
+ */
+struct vkd3d_shader_scan_global_flags_info
+{
+    /** Must be set to VKD3D_SHADER_STRUCTURE_TYPE_SCAN_GLOBAL_FLAGS_INFO. */
+    enum vkd3d_shader_structure_type type;
+    /** Optional pointer to a structure containing further parameters. */
+    const void *next;
+
+    /**
+     * A bitwise combination of zero or more members of
+     * \ref vkd3d_shader_global_flags0.
+     */
+    uint32_t flags0;
+    /**
+     * Reserved for future use. This field should be ignored.
+     */
+    uint32_t flags1;
+};
+
+/**
  * A chained structure containing legacy Direct3D bytecode compilation parameters.
  * This structure specifies some information about the source environment that
  * is not specified in the source shader format, but may be necessary for the
@@ -2921,6 +3045,66 @@ struct vkd3d_shader_varying_map_info
 };
 
 /**
+ * A chained structure describing how a pixel shader interpolates its
+ * varyings, for targets whose stages must declare matching interpolation
+ * (WGSL). Bit n of each mask is the varying at location n; a varying in no
+ * mask is interpolated with perspective at the pixel centre.
+ *
+ * When compiling a pixel shader to WGSL, this structure is an output,
+ * filled with the shader's input interpolation. When compiling the stage
+ * before it, it is an input: that stage's outputs are declared to match.
+ *
+ * This structure is passed to vkd3d_shader_compile() and extends
+ * vkd3d_shader_compile_info.
+ */
+struct vkd3d_shader_varying_interpolation_info
+{
+    /** Must be set to VKD3D_SHADER_STRUCTURE_TYPE_VARYING_INTERPOLATION_INFO. */
+    enum vkd3d_shader_structure_type type;
+    /** Optional pointer to a structure containing further parameters. */
+    const void *next;
+
+    /** Varyings that are not interpolated. */
+    uint32_t flat_mask;
+    /** Varyings interpolated without perspective correction. */
+    uint32_t noperspective_mask;
+    /** Varyings interpolated at the centroid. */
+    uint32_t centroid_mask;
+    /** Varyings interpolated at each sample. */
+    uint32_t sample_mask;
+};
+
+/** The texel format of a typed UAV, which a WGSL storage texture declares. */
+struct vkd3d_shader_wgsl_uav_format
+{
+    unsigned int register_space;
+    unsigned int register_index;
+    /** A WGSL texel format, such as "rgba8unorm". */
+    const char *format;
+};
+
+/**
+ * A chained structure with WGSL-specific parameters.
+ *
+ * This structure is passed to vkd3d_shader_compile() and extends
+ * vkd3d_shader_compile_info.
+ */
+struct vkd3d_shader_wgsl_target_info
+{
+    /** Must be set to VKD3D_SHADER_STRUCTURE_TYPE_WGSL_TARGET_INFO. */
+    enum vkd3d_shader_structure_type type;
+    /** Optional pointer to a structure containing further parameters. */
+    const void *next;
+
+    /**
+     * The formats of typed UAVs. One with none given is declared with a
+     * single 32-bit channel of its data type (r32float, r32uint, r32sint).
+     */
+    const struct vkd3d_shader_wgsl_uav_format *uav_formats;
+    unsigned int uav_format_count;
+};
+
+/**
  * Interface information regarding a builtin shader parameter.
  *
  * Like compile options specified with struct vkd3d_shader_compile_option,
@@ -3053,6 +3237,7 @@ VKD3D_SHADER_API const enum vkd3d_shader_target_type *vkd3d_shader_get_supported
  * - vkd3d_shader_scan_combined_resource_sampler_info
  * - vkd3d_shader_scan_denormal_mode_info
  * - vkd3d_shader_scan_descriptor_info
+ * - vkd3d_shader_scan_global_flags_info
  * - vkd3d_shader_scan_hull_shader_tessellation_info
  * - vkd3d_shader_scan_signature_info
  * - vkd3d_shader_scan_thread_group_size_info
@@ -3253,6 +3438,7 @@ VKD3D_SHADER_API int vkd3d_shader_convert_root_signature(struct vkd3d_shader_ver
  * - vkd3d_shader_scan_combined_resource_sampler_info
  * - vkd3d_shader_scan_denormal_mode_info
  * - vkd3d_shader_scan_descriptor_info
+ * - vkd3d_shader_scan_global_flags_info
  * - vkd3d_shader_scan_hull_shader_tessellation_info
  * - vkd3d_shader_scan_signature_info
  * - vkd3d_shader_scan_thread_group_size_info
