@@ -1597,6 +1597,133 @@ static void wgsl_print_texel_result(struct wgsl_generator *gen, struct wgsl_dst 
     vkd3d_string_buffer_release(&gen->string_buffers, result);
 }
 
+/* A typed buffer view's format, from the target info; without one, four
+ * 32-bit components of the declared type. */
+static struct vkd3d_shader_wgsl_buffer_format wgsl_srv_buffer_format(struct wgsl_generator *gen,
+        const struct vsir_descriptor *d, unsigned int idx)
+{
+    const struct vkd3d_shader_wgsl_target_info *info = gen->target_info;
+    struct vkd3d_shader_wgsl_buffer_format f = {0};
+    unsigned int i;
+
+    if (info)
+    {
+        for (i = 0; i < info->srv_buffer_format_count; ++i)
+        {
+            if (info->srv_buffer_formats[i].register_space == d->register_space
+                    && info->srv_buffer_formats[i].register_index == idx)
+                return info->srv_buffer_formats[i];
+        }
+    }
+
+    switch (wgsl_scalar_type(d->resource_data_type))
+    {
+        case VSIR_DATA_U32:
+            f.component_type = VKD3D_SHADER_COMPONENT_UINT;
+            break;
+        case VSIR_DATA_I32:
+            f.component_type = VKD3D_SHADER_COMPONENT_INT;
+            break;
+        default:
+            f.component_type = VKD3D_SHADER_COMPONENT_FLOAT;
+            break;
+    }
+    f.component_count = 4;
+    f.component_size = 4;
+    return f;
+}
+
+/* ld from a typed buffer view: its element decoded from the words of the
+ * storage buffer, zero beyond the bound range, as D3D gives. Components
+ * the format lacks read as 0, w as 1. */
+static void wgsl_ld_buffer(struct wgsl_generator *gen, const struct vsir_instruction *ins,
+        const struct vsir_descriptor *d, unsigned int resource_id, unsigned int resource_idx,
+        enum vsir_data_type data_type)
+{
+    struct vkd3d_shader_wgsl_buffer_format f = wgsl_srv_buffer_format(gen, d, resource_idx);
+    struct vkd3d_string_buffer *read, *name, *index, *raw;
+    const char *scalar = wgsl_scalar_name(gen, data_type);
+    unsigned int c, bits;
+    struct wgsl_dst dst;
+
+    if (f.component_size != 1 && f.component_size != 2 && f.component_size != 4)
+        f.component_size = 4;
+    if (!f.component_count || f.component_count > 4)
+        f.component_count = 4;
+    bits = f.component_size * 8;
+
+    if (!wgsl_dst_init(&dst, gen, ins, &ins->dst[0]))
+        return;
+    read = vkd3d_string_buffer_get(&gen->string_buffers);
+    raw = vkd3d_string_buffer_get(&gen->string_buffers);
+    name = vkd3d_string_buffer_get(&gen->string_buffers);
+    index = vkd3d_string_buffer_get(&gen->string_buffers);
+
+    wgsl_print_descriptor_name(name, VKD3D_SHADER_DESCRIPTOR_TYPE_SRV, resource_id, resource_idx);
+    /* The element's first component, counted from the start of the bound
+     * range. */
+    vkd3d_string_buffer_printf(index, "(");
+    wgsl_print_src_with_type(index, gen, &ins->src[0], VKD3DSP_WRITEMASK_0, VSIR_DATA_U32);
+    vkd3d_string_buffer_printf(index, " * %uu + %uu)", f.component_count, f.first_component);
+
+    vkd3d_string_buffer_printf(read, "select(vec4<%s>(0), vec4<%s>(", scalar, scalar);
+    for (c = 0; c < 4; ++c)
+    {
+        if (c)
+            vkd3d_string_buffer_printf(read, ", ");
+        if (c >= f.component_count)
+        {
+            vkd3d_string_buffer_printf(read, c == 3 ? "%s(1)" : "%s(0)", scalar);
+            continue;
+        }
+        /* The component's bits, in the low bits of a u32. */
+        vkd3d_string_buffer_clear(raw);
+        if (f.component_size == 4)
+            vkd3d_string_buffer_printf(raw, "%s[%s + %uu]", name->buffer, index->buffer, c);
+        else
+            vkd3d_string_buffer_printf(raw, "((%s[(%s + %uu) / %uu] >> (((%s + %uu) %% %uu) * %uu)) & 0x%xu)",
+                    name->buffer, index->buffer, c, 4 / f.component_size,
+                    index->buffer, c, 4 / f.component_size, bits, (1u << bits) - 1);
+
+        switch (f.component_type)
+        {
+            case VKD3D_SHADER_COMPONENT_FLOAT:
+                if (f.component_size == 2)
+                    vkd3d_string_buffer_printf(read, "%s(unpack2x16float(%s).x)", scalar, raw->buffer);
+                else
+                    vkd3d_string_buffer_printf(read, "%s(bitcast<f32>(%s))", scalar, raw->buffer);
+                break;
+
+            case VKD3D_SHADER_COMPONENT_UINT:
+                if (f.normalised)
+                    vkd3d_string_buffer_printf(read, "%s(f32(%s) / %u.0f)", scalar, raw->buffer, (1u << bits) - 1);
+                else
+                    vkd3d_string_buffer_printf(read, "%s(%s)", scalar, raw->buffer);
+                break;
+
+            default:
+                /* Sign-extended from its width. */
+                if (f.normalised)
+                    vkd3d_string_buffer_printf(read, "%s(max(f32((bitcast<i32>(%s) << %uu) >> %uu) / %u.0f, -1.0f))",
+                            scalar, raw->buffer, 32 - bits, 32 - bits, (1u << (bits - 1)) - 1);
+                else
+                    vkd3d_string_buffer_printf(read, "%s((bitcast<i32>(%s) << %uu) >> %uu)",
+                            scalar, raw->buffer, 32 - bits, 32 - bits);
+                break;
+        }
+    }
+    vkd3d_string_buffer_printf(read, "), (%s + %uu) * %uu <= arrayLength(&%s) * 4u)", index->buffer,
+            f.component_count, f.component_size, name->buffer);
+
+    wgsl_print_texel_result(gen, &dst, ins, data_type, read->buffer, ins->src[1].swizzle, false);
+
+    vkd3d_string_buffer_release(&gen->string_buffers, raw);
+    vkd3d_string_buffer_release(&gen->string_buffers, index);
+    vkd3d_string_buffer_release(&gen->string_buffers, name);
+    vkd3d_string_buffer_release(&gen->string_buffers, read);
+    wgsl_dst_cleanup(&dst, &gen->string_buffers);
+}
+
 static void wgsl_ld(struct wgsl_generator *gen, const struct vsir_instruction *ins)
 {
     const struct wgsl_resource_type_info *resource_type_info;
@@ -1625,6 +1752,12 @@ static void wgsl_ld(struct wgsl_generator *gen, const struct vsir_instruction *i
         data_type = VSIR_DATA_F32;
     }
     resource_type = wgsl_effective_resource_type(resource_type, sample_count);
+
+    if (resource_type == VKD3D_SHADER_RESOURCE_BUFFER && descriptor)
+    {
+        wgsl_ld_buffer(gen, ins, descriptor, resource_id, resource_idx, data_type);
+        return;
+    }
 
     if (resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_CUBE
             || resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_CUBEARRAY
@@ -3897,12 +4030,8 @@ static void wgsl_generate_descriptor_declarations(struct wgsl_generator *gen)
                     }
                     if (d->resource_type == VKD3D_SHADER_RESOURCE_BUFFER)
                     {
-                        if (!(d->flags & VKD3D_SHADER_DESCRIPTOR_INFO_FLAG_RAW_BUFFER) && !d->structure_stride)
-                        {
-                            wgsl_compiler_error(gen, VKD3D_SHADER_ERROR_WGSL_UNSUPPORTED,
-                                    "Typed buffer shader resource views are not supported.");
-                            break;
-                        }
+                        /* Raw, structured and typed alike: words, which a
+                         * typed view's loads decode (wgsl_ld_buffer). */
                         vkd3d_string_buffer_printf(gen->buffer,
                                 "@group(%u) @binding(%u) var<storage, read> t%u_%u: array<u32>;\n\n",
                                 group, binding, d->register_id, idx);
