@@ -3182,6 +3182,19 @@ struct vkd3d_shader_wgsl_target_info
     /** Samplers with a level of detail bias; the others have none. */
     const struct vkd3d_shader_wgsl_sampler_lod_bias *sampler_lod_biases;
     unsigned int sampler_lod_bias_count;
+
+    /**
+     * Points bigger than a pixel, which WebGPU does not draw: each point is
+     * an instance of a four-vertex triangle strip (the caller steps vertex
+     * attributes per instance), the vertex shader moving each corner out by
+     * half the point size, in pixels of a viewport point_viewport[] big.
+     * The sprite's coordinate goes from the vertex shader to the pixel
+     * shader at point_coord_location, where a pixel shader that replaces
+     * texture coordinates for point sprites reads it.
+     */
+    bool point_quads;
+    float point_viewport[2];
+    unsigned int point_coord_location;
 };
 
 /** What a binding of a WGSL module is, as a WebGPU bind group layout entry

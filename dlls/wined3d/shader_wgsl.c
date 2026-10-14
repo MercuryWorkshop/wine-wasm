@@ -66,11 +66,15 @@ struct shader_wgsl_compile_arguments
             uint32_t location_mask, int_mask, uint_mask;
             /* Inputs read as float that integer attributes feed. */
             uint32_t uint_to_float_mask, sint_to_float_mask, r11g11b10_float_mask;
+            /* Points drawn as quads, in a viewport this big. */
+            bool point_quads;
+            float viewport[2];
         } vs;
         struct
         {
             struct ps_compile_args args;
             unsigned int sample_count;
+            bool point_quads;
         } fs;
     } u;
     /* The typed buffer views the shader reads, which it decodes itself:
@@ -306,6 +310,7 @@ static void shader_wgsl_compile_arguments_init(struct shader_wgsl_compile_argume
                     state->vertex_declaration && state->vertex_declaration->position_transformed,
                     &args->u.fs.args, context);
             args->u.fs.sample_count = sample_count;
+            args->u.fs.point_quads = wined3d_wgpu_point_quads(state);
             break;
 
         case WINED3D_SHADER_TYPE_VERTEX:
@@ -334,6 +339,11 @@ static void shader_wgsl_compile_arguments_init(struct shader_wgsl_compile_argume
             }
 
             args->u.vs.clip_planes = state->extra_vs_args.clip_planes;
+            if ((args->u.vs.point_quads = wined3d_wgpu_point_quads(state)))
+            {
+                args->u.vs.viewport[0] = state->viewports[0].width;
+                args->u.vs.viewport[1] = state->viewports[0].height;
+            }
             if (ps_interpolation)
             {
                 args->u.vs.flat_mask = ps_interpolation->flat_mask;
@@ -525,6 +535,11 @@ static void shader_wgsl_init_compile_args(struct shader_wgsl_compile_args *args,
     args->wgsl_target.next = &args->parameter_info;
     /* 1D textures are made 2D (texture_wgpu.c). */
     args->wgsl_target.textures_1d_as_2d = true;
+    if (shader_type == WINED3D_SHADER_TYPE_PIXEL)
+    {
+        args->wgsl_target.point_quads = compile_args->u.fs.point_quads;
+        args->wgsl_target.point_coord_location = WINED3D_WGPU_POINT_COORD_LOCATION;
+    }
     for (i = 0; i < compile_args->srv_buffer_count; ++i)
     {
         struct vkd3d_shader_wgsl_buffer_format *f = &args->srv_buffer_formats[i];
@@ -615,6 +630,10 @@ static void shader_wgsl_init_compile_args(struct shader_wgsl_compile_args *args,
         args->wgsl_target.vertex_uint_to_float_mask = compile_args->u.vs.uint_to_float_mask;
         args->wgsl_target.vertex_sint_to_float_mask = compile_args->u.vs.sint_to_float_mask;
         args->wgsl_target.vertex_r11g11b10_float_mask = compile_args->u.vs.r11g11b10_float_mask;
+        args->wgsl_target.point_quads = compile_args->u.vs.point_quads;
+        args->wgsl_target.point_viewport[0] = compile_args->u.vs.viewport[0];
+        args->wgsl_target.point_viewport[1] = compile_args->u.vs.viewport[1];
+        args->wgsl_target.point_coord_location = WINED3D_WGPU_POINT_COORD_LOCATION;
     }
 }
 
