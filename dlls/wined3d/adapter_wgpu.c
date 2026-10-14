@@ -1024,6 +1024,78 @@ static void adapter_wgpu_flush_context(struct wined3d_context *context)
     wined3d_context_wgpu_submit(wined3d_context_wgpu(context));
 }
 
+/* WebGPU has no triangle fans: a fan is drawn as a list, through indices
+ * made here. Each triangle is (first, i, i + 1); for an indexed fan, of
+ * the application's indices, read from the index buffer's CPU copy. */
+static bool wgpu_draw_triangle_fan(struct wined3d_context_wgpu *context_wgpu, const struct wined3d_state *state,
+        const struct wined3d_draw_parameters *parameters, uint32_t instance_count)
+{
+    struct wined3d_device_wgpu *device_wgpu = wined3d_device_wgpu(context_wgpu->c.device);
+    WGPUBufferDescriptor desc = WGPU_BUFFER_DESCRIPTOR_INIT;
+    unsigned int count = parameters->u.direct.index_count, i;
+    unsigned int start = parameters->u.direct.start_idx;
+    const uint8_t *app_indices = NULL;
+    unsigned int index_size = 0;
+    uint32_t *indices;
+    WGPUBuffer buffer;
+    size_t size;
+
+    if (count < 3)
+        return true;
+    if (parameters->indexed)
+    {
+        struct wined3d_buffer *ib = state->index_buffer;
+        struct wined3d_bo_wgpu *bo;
+
+        if (!ib || !ib->buffer_object || !(bo = wined3d_bo_wgpu(ib->buffer_object))->shadow || bo->gpu_written)
+        {
+            FIXME("Indexed triangle fan without a CPU copy of its indices.\n");
+            return false;
+        }
+        index_size = state->index_format == WINED3DFMT_R16_UINT ? 2 : 4;
+        if (state->index_offset + (uint64_t)(start + count) * index_size > bo->size)
+            return false;
+        app_indices = bo->shadow + state->index_offset + start * index_size;
+    }
+
+    size = (size_t)(count - 2) * 3 * sizeof(*indices);
+    if (!(indices = malloc(size)))
+        return false;
+    for (i = 0; i < count - 2; ++i)
+    {
+        unsigned int v[3] = {0, i + 1, i + 2}, j;
+
+        for (j = 0; j < 3; ++j)
+        {
+            if (!app_indices)
+                indices[i * 3 + j] = start + v[j];
+            else if (index_size == 2)
+                indices[i * 3 + j] = ((const uint16_t *)app_indices)[v[j]];
+            else
+                indices[i * 3 + j] = ((const uint32_t *)app_indices)[v[j]];
+        }
+    }
+
+    desc.usage = WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst;
+    desc.size = (size + 3) & ~(size_t)3;
+    if (!(buffer = wgpuDeviceCreateBuffer(device_wgpu->device, &desc)))
+    {
+        free(indices);
+        return false;
+    }
+    wgpuQueueWriteBuffer(device_wgpu->queue, buffer, 0, indices, size);
+    free(indices);
+
+    wgpuRenderPassEncoderSetIndexBuffer(context_wgpu->render_pass, buffer, WGPUIndexFormat_Uint32, 0, size);
+    wgpuRenderPassEncoderDrawIndexed(context_wgpu->render_pass, (count - 2) * 3, instance_count, 0,
+            parameters->indexed ? parameters->u.direct.base_vertex_idx : 0, parameters->u.direct.start_instance);
+    /* The pass holds the buffer for as long as it needs it. */
+    wgpuBufferRelease(buffer);
+    /* The application's index buffer is bound again by the next indexed draw. */
+    context_invalidate_state(&context_wgpu->c, STATE_INDEXBUFFER);
+    return true;
+}
+
 static void adapter_wgpu_draw_primitive(struct wined3d_device *device,
         const struct wined3d_state *state, const struct wined3d_draw_parameters *parameters)
 {
@@ -1068,7 +1140,9 @@ static void adapter_wgpu_draw_primitive(struct wined3d_device *device,
         if (!(instance_count = parameters->u.direct.instance_count))
             instance_count = 1;
 
-        if (parameters->indexed)
+        if (state->primitive_type == WINED3D_PT_TRIANGLEFAN)
+            wgpu_draw_triangle_fan(context_wgpu, state, parameters, instance_count);
+        else if (parameters->indexed)
             wgpuRenderPassEncoderDrawIndexed(context_wgpu->render_pass, parameters->u.direct.index_count,
                     instance_count, parameters->u.direct.start_idx, parameters->u.direct.base_vertex_idx,
                     parameters->u.direct.start_instance);

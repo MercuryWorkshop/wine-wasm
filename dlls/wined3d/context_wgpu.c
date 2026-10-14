@@ -138,6 +138,9 @@ static WGPUPrimitiveTopology wgpu_topology_from_wined3d(enum wined3d_primitive_t
             return WGPUPrimitiveTopology_TriangleList;
         case WINED3D_PT_TRIANGLESTRIP:
             return WGPUPrimitiveTopology_TriangleStrip;
+        /* Drawn as a list, indexed by adapter_wgpu_draw_primitive(). */
+        case WINED3D_PT_TRIANGLEFAN:
+            return WGPUPrimitiveTopology_TriangleList;
         default:
             FIXME("Unhandled primitive type %s.\n", debug_d3dprimitivetype(t));
             return WGPUPrimitiveTopology_Undefined;
