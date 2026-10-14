@@ -828,6 +828,46 @@ static bool wgpu_clear_ds_aspect(struct wined3d_device *device, struct wined3d_r
     return true;
 }
 
+/* A full colour clear made now, in a pass of its own, through the view's
+ * own format: for what a delayed clear cannot express (a typeless texture's
+ * clear depends on the view's format). */
+static bool wgpu_clear_rt_now(struct wined3d_device *device, struct wined3d_rendertarget_view *view,
+        const struct wined3d_color *colour)
+{
+    WGPURenderPassColorAttachment a = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
+    WGPURenderPassDescriptor desc = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
+    struct wined3d_context_wgpu *context_wgpu;
+    WGPURenderPassEncoder pass;
+    WGPUCommandEncoder encoder;
+
+    if (view->resource->type == WINED3D_RTYPE_BUFFER || view->resource->type == WINED3D_RTYPE_TEXTURE_3D)
+        return false;
+
+    context_wgpu = wined3d_context_wgpu(context_acquire(device, NULL, 0));
+    wined3d_rendertarget_view_prepare_location(view, &context_wgpu->c, view->resource->draw_binding);
+    if (!(a.view = wined3d_rendertarget_view_wgpu_get_view(wined3d_rendertarget_view_wgpu(view), context_wgpu))
+            || !(encoder = wined3d_context_wgpu_get_encoder(context_wgpu)))
+    {
+        context_release(&context_wgpu->c);
+        return false;
+    }
+    wined3d_context_wgpu_end_passes(context_wgpu);
+
+    a.loadOp = WGPULoadOp_Clear;
+    a.storeOp = WGPUStoreOp_Store;
+    wined3d_format_colour_to_wgpu(view->format, colour, &a.clearValue);
+    desc.colorAttachmentCount = 1;
+    desc.colorAttachments = &a;
+    pass = wgpuCommandEncoderBeginRenderPass(encoder, &desc);
+    wgpuRenderPassEncoderEnd(pass);
+    wgpuRenderPassEncoderRelease(pass);
+
+    wined3d_rendertarget_view_validate_location(view, view->resource->draw_binding);
+    wined3d_rendertarget_view_invalidate_location(view, ~view->resource->draw_binding);
+    context_release(&context_wgpu->c);
+    return true;
+}
+
 static void wgpu_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_device *device,
         unsigned int rt_count, const struct wined3d_fb_state *fb, unsigned int rect_count, const RECT *clear_rects,
         const RECT *draw_rect, uint32_t flags, const struct wined3d_color *colour, float depth, unsigned int stencil)
@@ -856,9 +896,13 @@ static void wgpu_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_d
             if (!(view = fb->render_targets[i]))
                 continue;
 
+            /* A typeless texture's bytes depend on the view's format, which
+             * a delayed clear does not keep; zero is zero in all of them. */
             if (view->resource->type != WINED3D_RTYPE_BUFFER
                     && wined3d_rendertarget_view_is_full_clear(view, draw_rect, clear_rects)
-                    && !wined3d_rendertarget_view_use_cpu_clear(view))
+                    && !wined3d_rendertarget_view_use_cpu_clear(view)
+                    && (!wined3d_format_is_typeless(view->resource->format)
+                    || (!colour->r && !colour->g && !colour->b && !colour->a)))
             {
                 struct wined3d_texture *texture = texture_from_resource(view->resource);
 
@@ -867,6 +911,11 @@ static void wgpu_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_d
                 texture->sub_resources[view->sub_resource_idx].clear_value.colour = *colour;
                 continue;
             }
+            if (view->resource->type != WINED3D_RTYPE_BUFFER
+                    && wined3d_rendertarget_view_is_full_clear(view, draw_rect, clear_rects)
+                    && !wined3d_rendertarget_view_use_cpu_clear(view)
+                    && wgpu_clear_rt_now(device, view, colour))
+                continue;
 
             TRACE_(d3d_perf)("Partial clear of render target %u.\n", i);
             next_fb.render_targets[i] = view;
