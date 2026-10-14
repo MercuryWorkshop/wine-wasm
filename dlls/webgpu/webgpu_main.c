@@ -40,7 +40,11 @@ static const void *transport(void *context, const void *data, size_t size, size_
         free(reply_buffer);
         if (!(reply_buffer = malloc(capacity)))
         {
+            /* The Unix side holds the reply until it is fetched. */
             reply_capacity = 0;
+            params.reply = NULL;
+            params.reply_capacity = 0;
+            WINE_UNIX_CALL(unix_get_reply, &params);
             *reply_size = 0;
             return NULL;
         }
