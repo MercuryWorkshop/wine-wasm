@@ -1437,7 +1437,8 @@ wgpu_formats[] =
     {WINED3DFMT_R32G32_SINT,            WGPUTextureFormat_RG32Sint,         WGPUVertexFormat_Sint32x2},
     {WINED3DFMT_R10G10B10A2_UNORM,      WGPUTextureFormat_RGB10A2Unorm,     WGPUVertexFormat_Unorm10_10_10_2},
     {WINED3DFMT_R10G10B10A2_UINT,       WGPUTextureFormat_RGB10A2Uint,      WGPU_VERTEX_FORMAT_NONE},
-    {WINED3DFMT_R11G11B10_FLOAT,        WGPUTextureFormat_RG11B10Ufloat,    WGPU_VERTEX_FORMAT_NONE},
+    /* As uint32, unpacked by the vertex shader (vertex_r11g11b10_float_mask). */
+    {WINED3DFMT_R11G11B10_FLOAT,        WGPUTextureFormat_RG11B10Ufloat,    WGPUVertexFormat_Uint32},
     {WINED3DFMT_R8G8_UNORM,             WGPUTextureFormat_RG8Unorm,         WGPUVertexFormat_Unorm8x2},
     {WINED3DFMT_R8G8_UINT,              WGPUTextureFormat_RG8Uint,          WGPUVertexFormat_Uint8x2},
     {WINED3DFMT_R8G8_SNORM,             WGPUTextureFormat_RG8Snorm,         WGPUVertexFormat_Snorm8x2},
