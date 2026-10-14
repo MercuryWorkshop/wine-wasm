@@ -239,7 +239,9 @@ static void wined3d_texture_wgpu_upload_data(struct wined3d_context *context,
     WGPUTexelCopyBufferInfo src = WGPU_TEXEL_COPY_BUFFER_INFO_INIT;
     WGPUTexelCopyTextureInfo dst = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT;
     unsigned int src_width, src_height, src_depth, y, z;
+    void (*convert)(const uint8_t *src, uint32_t *dst, unsigned int width);
     struct wined3d_staging_wgpu staging;
+    unsigned int packed_row_bytes = 0;
     struct wgpu_copy_layout layout;
     struct wined3d_bo_address addr;
     WGPUCommandEncoder encoder;
@@ -294,6 +296,14 @@ static void wined3d_texture_wgpu_upload_data(struct wined3d_context *context,
 
     src_size = (size_t)src_slice_pitch * (src_depth - 1) + (size_t)src_row_pitch * (layout.row_count - 1)
             + layout.row_bytes;
+    /* A format WebGPU lacks is converted, row by row, to BGRA8. */
+    if ((convert = wined3d_format_wgpu(src_format)->convert_upload))
+    {
+        packed_row_bytes = layout.row_bytes;
+        layout.row_bytes = src_width * 4;
+        layout.row_pitch = (layout.row_bytes + WINED3D_WGPU_ROW_ALIGNMENT - 1) & ~(WINED3D_WGPU_ROW_ALIGNMENT - 1);
+        layout.size = (uint64_t)layout.row_pitch * layout.row_count * src_depth;
+    }
     addr.buffer_object = src_bo_addr->buffer_object;
     addr.addr = (uint8_t *)src_bo_addr->addr + src_box->front * src_slice_pitch
             + (src_box->top / src_format->block_height) * src_row_pitch
@@ -312,9 +322,16 @@ static void wined3d_texture_wgpu_upload_data(struct wined3d_context *context,
     for (z = 0; z < src_depth; ++z)
     {
         for (y = 0; y < layout.row_count; ++y)
-            memcpy(packed + (z * layout.row_count + y) * layout.row_pitch,
-                    data + z * src_slice_pitch + y * src_row_pitch, layout.row_bytes);
+        {
+            if (convert)
+                convert(data + z * src_slice_pitch + y * src_row_pitch,
+                        (uint32_t *)(packed + (z * layout.row_count + y) * layout.row_pitch), src_width);
+            else
+                memcpy(packed + (z * layout.row_count + y) * layout.row_pitch,
+                        data + z * src_slice_pitch + y * src_row_pitch, layout.row_bytes);
+        }
     }
+    (void)packed_row_bytes;
     wined3d_context_unmap_bo_address(context, &addr, 0, NULL);
 
     if (!wined3d_context_wgpu_stage(context_wgpu, packed, layout.size, 256, &staging))
@@ -337,7 +354,7 @@ static void wined3d_texture_wgpu_upload_data(struct wined3d_context *context,
         dst.origin.z = dst_z;
     else
         dst.origin.z = dst_sub_resource_idx / dst_texture->level_count;
-    extent.width = layout.copy_width;
+    extent.width = convert ? src_width : layout.copy_width;
     extent.height = dst_texture->resource.type == WINED3D_RTYPE_TEXTURE_1D ? 1 : layout.copy_height;
     extent.depthOrArrayLayers = src_depth;
 
@@ -365,6 +382,8 @@ static void wined3d_texture_wgpu_download_data(struct wined3d_context *context,
     WGPUTexelCopyBufferInfo dst = WGPU_TEXEL_COPY_BUFFER_INFO_INIT;
     WGPUBufferDescriptor buffer_desc = WGPU_BUFFER_DESCRIPTOR_INIT;
     unsigned int src_width, src_height, src_depth, y, z;
+    void (*convert)(const uint32_t *src, uint8_t *dst, unsigned int width);
+    unsigned int packed_row_bytes = 0;
     WGPUMapAsyncStatus status = 0;
     struct wgpu_copy_layout layout;
     WGPUCommandEncoder encoder;
@@ -420,6 +439,14 @@ static void wined3d_texture_wgpu_download_data(struct wined3d_context *context,
     if (src_texture->resource.type != WINED3D_RTYPE_TEXTURE_3D)
         dst_slice_pitch = 0;
     wgpu_copy_layout_init(&layout, dst_format, src_width, src_height, src_depth);
+    if ((convert = wined3d_format_wgpu(dst_format)->convert_download))
+    {
+        packed_row_bytes = layout.row_bytes;
+        layout.row_bytes = src_width * 4;
+        layout.row_pitch = (layout.row_bytes + WINED3D_WGPU_ROW_ALIGNMENT - 1) & ~(WINED3D_WGPU_ROW_ALIGNMENT - 1);
+        layout.size = (uint64_t)layout.row_pitch * layout.row_count * src_depth;
+        layout.copy_width = src_width;
+    }
 
     buffer_desc.usage = WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst;
     buffer_desc.size = layout.size;
@@ -465,7 +492,7 @@ static void wined3d_texture_wgpu_download_data(struct wined3d_context *context,
     }
 
     dst_size = (size_t)dst_slice_pitch * (src_depth - 1) + (size_t)dst_row_pitch * (layout.row_count - 1)
-            + layout.row_bytes;
+            + (convert ? packed_row_bytes : layout.row_bytes);
     if ((dst_ptr = wined3d_context_map_bo_address(context, dst_bo_addr, dst_size, WINED3D_MAP_WRITE)))
     {
         struct wined3d_range range = {0, dst_size};
@@ -473,8 +500,14 @@ static void wined3d_texture_wgpu_download_data(struct wined3d_context *context,
         for (z = 0; z < src_depth; ++z)
         {
             for (y = 0; y < layout.row_count; ++y)
-                memcpy(dst_ptr + z * dst_slice_pitch + y * dst_row_pitch,
-                        data + (z * layout.row_count + y) * layout.row_pitch, layout.row_bytes);
+            {
+                if (convert)
+                    convert((const uint32_t *)(data + (z * layout.row_count + y) * layout.row_pitch),
+                            dst_ptr + z * dst_slice_pitch + y * dst_row_pitch, src_width);
+                else
+                    memcpy(dst_ptr + z * dst_slice_pitch + y * dst_row_pitch,
+                            data + (z * layout.row_count + y) * layout.row_pitch, layout.row_bytes);
+            }
         }
         wined3d_context_unmap_bo_address(context, dst_bo_addr, 1, &range);
     }
