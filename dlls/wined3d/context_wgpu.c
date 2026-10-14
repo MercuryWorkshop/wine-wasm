@@ -630,6 +630,7 @@ static void wined3d_context_wgpu_update_vertex_input(struct wined3d_context_wgpu
     uint32_t mask;
 
     memset(key->buffers, 0, sizeof(key->buffers));
+    memset(context_wgpu->slot_vertex_size, 0, sizeof(context_wgpu->slot_vertex_size));
     key->buffer_count = 0;
     *null_slot = ~0u;
     memset(stream_slots, 0xff, sizeof(stream_slots));
@@ -670,6 +671,8 @@ static void wined3d_context_wgpu_update_vertex_input(struct wined3d_context_wgpu
         a->format = wined3d_format_wgpu(e->format)->vertex_format;
         a->offset = (UINT_PTR)e->data.addr - state->streams[e->stream_idx].offset;
         a->shaderLocation = i;
+        context_wgpu->slot_vertex_size[slot] = max(context_wgpu->slot_vertex_size[slot],
+                a->offset + e->format->byte_count);
     }
 
     /* The shader's inputs that no element feeds read zero, from a buffer
@@ -777,7 +780,7 @@ static void wined3d_context_wgpu_update_depth_stencil_state(struct wined3d_conte
     key->depth_compare = WGPUCompareFunction_Always;
     key->ds_format = WGPUTextureFormat_Undefined;
 
-    if (!dsv)
+    if (!dsv || !context_wgpu->pass_has_ds)
         return;
     key->ds_format = wined3d_texture_wgpu(texture_from_resource(dsv->resource))->format;
 
@@ -1032,7 +1035,14 @@ static bool wined3d_context_wgpu_begin_render_pass(struct wined3d_context_wgpu *
     desc.colorAttachmentCount = context_wgpu->rt_count;
     desc.colorAttachments = colour;
 
-    if ((view = state->fb.depth_stencil))
+    context_wgpu->pass_has_ds = false;
+    if ((view = state->fb.depth_stencil) && any && (view->width < width || view->height < height))
+    {
+        FIXME("Depth/stencil view %ux%u is smaller than the render targets; ignoring it.\n",
+                view->width, view->height);
+        view = NULL;
+    }
+    if (view)
     {
         struct wined3d_texture *texture = texture_from_resource(view->resource);
         bool cleared = wined3d_rendertarget_view_get_locations(view) & WINED3D_LOCATION_CLEARED;
@@ -1054,6 +1064,7 @@ static bool wined3d_context_wgpu_begin_render_pass(struct wined3d_context_wgpu *
             desc.depthStencilAttachment = &ds;
             width = min(width, view->width);
             height = min(height, view->height);
+            context_wgpu->pass_has_ds = true;
             any = true;
         }
     }
@@ -1319,12 +1330,51 @@ static bool wined3d_context_wgpu_bind_resources(struct wined3d_context_wgpu *con
 
                 if (srv && srv->resource->type != WINED3D_RTYPE_BUFFER)
                 {
-                    if (binding->type == WINED3D_SHADER_DESCRIPTOR_TYPE_WGPU_SRV_DEPTH
-                            && !srv->resource->format->depth_size)
-                        FIXME("Comparison with a non-depth texture.\n");
+                    unsigned int attrs = srv->format->attrs;
+                    bool type_ok;
+
+                    /* A view in a format the texture cannot take is of the
+                     * texture's own format (typeless resources). */
+                    if (!(srv->resource->bind_flags & WINED3D_BIND_DEPTH_STENCIL)
+                            && wined3d_format_wgpu(srv->format)->texture_format
+                            != wined3d_texture_wgpu(texture_from_resource(srv->resource))->format
+                            && wined3d_format_wgpu(srv->format)->texture_format
+                            != wined3d_format_wgpu(srv->resource->format)->srgb_toggle_format)
+                        attrs = srv->resource->format->attrs;
+
+                    /* WebGPU binds only a texture of the sample type declared. */
+                    if (binding->type == WINED3D_SHADER_DESCRIPTOR_TYPE_WGPU_SRV_DEPTH)
+                        type_ok = srv->resource->format->depth_size;
+                    else if (binding->data_type == VKD3D_SHADER_RESOURCE_DATA_UINT)
+                        type_ok = (attrs & WINED3D_FORMAT_ATTR_INTEGER) && (attrs & WINED3D_FORMAT_ATTR_UNSIGNED);
+                    else if (binding->data_type == VKD3D_SHADER_RESOURCE_DATA_INT)
+                        type_ok = (attrs & WINED3D_FORMAT_ATTR_INTEGER) && !(attrs & WINED3D_FORMAT_ATTR_UNSIGNED);
                     else
+                        type_ok = !(attrs & WINED3D_FORMAT_ATTR_INTEGER);
+
+                    /* WebGPU does not sample what the pass renders to. */
+                    for (unsigned int k = 0; type_ok && k < context_wgpu->rt_count; ++k)
+                    {
+                        if (state->fb.render_targets[k] && state->fb.render_targets[k]->resource == srv->resource)
+                        {
+                            WARN("Sampling render target %u.\n", k);
+                            type_ok = false;
+                        }
+                    }
+                    if (type_ok && context_wgpu->pass_has_ds && state->fb.depth_stencil
+                            && state->fb.depth_stencil->resource == srv->resource)
+                    {
+                        WARN("Sampling the depth/stencil target.\n");
+                        type_ok = false;
+                    }
+
+                    if (type_ok)
                         e->textureView = wined3d_shader_resource_view_wgpu_get_view(
-                                wined3d_shader_resource_view_wgpu(srv), context_wgpu);
+                                wined3d_shader_resource_view_wgpu(srv), context_wgpu,
+                                bindings->entries[i].texture.viewDimension);
+                    else
+                        WARN("View format %s does not match the shader's declaration.\n",
+                                debug_d3dformat(srv->format->id));
                 }
                 if (!e->textureView)
                     e->textureView = wined3d_context_wgpu_null_view(context_wgpu, binding);
@@ -1415,19 +1465,22 @@ static void wined3d_context_wgpu_bind_vertex_buffers(struct wined3d_context_wgpu
         if (slot == null_slot)
         {
             wgpuRenderPassEncoderSetVertexBuffer(context_wgpu->render_pass, slot, r->buffer, 0, WGPU_WHOLE_SIZE);
+            context_wgpu->slot_bound_size[slot] = WINED3D_WGPU_MIN_CONSTANT_BUFFER_SIZE;
             continue;
         }
 
         stream = &state->streams[slot_streams[slot]];
-        if (!stream->buffer || !stream->buffer->buffer_object)
+        if (!stream->buffer || !stream->buffer->buffer_object || stream->offset >= stream->buffer->resource.size)
         {
             wgpuRenderPassEncoderSetVertexBuffer(context_wgpu->render_pass, slot, r->buffer, 0, WGPU_WHOLE_SIZE);
+            context_wgpu->slot_bound_size[slot] = WINED3D_WGPU_MIN_CONSTANT_BUFFER_SIZE;
             continue;
         }
         bo = wined3d_bo_wgpu(stream->buffer->buffer_object);
         wined3d_context_wgpu_reference_bo(context_wgpu, bo);
         wgpuRenderPassEncoderSetVertexBuffer(context_wgpu->render_pass, slot, bo->buffer,
                 bo->b.buffer_offset + stream->offset, WGPU_WHOLE_SIZE);
+        context_wgpu->slot_bound_size[slot] = bo->size - bo->b.buffer_offset - stream->offset;
     }
 }
 
@@ -1663,6 +1716,7 @@ bool wined3d_context_wgpu_apply_draw_state(struct wined3d_context_wgpu *context_
         wined3d_context_wgpu_reference_bo(context_wgpu, bo);
         wgpuRenderPassEncoderSetIndexBuffer(context_wgpu->render_pass, bo->buffer, index_format,
                 bo->b.buffer_offset + state->index_offset, WGPU_WHOLE_SIZE);
+        context_wgpu->index_bound_size = bo->size - bo->b.buffer_offset - min(state->index_offset, bo->size);
     }
 
     /* Resources are bound for every draw: a bind group is cheap, and which
@@ -1694,6 +1748,58 @@ bool wined3d_context_wgpu_apply_draw_state(struct wined3d_context_wgpu *context_
 
     memset(context_wgpu->c.dirty_graphics_states, 0, sizeof(context_wgpu->c.dirty_graphics_states));
 
+    return true;
+}
+
+/* Whether a draw reads only what is bound, which WebGPU requires; Direct3D
+ * reads zero past the end. */
+bool wined3d_context_wgpu_check_draw(const struct wined3d_context_wgpu *context_wgpu,
+        const struct wined3d_state *state, const struct wined3d_draw_parameters *parameters)
+{
+    const struct wined3d_graphics_pipeline_key_wgpu *key = &context_wgpu->graphics.key;
+    uint64_t vertex_end, instance_end, count, needed;
+    unsigned int slot;
+
+    if (parameters->indirect)
+        return true;
+
+    vertex_end = (uint64_t)parameters->u.direct.start_idx + parameters->u.direct.index_count;
+    instance_end = (uint64_t)parameters->u.direct.start_instance + max(parameters->u.direct.instance_count, 1);
+
+    if (parameters->indexed)
+    {
+        unsigned int index_size = state->index_format == WINED3DFMT_R16_UINT ? 2 : 4;
+
+        if (vertex_end * index_size > context_wgpu->index_bound_size)
+        {
+            WARN("Index range %s exceeds the bound index buffer.\n", wine_dbgstr_longlong(vertex_end));
+            return false;
+        }
+    }
+
+    for (slot = 0; slot < key->buffer_count; ++slot)
+    {
+        if (!key->buffers[slot].stride)
+        {
+            needed = context_wgpu->slot_vertex_size[slot];
+        }
+        else
+        {
+            /* Indexed draws are not checked per vertex. */
+            if (key->buffers[slot].step_mode == WGPUVertexStepMode_Vertex && parameters->indexed)
+                continue;
+            count = key->buffers[slot].step_mode == WGPUVertexStepMode_Instance ? instance_end : vertex_end;
+            if (!count)
+                continue;
+            needed = (count - 1) * key->buffers[slot].stride + context_wgpu->slot_vertex_size[slot];
+        }
+        if (needed > context_wgpu->slot_bound_size[slot])
+        {
+            WARN("Draw reads %s bytes of vertex buffer slot %u, %s bound.\n", wine_dbgstr_longlong(needed),
+                    slot, wine_dbgstr_longlong(context_wgpu->slot_bound_size[slot]));
+            return false;
+        }
+    }
     return true;
 }
 

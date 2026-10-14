@@ -330,6 +330,8 @@ static void shader_wgsl_init_compile_args(struct shader_wgsl_compile_args *args,
     memset(args, 0, sizeof(*args));
     args->wgsl_target.type = VKD3D_SHADER_STRUCTURE_TYPE_WGSL_TARGET_INFO;
     args->wgsl_target.next = &args->parameter_info;
+    /* 1D textures are made 2D (texture_wgpu.c). */
+    args->wgsl_target.textures_1d_as_2d = true;
 
     args->parameter_info.type = VKD3D_SHADER_STRUCTURE_TYPE_PARAMETER_INFO;
     args->parameter_info.next = &args->d3dbc_info;
@@ -662,7 +664,6 @@ static WGPUTextureViewDimension wgpu_view_dimension_from_vkd3d(enum vkd3d_shader
     switch (t)
     {
         case VKD3D_SHADER_RESOURCE_TEXTURE_1D:
-            return WGPUTextureViewDimension_1D;
         case VKD3D_SHADER_RESOURCE_TEXTURE_2D:
         case VKD3D_SHADER_RESOURCE_TEXTURE_2DMS:
             return WGPUTextureViewDimension_2D;
@@ -1175,6 +1176,16 @@ static void shader_wgsl_get_caps(const struct wined3d_adapter *adapter, struct s
     caps->vs_version = min(wined3d_settings.max_sm_vs, 5);
     caps->ps_version = min(wined3d_settings.max_sm_ps, 5);
     caps->cs_version = min(wined3d_settings.max_sm_cs, 5);
+    /* Geometry and tessellation shaders are only claimed, for a feature
+     * level that needs them: they are created, but draws with them fail. */
+    if (wined3d_settings.webgpu_feature_level >= WINED3D_FEATURE_LEVEL_10)
+        caps->gs_version = min(wined3d_settings.max_sm_gs, 4);
+    if (wined3d_settings.webgpu_feature_level >= WINED3D_FEATURE_LEVEL_11)
+    {
+        caps->gs_version = min(wined3d_settings.max_sm_gs, 5);
+        caps->hs_version = min(wined3d_settings.max_sm_hs, 5);
+        caps->ds_version = min(wined3d_settings.max_sm_ds, 5);
+    }
 
     caps->vs_uniform_count = WINED3D_MAX_VS_CONSTS_F;
     caps->ps_uniform_count = WINED3D_MAX_PS_CONSTS_F;
