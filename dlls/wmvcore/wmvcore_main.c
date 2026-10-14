@@ -30,18 +30,37 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(wmvcore);
 
+/* winegstreamer is not built without GStreamer: loaded when first needed, so
+ * that a reader then fails to be created instead of the caller crashing on an
+ * unresolved delay import. */
+HRESULT create_wm_sync_reader(IUnknown *outer, void **out)
+{
+    static HRESULT (WINAPI *create)(IUnknown *, void **);
+    HMODULE module;
+
+    if (!create && (module = LoadLibraryW(L"winegstreamer.dll")))
+        create = (void *)GetProcAddress(module, "winegstreamer_create_wm_sync_reader");
+    if (!create)
+    {
+        ERR("winegstreamer is not available.\n");
+        *out = NULL;
+        return E_NOTIMPL;
+    }
+    return create(outer, out);
+}
+
 HRESULT WINAPI WMCreateSyncReader(IUnknown *reserved, DWORD rights, IWMSyncReader **reader)
 {
     TRACE("reserved %p, rights %#lx, reader %p.\n", reserved, rights, reader);
 
-    return winegstreamer_create_wm_sync_reader(NULL, (void **)reader);
+    return create_wm_sync_reader(NULL, (void **)reader);
 }
 
 HRESULT WINAPI WMCreateSyncReaderPriv(IWMSyncReader **reader)
 {
     TRACE("reader %p.\n", reader);
 
-    return winegstreamer_create_wm_sync_reader(NULL, (void **)reader);
+    return create_wm_sync_reader(NULL, (void **)reader);
 }
 
 HRESULT WINAPI WMCheckURLExtension(const WCHAR *url)
