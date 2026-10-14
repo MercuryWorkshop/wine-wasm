@@ -365,6 +365,9 @@ struct wined3d_null_resources_wgpu
     WGPUSampler sampler, comparison_sampler;
     /* A fragment shader with no outputs, for draws with none. */
     WGPUShaderModule fragment_module;
+    /* Depth to r32float, for reading back depth formats WebGPU cannot copy
+     * (texture_wgpu.c), made when first needed. */
+    WGPURenderPipeline depth_read_pipeline;
 };
 
 struct wined3d_device_wgpu
