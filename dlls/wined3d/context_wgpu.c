@@ -300,9 +300,14 @@ void wined3d_context_wgpu_poll(struct wined3d_context_wgpu *context_wgpu)
 bool wined3d_context_wgpu_wait_future(struct wined3d_context_wgpu *context_wgpu, WGPUFuture future)
 {
     WGPUFutureWaitInfo info = {future, FALSE};
+    WGPUWaitStatus status;
 
-    return wgpuInstanceWaitAny(context_wgpu->wgpu_info->instance, 1, &info, UINT64_MAX)
-            == WGPUWaitStatus_Success && info.completed;
+    /* Bounded: GPU work that never completes is an error to report, not a
+     * process to hang. */
+    status = wgpuInstanceWaitAny(context_wgpu->wgpu_info->instance, 1, &info, 10ull * 1000 * 1000 * 1000);
+    if (status != WGPUWaitStatus_Success || !info.completed)
+        ERR("Waiting for future %s failed, status %#x.\n", wine_dbgstr_longlong(future.id), status);
+    return status == WGPUWaitStatus_Success && info.completed;
 }
 
 void wined3d_context_wgpu_wait(struct wined3d_context_wgpu *context_wgpu, uint64_t encoder_id)
