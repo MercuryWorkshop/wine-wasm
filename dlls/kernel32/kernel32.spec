@@ -149,7 +149,7 @@
 # @ stub AddSecureMemoryCacheCallback
 @ stdcall AddVectoredContinueHandler(long ptr) NTDLL.RtlAddVectoredContinueHandler
 @ stdcall AddVectoredExceptionHandler(long ptr) NTDLL.RtlAddVectoredExceptionHandler
-# @ stub AdjustCalendarDate
+@ stdcall AdjustCalendarDate(ptr long long)
 @ stdcall -import AllocConsole()
 @ stub -i386 AllocLSCallback
 @ stdcall -i386 -private AllocSLCallback(ptr ptr) krnl386.exe16.AllocSLCallback
@@ -249,11 +249,11 @@
 @ stub ConsoleMenuControl
 @ stub ConsoleSubst
 @ stdcall -import ContinueDebugEvent(long long long)
-# @ stub ConvertCalDateTimeToSystemTime
+@ stdcall ConvertCalDateTimeToSystemTime(ptr ptr)
 @ stdcall -import ConvertDefaultLocale (long)
 @ stdcall -import ConvertFiberToThread()
-# @ stub ConvertNLSDayOfWeekToWin32DayOfWeek
-# @ stub ConvertSystemTimeToCalDateTime
+@ stdcall ConvertNLSDayOfWeekToWin32DayOfWeek(long)
+@ stdcall ConvertSystemTimeToCalDateTime(ptr long ptr)
 @ stdcall -import ConvertThreadToFiber(ptr)
 @ stdcall -import ConvertThreadToFiberEx(ptr long)
 @ stdcall ConvertToGlobalHandle(long)
@@ -561,16 +561,16 @@
 @ stdcall -import GetCPInfo(long ptr)
 @ stdcall GetCPInfoExA(long long ptr)
 @ stdcall -import GetCPInfoExW(long long ptr)
-# @ stub GetCalendarDateFormat
-# @ stub GetCalendarDateFormatEx
-# @ stub GetCalendarDaysInMonth
-# @ stub GetCalendarDifferenceInDays
+@ stdcall GetCalendarDateFormat(long long ptr wstr ptr long)
+@ stdcall GetCalendarDateFormatEx(wstr long ptr wstr ptr long)
+@ stdcall GetCalendarDaysInMonth(long long long long)
+@ stdcall GetCalendarDifferenceInDays(ptr ptr ptr)
 @ stdcall GetCalendarInfoA(long long long ptr long ptr)
 @ stdcall -import GetCalendarInfoW(long long long ptr long ptr)
 @ stdcall -import GetCalendarInfoEx(wstr long ptr long ptr long ptr)
-# @ stub GetCalendarMonthsInYear
-# @ stub GetCalendarSupportedDateRange
-# @ stub GetCalendarWeekNumber
+@ stdcall GetCalendarMonthsInYear(long long long)
+@ stdcall GetCalendarSupportedDateRange(long ptr ptr)
+@ stdcall GetCalendarWeekNumber(ptr ptr long long)
 # @ stub GetComPlusPackageInstallStatus
 @ stdcall -import GetCommConfig(long ptr ptr)
 @ stdcall -import GetCommMask(long ptr)
@@ -1005,7 +1005,7 @@
 @ stdcall IsBadWritePtr(ptr long)
 # @ stub IsCalendarLeapDay
 # @ stub IsCalendarLeapMonth
-# @ stub IsCalendarLeapYear
+@ stdcall IsCalendarLeapYear(long long long)
 @ stdcall -import IsDBCSLeadByte(long)
 @ stdcall -import IsDBCSLeadByteEx(long long)
 @ stdcall -import IsDebuggerPresent()
@@ -1019,7 +1019,7 @@
 @ stdcall -import IsThreadAFiber()
 @ stdcall IsThreadpoolTimerSet(ptr) NTDLL.TpIsTimerSet
 # @ stub IsTimeZoneRedirectionEnabled
-# @ stub IsValidCalDateTime
+@ stdcall IsValidCalDateTime(ptr long)
 @ stdcall -import IsValidCodePage(long)
 @ stdcall -import IsValidLanguageGroup(long long)
 @ stdcall -import IsValidLocale(long long)
@@ -1593,7 +1593,7 @@
 # @ stub UnregisterConsoleIME
 @ stdcall UnregisterWait(long)
 @ stdcall -import UnregisterWaitEx(long long)
-# @ stub UpdateCalendarDayOfWeek
+@ stdcall UpdateCalendarDayOfWeek(ptr)
 @ stdcall -import UpdateProcThreadAttribute(ptr long long ptr long ptr ptr)
 @ stdcall UpdateResourceA(long str str long ptr long)
 @ stdcall UpdateResourceW(long wstr wstr long ptr long)
