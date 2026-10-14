@@ -1502,6 +1502,37 @@ BOOL WINAPI CredReadDomainCredentialsW(PCREDENTIAL_TARGET_INFORMATIONW TargetInf
 }
 
 /******************************************************************************
+ * CredWriteDomainCredentialsA [ADVAPI32.@]
+ *
+ * The target information only says which domain the credential is for: the
+ * credential is written as CredWrite writes it.
+ */
+BOOL WINAPI CredWriteDomainCredentialsA(PCREDENTIAL_TARGET_INFORMATIONA TargetInfo, PCREDENTIALA Credential, DWORD Flags)
+{
+    TRACE("(%p, %p, 0x%lx)\n", TargetInfo, Credential, Flags);
+    if (!TargetInfo)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return CredWriteA(Credential, Flags);
+}
+
+/******************************************************************************
+ * CredWriteDomainCredentialsW [ADVAPI32.@]
+ */
+BOOL WINAPI CredWriteDomainCredentialsW(PCREDENTIAL_TARGET_INFORMATIONW TargetInfo, PCREDENTIALW Credential, DWORD Flags)
+{
+    TRACE("(%p, %p, 0x%lx)\n", TargetInfo, Credential, Flags);
+    if (!TargetInfo)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return CredWriteW(Credential, Flags);
+}
+
+/******************************************************************************
  * CredWriteA [ADVAPI32.@]
  */
 BOOL WINAPI CredWriteA(PCREDENTIALA Credential, DWORD Flags)
