@@ -44,6 +44,34 @@ static BOOL driver_draws_glass(void)
     return state;
 }
 
+/* Windows 7's uxtheme takes a window's frame back from DWM (when it has a
+ * window region, or its theme is detached) with this private attribute. */
+#define DWMWA_NCRENDERING_EXILED 0x10001
+
+/* Whether DWM draws the window's frame: the policy the application set
+ * (DWMWA_NCRENDERING_POLICY) and whether uxtheme exiled it, kept with the
+ * window. */
+static const WCHAR ncrendering_policy_prop[] = L"__wine_dwm_ncrendering_policy";
+static const WCHAR ncrendering_exiled_prop[] = L"__wine_dwm_ncrendering_exiled";
+
+static BOOL ncrendering_enabled( HWND hwnd )
+{
+    DWORD style = GetWindowLongW( hwnd, GWL_STYLE );
+
+    if (!driver_draws_glass()) return FALSE;
+    if ((style & WS_CAPTION) != WS_CAPTION || (style & WS_CHILD)) return FALSE;
+    if ((UINT_PTR)GetPropW( hwnd, ncrendering_policy_prop ) == DWMNCRP_DISABLED + 1) return FALSE;
+    return !GetPropW( hwnd, ncrendering_exiled_prop );
+}
+
+static void update_ncrendering( HWND hwnd )
+{
+    struct set_window_glass_params params = { .mask = WINDOW_GLASS_FRAME };
+
+    params.frame = ncrendering_enabled( hwnd );
+    NtUserSetWindowGlass( hwnd, &params );
+}
+
 /* The colorization, as Windows 7 keeps it; its default is "sky". */
 struct colorization
 {
@@ -203,6 +231,31 @@ HRESULT WINAPI DwmSetWindowAttribute(HWND hwnd, DWORD attributenum, LPCVOID attr
 {
     static BOOL once;
 
+    TRACE("(%p, %lx, %p, %lx)\n", hwnd, attributenum, attribute, size);
+
+    switch (attributenum)
+    {
+    case DWMWA_NCRENDERING_POLICY:
+    {
+        DWORD policy;
+
+        if (!attribute || size < sizeof(DWORD)) return E_INVALIDARG;
+        policy = *(const DWORD *)attribute;
+        if (policy >= DWMNCRP_LAST) return E_INVALIDARG;
+        if (!IsWindow( hwnd )) return E_HANDLE;
+        SetPropW( hwnd, ncrendering_policy_prop, (HANDLE)(UINT_PTR)(policy + 1) );
+        if (driver_draws_glass()) update_ncrendering( hwnd );
+        return S_OK;
+    }
+    case DWMWA_NCRENDERING_EXILED:
+        if (!attribute || size < sizeof(BOOL)) return E_INVALIDARG;
+        if (!IsWindow( hwnd )) return E_HANDLE;
+        if (*(const BOOL *)attribute) SetPropW( hwnd, ncrendering_exiled_prop, (HANDLE)1 );
+        else RemovePropW( hwnd, ncrendering_exiled_prop );
+        if (driver_draws_glass()) update_ncrendering( hwnd );
+        return S_OK;
+    }
+
     if (!once++) FIXME("(%p, %lx, %p, %lx) stub\n", hwnd, attributenum, attribute, size);
 
     return S_OK;
@@ -309,6 +362,12 @@ HRESULT WINAPI DwmGetWindowAttribute(HWND hwnd, DWORD attribute, PVOID pv_attrib
         return E_HANDLE;
 
     switch (attribute) {
+    case DWMWA_NCRENDERING_ENABLED:
+        if (!pv_attribute) return E_INVALIDARG;
+        if (size < sizeof(BOOL)) return E_NOT_SUFFICIENT_BUFFER;
+        *(BOOL *)pv_attribute = ncrendering_enabled( hwnd );
+        hr = S_OK;
+        break;
     case DWMWA_EXTENDED_FRAME_BOUNDS:
     {
         RECT *rect = (RECT *)pv_attribute;
