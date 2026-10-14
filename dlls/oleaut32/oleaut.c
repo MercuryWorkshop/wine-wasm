@@ -830,7 +830,7 @@ static BOOL actctx_get_typelib_module(REFIID iid, WCHAR *module, DWORD len)
 static HRESULT reg_get_typelib_module(REFIID iid, WCHAR *module, DWORD len)
 {
     REGSAM opposite = (sizeof(void*) == 8) ? KEY_WOW64_32KEY : KEY_WOW64_64KEY;
-    char tlguid[200], typelibkey[316], interfacekey[300], ver[100], tlfn[260];
+    char tlguid[200], typelibkey[316], interfacekey[300], ver[100], tlfn[260], expanded[MAX_PATH];
     DWORD tlguidlen, verlen, type;
     LONG tlfnlen, err;
     BOOL is_wow64;
@@ -887,7 +887,10 @@ static HRESULT reg_get_typelib_module(REFIID iid, WCHAR *module, DWORD len)
         }
 #endif
     }
-    MultiByteToWideChar(CP_ACP, 0, tlfn, -1, module, len);
+    /* The value may be REG_EXPAND_SZ (e.g. "%CommonProgramFiles%\\..."). */
+    tlfnlen = ExpandEnvironmentStringsA(tlfn, expanded, sizeof(expanded));
+    if (!tlfnlen || tlfnlen > sizeof(expanded)) strcpy(expanded, tlfn);
+    MultiByteToWideChar(CP_ACP, 0, expanded, -1, module, len);
     return S_OK;
 }
 
