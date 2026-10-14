@@ -93,6 +93,8 @@ struct wgsl_generator
     const struct vkd3d_shader_interface_info *interface_info;
     struct vkd3d_shader_varying_interpolation_info *interpolation_info;
     const struct vkd3d_shader_wgsl_target_info *target_info;
+    struct vkd3d_shader_wgsl_binding_info *binding_info;
+    size_t binding_capacity;
 };
 
 struct wgsl_resource_type_info
@@ -419,6 +421,18 @@ enum wgsl_operand_kind
     WGSL_OPERAND_IMMEDIATE,
 };
 
+/* The rows of the I/O signature element "element". */
+static unsigned int wgsl_io_element_rows(const struct wgsl_generator *gen,
+        enum vsir_register_type type, unsigned int element)
+{
+    const struct vsir_signature *signature = type == VSIR_REGISTER_INPUT
+            ? &gen->program->input_signature : &gen->program->output_signature;
+
+    if (element >= signature->element_count)
+        return 1;
+    return max(signature->elements[element].register_count, 1);
+}
+
 static enum wgsl_operand_kind wgsl_print_operand_name(struct vkd3d_string_buffer *buffer,
         struct wgsl_generator *gen, const struct vsir_operand *reg, enum vsir_data_type *scalar_type)
 {
@@ -435,10 +449,32 @@ static enum wgsl_operand_kind wgsl_print_operand_name(struct vkd3d_string_buffer
 
         case VSIR_REGISTER_INPUT:
         case VSIR_REGISTER_OUTPUT:
+            /* Arrayed I/O is addressed (row, element). An element of
+             * several rows (clip distances, say) is an array of its own. */
+            if (reg->idx_count == 2 && !reg->idx[1].rel_addr)
+            {
+                const char *prefix = reg->type == VSIR_REGISTER_INPUT ? "v" : "o";
+
+                if (wgsl_io_element_rows(gen, reg->type, reg->idx[1].offset) > 1)
+                {
+                    vkd3d_string_buffer_printf(buffer, "%s_e%u", prefix, reg->idx[1].offset);
+                    wgsl_print_subscript(buffer, gen, reg->idx[0].rel_addr, reg->idx[0].offset);
+                    return WGSL_OPERAND_VEC4_U32;
+                }
+                if (!reg->idx[0].rel_addr && !reg->idx[0].offset)
+                {
+                    vkd3d_string_buffer_printf(buffer, "%s[%u]", prefix, reg->idx[1].offset);
+                    return WGSL_OPERAND_VEC4_U32;
+                }
+            }
             if (reg->idx_count != 1)
             {
                 wgsl_compiler_error(gen, VKD3D_SHADER_ERROR_WGSL_INTERNAL,
-                        "Internal compiler error: Unhandled I/O register index count %u.", reg->idx_count);
+                        "Internal compiler error: Unhandled I/O register index count %u (%s, %u%s, %u%s).",
+                        reg->idx_count, reg->type == VSIR_REGISTER_INPUT ? "input" : "output",
+                        reg->idx[0].offset, reg->idx[0].rel_addr ? " relative" : "",
+                        reg->idx_count > 1 ? reg->idx[1].offset : 0,
+                        reg->idx_count > 1 && reg->idx[1].rel_addr ? " relative" : "");
                 vkd3d_string_buffer_printf(buffer, "<unhandled register %#x>", reg->type);
                 return WGSL_OPERAND_VEC4_U32;
             }
@@ -514,8 +550,27 @@ static enum wgsl_operand_kind wgsl_print_operand_name(struct vkd3d_string_buffer
             vkd3d_string_buffer_printf(buffer, "v_local_thread_index");
             return WGSL_OPERAND_VEC4_U32;
 
-        case VSIR_REGISTER_UNDEF:
         case VSIR_REGISTER_PARAMETER:
+        {
+            const struct vkd3d_shader_parameter1 *parameter;
+            unsigned int word;
+
+            if (!(parameter = vsir_program_get_parameter(gen->program, reg->idx[0].offset))
+                    || parameter->type != VKD3D_SHADER_PARAMETER_TYPE_BUFFER)
+                return WGSL_OPERAND_IMMEDIATE;
+            /* A parameter in a buffer is read from it: a vector whole,
+             * a scalar into x. */
+            word = parameter->u.buffer.offset / 4;
+            if (parameter->data_type == VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32_VEC4 && !(word % 4))
+                vkd3d_string_buffer_printf(buffer, "vkd3d_param_%u_%u[%u]",
+                        parameter->u.buffer.set, parameter->u.buffer.binding, word / 4);
+            else
+                vkd3d_string_buffer_printf(buffer, "vec4<u32>(vkd3d_param_%u_%u[%u].%c, 0u, 0u, 0u)",
+                        parameter->u.buffer.set, parameter->u.buffer.binding, word / 4, "xyzw"[word % 4]);
+            return WGSL_OPERAND_VEC4_U32;
+        }
+
+        case VSIR_REGISTER_UNDEF:
             return WGSL_OPERAND_IMMEDIATE;
 
         case VSIR_REGISTER_OUT_POINT_SIZE:
@@ -631,6 +686,24 @@ static void wgsl_print_src_with_type(struct vkd3d_string_buffer *buffer, struct 
             break;
 
         case WGSL_OPERAND_VEC4_U32:
+            if (reg->dimension != VSIR_DIMENSION_VEC4)
+            {
+                /* A scalar register, splatted to as many components as
+                 * the mask has. */
+                if (component_count > 1)
+                {
+                    wgsl_print_type(buffer, gen, data_type, component_count);
+                    vkd3d_string_buffer_printf(buffer, "(");
+                }
+                if (wgsl_scalar_type(data_type) == VSIR_DATA_U32)
+                    vkd3d_string_buffer_printf(buffer, "%s.x", name->buffer);
+                else
+                    vkd3d_string_buffer_printf(buffer, "bitcast<%s>(%s.x)",
+                            wgsl_scalar_name(gen, data_type), name->buffer);
+                if (component_count > 1)
+                    vkd3d_string_buffer_printf(buffer, ")");
+                break;
+            }
             if (wgsl_scalar_type(data_type) == VSIR_DATA_U32)
             {
                 vkd3d_string_buffer_printf(buffer, "%s", name->buffer);
@@ -1727,6 +1800,10 @@ static void wgsl_unary_op(struct wgsl_generator *gen, const struct vsir_instruct
     struct wgsl_dst dst;
     uint32_t mask;
 
+    /* WGSL negates only signed types; the bits are the same. */
+    if (!strcmp(op, "-") && wgsl_scalar_type(type) == VSIR_DATA_U32)
+        type = VSIR_DATA_I32;
+
     if (!(mask = wgsl_dst_init(&dst, gen, ins, &ins->dst[0])))
         return;
     wgsl_src_init(&src, gen, &ins->src[0], mask, type);
@@ -1783,7 +1860,8 @@ static void wgsl_movc(struct wgsl_generator *gen, const struct vsir_instruction 
 }
 
 /* cmp: src0 >= 0 ? src1 : src2, per component, src0 compared as float. */
-static void wgsl_cmp(struct wgsl_generator *gen, const struct vsir_instruction *ins)
+/* cmp: src1 where src0 >= 0, src2 elsewhere; cnd: where src0 > 0.5. */
+static void wgsl_cmp(struct wgsl_generator *gen, const struct vsir_instruction *ins, const char *condition)
 {
     unsigned int component_count;
     struct wgsl_src src[3];
@@ -1797,15 +1875,69 @@ static void wgsl_cmp(struct wgsl_generator *gen, const struct vsir_instruction *
     wgsl_src_init(&src[2], gen, &ins->src[2], mask, VSIR_DATA_U32);
 
     if ((component_count = vsir_write_mask_component_count(mask)) > 1)
-        wgsl_print_assignment_with_type(gen, &dst, VSIR_DATA_U32, "select(%s, %s, %s >= vec%u<f32>(0.0f))",
-                src[2].str->buffer, src[1].str->buffer, src[0].str->buffer, component_count);
+        wgsl_print_assignment_with_type(gen, &dst, VSIR_DATA_U32, "select(%s, %s, %s %s vec%u<f32>(%s))",
+                src[2].str->buffer, src[1].str->buffer, src[0].str->buffer,
+                condition, component_count, condition[1] == '=' ? "0.0f" : "0.5f");
     else
-        wgsl_print_assignment_with_type(gen, &dst, VSIR_DATA_U32, "select(%s, %s, %s >= 0.0f)",
-                src[2].str->buffer, src[1].str->buffer, src[0].str->buffer);
+        wgsl_print_assignment_with_type(gen, &dst, VSIR_DATA_U32, "select(%s, %s, %s %s %s)",
+                src[2].str->buffer, src[1].str->buffer, src[0].str->buffer,
+                condition, condition[1] == '=' ? "0.0f" : "0.5f");
 
     wgsl_src_cleanup(&src[2], &gen->string_buffers);
     wgsl_src_cleanup(&src[1], &gen->string_buffers);
     wgsl_src_cleanup(&src[0], &gen->string_buffers);
+    wgsl_dst_cleanup(&dst, &gen->string_buffers);
+}
+
+/* lit: the lighting coefficients (1, diffuse, specular, 1) of
+ * src = (N.L, N.H, -, power). */
+static void wgsl_lit(struct wgsl_generator *gen, const struct vsir_instruction *ins)
+{
+    unsigned int i, j;
+    struct wgsl_src src;
+    char swizzle[5];
+    struct wgsl_dst dst;
+    uint32_t mask;
+
+    if (!(mask = wgsl_dst_init(&dst, gen, ins, &ins->dst[0])))
+        return;
+    wgsl_src_init(&src, gen, &ins->src[0], VKD3DSP_WRITEMASK_ALL, VSIR_DATA_F32);
+
+    wgsl_print_indent(gen->buffer, gen->indent);
+    vkd3d_string_buffer_printf(gen->buffer, "{\n");
+    wgsl_print_indent(gen->buffer, gen->indent + 1);
+    vkd3d_string_buffer_printf(gen->buffer, "let l = %s;\n", src.str->buffer);
+    wgsl_print_indent(gen->buffer, gen->indent + 1);
+    vkd3d_string_buffer_printf(gen->buffer, "let p = clamp(l.w, -127.9961f, 127.9961f);\n");
+    for (i = 0, j = 0; i < VKD3D_VEC4_SIZE; ++i)
+    {
+        if (mask & (VKD3DSP_WRITEMASK_0 << i))
+            swizzle[j++] = "xyzw"[i];
+    }
+    swizzle[j] = 0;
+    ++gen->indent;
+    wgsl_print_assignment_with_type(gen, &dst, VSIR_DATA_F32,
+            "vec4<f32>(1.0f, max(l.x, 0.0f), select(0.0f, pow(max(l.y, 0.0f), p), l.x > 0.0f && l.y > 0.0f), 1.0f).%s",
+            swizzle);
+    --gen->indent;
+    wgsl_print_indent(gen->buffer, gen->indent);
+    vkd3d_string_buffer_printf(gen->buffer, "}\n");
+
+    wgsl_src_cleanup(&src, &gen->string_buffers);
+    wgsl_dst_cleanup(&dst, &gen->string_buffers);
+}
+
+static void wgsl_sgn(struct wgsl_generator *gen, const struct vsir_instruction *ins)
+{
+    struct wgsl_src src;
+    struct wgsl_dst dst;
+    uint32_t mask;
+
+    if (!(mask = wgsl_dst_init(&dst, gen, ins, &ins->dst[0])))
+        return;
+    wgsl_src_init(&src, gen, &ins->src[0], mask, VSIR_DATA_F32);
+    wgsl_print_assignment_with_type(gen, &dst, VSIR_DATA_F32, "sign(%s)", src.str->buffer);
+    wgsl_src_cleanup(&src, &gen->string_buffers);
     wgsl_dst_cleanup(&dst, &gen->string_buffers);
 }
 
@@ -2887,7 +3019,17 @@ static void wgsl_handle_instruction(struct wgsl_generator *gen, const struct vsi
             vkd3d_string_buffer_printf(gen->buffer, "{ return; }\n");
             break;
         case VSIR_OP_CMP:
-            wgsl_cmp(gen, ins);
+            wgsl_cmp(gen, ins, ">=");
+            break;
+        case VSIR_OP_CND:
+            wgsl_cmp(gen, ins, ">");
+            break;
+        case VSIR_OP_LIT:
+            wgsl_lit(gen, ins);
+            break;
+        case VSIR_OP_SGN:
+            /* Shader model 2's sgn has two scratch operands besides. */
+            wgsl_sgn(gen, ins);
             break;
         case VSIR_OP_SLT:
             wgsl_float_set(gen, ins, "<");
@@ -3081,6 +3223,12 @@ static void wgsl_record_interpolation(struct wgsl_generator *gen, const struct v
     if (!info || gen->program->shader_version.type != VKD3D_SHADER_TYPE_PIXEL)
         return;
 
+    info->location_mask |= bit;
+    if (e->component_type == VKD3D_SHADER_COMPONENT_INT)
+        info->int_mask |= bit;
+    else if (e->component_type != VKD3D_SHADER_COMPONENT_FLOAT)
+        info->uint_mask |= bit;
+
     switch (e->component_type != VKD3D_SHADER_COMPONENT_FLOAT ? VKD3DSIM_CONSTANT : e->interpolation_mode)
     {
         case VKD3DSIM_CONSTANT:
@@ -3179,6 +3327,23 @@ static bool wgsl_is_depth_output(const struct vsir_signature_element *e)
             || e->sysval_semantic == VKD3D_SHADER_SV_DEPTH_LESS_EQUAL;
 }
 
+/* The integer type a float vertex input is declared as, fed an integer
+ * attribute, or NULL. */
+static const char *wgsl_vertex_input_conversion(const struct wgsl_generator *gen,
+        const struct vsir_signature_element *e)
+{
+    uint32_t bit = 1u << e->target_location;
+
+    if (!gen->target_info || gen->program->shader_version.type != VKD3D_SHADER_TYPE_VERTEX
+            || e->component_type != VKD3D_SHADER_COMPONENT_FLOAT || e->target_location >= 32)
+        return NULL;
+    if (gen->target_info->vertex_uint_to_float_mask & bit)
+        return "u32";
+    if (gen->target_info->vertex_sint_to_float_mask & bit)
+        return "i32";
+    return NULL;
+}
+
 static void wgsl_generate_input_struct_declarations(struct wgsl_generator *gen)
 {
     const struct vsir_signature *signature = &gen->program->input_signature;
@@ -3262,7 +3427,10 @@ static void wgsl_generate_input_struct_declarations(struct wgsl_generator *gen)
             wgsl_record_interpolation(gen, e);
         }
         vkd3d_string_buffer_printf(buffer, " in_%u: ", e->target_location);
-        wgsl_print_io_type(buffer, gen, e);
+        if (wgsl_vertex_input_conversion(gen, e))
+            vkd3d_string_buffer_printf(buffer, "vec4<%s>", wgsl_vertex_input_conversion(gen, e));
+        else
+            wgsl_print_io_type(buffer, gen, e);
         vkd3d_string_buffer_printf(buffer, ",\n");
         empty = false;
     }
@@ -3276,8 +3444,35 @@ static void wgsl_generate_input_struct_declarations(struct wgsl_generator *gen)
     vkd3d_string_buffer_printf(buffer, "}\n\n");
 }
 
+/* The clip distances before signature element "end" (all of them, for
+ * the element count): numbered in element order, then by row and
+ * component. */
+static unsigned int wgsl_clip_distance_base(const struct wgsl_generator *gen, unsigned int end)
+{
+    const struct vsir_signature *signature = &gen->program->output_signature;
+    unsigned int i, count = 0;
+
+    if (gen->program->shader_version.type != VKD3D_SHADER_TYPE_VERTEX)
+        return 0;
+    for (i = 0; i < min(end, signature->element_count); ++i)
+    {
+        const struct vsir_signature_element *e = &signature->elements[i];
+
+        if (e->sysval_semantic == VKD3D_SHADER_SV_CLIP_DISTANCE)
+            count += max(e->register_count, 1) * vkd3d_popcount(e->mask);
+    }
+    return count;
+}
+
+/* The size of the clip_distances array. */
+static unsigned int wgsl_clip_distance_count(const struct wgsl_generator *gen)
+{
+    return min(wgsl_clip_distance_base(gen, ~0u), 8);
+}
+
 static void wgsl_generate_output_struct_declarations(struct wgsl_generator *gen)
 {
+    unsigned int clip_distance_count = wgsl_clip_distance_count(gen);
     const struct vsir_signature *signature = &gen->program->output_signature;
     enum vkd3d_shader_type type = gen->program->shader_version.type;
     struct vkd3d_string_buffer *buffer = gen->buffer;
@@ -3297,6 +3492,11 @@ static void wgsl_generate_output_struct_declarations(struct wgsl_generator *gen)
         e = &signature->elements[i];
 
         if (wgsl_is_depth_output(e) || e->sysval_semantic == VKD3D_SHADER_SV_POSITION)
+            continue;
+        /* WebGPU has clip distances (in an array, below), but not cull
+         * distances. */
+        if (e->sysval_semantic == VKD3D_SHADER_SV_CLIP_DISTANCE
+                || e->sysval_semantic == VKD3D_SHADER_SV_CULL_DISTANCE)
             continue;
         if (!wgsl_check_io_element(gen, e, locations))
             continue;
@@ -3319,6 +3519,39 @@ static void wgsl_generate_output_struct_declarations(struct wgsl_generator *gen)
         wgsl_print_io_type(buffer, gen, e);
         vkd3d_string_buffer_printf(buffer, ",\n");
     }
+
+    /* The pixel shader's inputs that this shader does not write are zero. */
+    if (type == VKD3D_SHADER_TYPE_VERTEX && gen->interpolation_info)
+    {
+        const struct vkd3d_shader_varying_interpolation_info *info = gen->interpolation_info;
+        static const char *const interpolation[] =
+        {
+            [VKD3DSIM_CONSTANT] = " @interpolate(flat)",
+            [VKD3DSIM_LINEAR_CENTROID] = " @interpolate(perspective, centroid)",
+            [VKD3DSIM_LINEAR_SAMPLE] = " @interpolate(perspective, sample)",
+            [VKD3DSIM_LINEAR_NOPERSPECTIVE] = " @interpolate(linear)",
+            [VKD3DSIM_LINEAR_NOPERSPECTIVE_CENTROID] = " @interpolate(linear, centroid)",
+            [VKD3DSIM_LINEAR_NOPERSPECTIVE_SAMPLE] = " @interpolate(linear, sample)",
+        };
+        enum vkd3d_shader_interpolation_mode mode;
+        uint32_t bit;
+
+        for (i = 0; i < MAX_IO_REG_COUNT; ++i)
+        {
+            bit = 1u << i;
+            if (!(info->location_mask & bit) || locations[i])
+                continue;
+            mode = (info->int_mask | info->uint_mask) & bit ? VKD3DSIM_CONSTANT
+                    : wgsl_next_stage_interpolation(gen, i);
+            vkd3d_string_buffer_printf(buffer, "    @location(%u)%s out_%u: vec4<%s>,\n", i,
+                    mode < ARRAY_SIZE(interpolation) && interpolation[mode] ? interpolation[mode] : "", i,
+                    info->int_mask & bit ? "i32" : info->uint_mask & bit ? "u32" : "f32");
+        }
+    }
+
+    if (clip_distance_count)
+        vkd3d_string_buffer_printf(buffer, "    @builtin(clip_distances) clip_distances: array<f32, %u>,\n",
+                clip_distance_count);
 
     if (bitmap_is_set(gen->program->io_dcls, VSIR_REGISTER_DEPTHOUT))
         vkd3d_string_buffer_printf(buffer, "    @builtin(frag_depth) depth: f32,\n");
@@ -3429,6 +3662,92 @@ static void wgsl_srv_usage(struct wgsl_generator *gen, unsigned int id, bool *co
     }
 }
 
+static void wgsl_add_binding(struct wgsl_generator *gen, unsigned int group, unsigned int binding,
+        enum vkd3d_shader_wgsl_binding_type type, const struct vsir_descriptor *d, unsigned int idx,
+        const char *format)
+{
+    struct vkd3d_shader_wgsl_binding_info *info = gen->binding_info;
+    struct vkd3d_shader_wgsl_binding *b;
+
+    if (!info)
+        return;
+    if (!vkd3d_array_reserve((void **)&info->bindings, &gen->binding_capacity,
+            info->binding_count + 1, sizeof(*info->bindings)))
+    {
+        wgsl_compiler_error(gen, VKD3D_SHADER_ERROR_WGSL_INTERNAL, "Out of memory.");
+        return;
+    }
+    b = &info->bindings[info->binding_count++];
+    memset(b, 0, sizeof(*b));
+    b->group = group;
+    b->binding = binding;
+    b->type = type;
+    b->format = format;
+    if (!d)
+    {
+        b->descriptor_type = VKD3D_SHADER_DESCRIPTOR_TYPE_CBV;
+        b->register_space = ~0u;
+        b->register_index = ~0u;
+        return;
+    }
+    b->descriptor_type = d->type;
+    b->register_space = d->register_space;
+    b->register_index = idx;
+    b->resource_type = wgsl_effective_resource_type(d->resource_type, d->sample_count);
+    switch (wgsl_scalar_type(d->resource_data_type))
+    {
+        case VSIR_DATA_I32:
+            b->resource_data_type = VKD3D_SHADER_RESOURCE_DATA_INT;
+            break;
+        case VSIR_DATA_U32:
+            b->resource_data_type = VKD3D_SHADER_RESOURCE_DATA_UINT;
+            break;
+        default:
+            b->resource_data_type = VKD3D_SHADER_RESOURCE_DATA_FLOAT;
+            break;
+    }
+}
+
+/* Buffer shader parameters are read from a uniform array of vec4<u32> per
+ * buffer, which is declared whether or not the shader reads it, since the
+ * caller binds it either way. */
+static void wgsl_generate_parameter_buffer_declarations(struct wgsl_generator *gen)
+{
+    const struct vkd3d_shader_parameter1 *p, *q;
+    unsigned int i, j, end, size;
+    bool seen;
+
+    for (i = 0; i < gen->program->parameter_count; ++i)
+    {
+        p = &gen->program->parameters[i];
+        if (p->type != VKD3D_SHADER_PARAMETER_TYPE_BUFFER)
+            continue;
+
+        for (j = 0, seen = false, end = 0; j < gen->program->parameter_count; ++j)
+        {
+            q = &gen->program->parameters[j];
+            if (q->type != VKD3D_SHADER_PARAMETER_TYPE_BUFFER
+                    || q->u.buffer.set != p->u.buffer.set || q->u.buffer.binding != p->u.buffer.binding)
+                continue;
+            if (j < i)
+            {
+                seen = true;
+                break;
+            }
+            size = q->data_type == VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32_VEC4 ? 16 : 4;
+            end = max(end, q->u.buffer.offset + size);
+        }
+        if (seen)
+            continue;
+
+        vkd3d_string_buffer_printf(gen->buffer,
+                "@group(%u) @binding(%u) var<uniform> vkd3d_param_%u_%u: array<vec4<u32>, %u>;\n\n",
+                p->u.buffer.set, p->u.buffer.binding, p->u.buffer.set, p->u.buffer.binding, (end + 15) / 16);
+        wgsl_add_binding(gen, p->u.buffer.set, p->u.buffer.binding,
+                VKD3D_SHADER_WGSL_BINDING_UNIFORM_BUFFER, NULL, 0, NULL);
+    }
+}
+
 static void wgsl_generate_descriptor_declarations(struct wgsl_generator *gen)
 {
     const struct vsir_descriptor_info *info = &gen->program->descriptors;
@@ -3465,6 +3784,7 @@ static void wgsl_generate_descriptor_declarations(struct wgsl_generator *gen)
                             d->buffer_size ? (d->buffer_size + 15) / 16 : 4096);
                     vkd3d_string_buffer_printf(gen->buffer, "@group(%u) @binding(%u) var<uniform> cb%u_%u: vkd3d_cb%u_%u;\n\n",
                             group, binding, d->register_id, idx, d->register_id, idx);
+                    wgsl_add_binding(gen, group, binding, VKD3D_SHADER_WGSL_BINDING_UNIFORM_BUFFER, d, idx, NULL);
                     break;
 
                 case VKD3D_SHADER_DESCRIPTOR_TYPE_SAMPLER:
@@ -3472,6 +3792,10 @@ static void wgsl_generate_descriptor_declarations(struct wgsl_generator *gen)
                             group, binding, d->register_id, idx,
                             d->flags & VKD3D_SHADER_DESCRIPTOR_INFO_FLAG_SAMPLER_COMPARISON_MODE
                             ? "sampler_comparison" : "sampler");
+                    wgsl_add_binding(gen, group, binding,
+                            d->flags & VKD3D_SHADER_DESCRIPTOR_INFO_FLAG_SAMPLER_COMPARISON_MODE
+                            ? VKD3D_SHADER_WGSL_BINDING_COMPARISON_SAMPLER : VKD3D_SHADER_WGSL_BINDING_SAMPLER,
+                            d, idx, NULL);
                     break;
 
                 case VKD3D_SHADER_DESCRIPTOR_TYPE_SRV:
@@ -3493,6 +3817,8 @@ static void wgsl_generate_descriptor_declarations(struct wgsl_generator *gen)
                         vkd3d_string_buffer_printf(gen->buffer,
                                 "@group(%u) @binding(%u) var<storage, read> t%u_%u: array<u32>;\n\n",
                                 group, binding, d->register_id, idx);
+                        wgsl_add_binding(gen, group, binding,
+                                VKD3D_SHADER_WGSL_BINDING_READ_ONLY_STORAGE_BUFFER, d, idx, NULL);
                         break;
                     }
                     wgsl_srv_usage(gen, d->register_id, &compare, &plain);
@@ -3511,6 +3837,7 @@ static void wgsl_generate_descriptor_declarations(struct wgsl_generator *gen)
                         wgsl_texture_type(gen->buffer, gen, type_info,
                                 wgsl_scalar_type(d->resource_data_type), false);
                         vkd3d_string_buffer_printf(gen->buffer, ";\n\n");
+                        wgsl_add_binding(gen, group, binding, VKD3D_SHADER_WGSL_BINDING_TEXTURE, d, idx, NULL);
                     }
                     if (compare)
                     {
@@ -3518,6 +3845,8 @@ static void wgsl_generate_descriptor_declarations(struct wgsl_generator *gen)
                                 group, binding + 128, d->register_id, idx);
                         wgsl_texture_type(gen->buffer, gen, type_info, VSIR_DATA_F32, true);
                         vkd3d_string_buffer_printf(gen->buffer, ";\n\n");
+                        wgsl_add_binding(gen, group, binding + 128,
+                                VKD3D_SHADER_WGSL_BINDING_DEPTH_TEXTURE, d, idx, NULL);
                     }
                     break;
 
@@ -3534,6 +3863,7 @@ static void wgsl_generate_descriptor_declarations(struct wgsl_generator *gen)
                                 "@group(%u) @binding(%u) var<storage, read_write> u%u_%u: array<%s>;\n\n",
                                 group, binding, d->register_id, idx,
                                 wgsl_is_atomic_target(gen, VSIR_REGISTER_UAV, d->register_id) ? "atomic<u32>" : "u32");
+                        wgsl_add_binding(gen, group, binding, VKD3D_SHADER_WGSL_BINDING_STORAGE_BUFFER, d, idx, NULL);
                         break;
                     }
                     if (!wgsl_storage_texture_suffix(d->resource_type))
@@ -3547,6 +3877,10 @@ static void wgsl_generate_descriptor_declarations(struct wgsl_generator *gen)
                             group, binding, d->register_id, idx, wgsl_storage_texture_suffix(d->resource_type),
                             wgsl_uav_format(gen, d, idx),
                             d->flags & VKD3D_SHADER_DESCRIPTOR_INFO_FLAG_UAV_READ ? "read_write" : "write");
+                    wgsl_add_binding(gen, group, binding, d->flags & VKD3D_SHADER_DESCRIPTOR_INFO_FLAG_UAV_READ
+                            ? VKD3D_SHADER_WGSL_BINDING_READ_WRITE_STORAGE_TEXTURE
+                            : VKD3D_SHADER_WGSL_BINDING_WRITE_ONLY_STORAGE_TEXTURE,
+                            d, idx, wgsl_uav_format(gen, d, idx));
                     break;
 
                 default:
@@ -3693,8 +4027,12 @@ static void wgsl_generate_entrypoint(struct wgsl_generator *gen)
         {
             if (!(e->mask & (VKD3DSP_WRITEMASK_0 << c)))
                 continue;
-            vkd3d_string_buffer_printf(buffer, "    v[%u].%c = %s(%s.%c);\n", i, components[j++],
-                    wgsl_io_to_u32(l, 1), source, components[c]);
+            if (wgsl_vertex_input_conversion(gen, l))
+                vkd3d_string_buffer_printf(buffer, "    v[%u].%c = bitcast<u32>(f32(%s.%c));\n", i,
+                        components[j++], source, components[c]);
+            else
+                vkd3d_string_buffer_printf(buffer, "    v[%u].%c = %s(%s.%c);\n", i, components[j++],
+                        wgsl_io_to_u32(l, 1), source, components[c]);
         }
     }
 
@@ -3706,6 +4044,30 @@ static void wgsl_generate_entrypoint(struct wgsl_generator *gen)
         const char *to_type;
 
         e = &output->elements[i];
+
+        if (e->sysval_semantic == VKD3D_SHADER_SV_CLIP_DISTANCE && type == VKD3D_SHADER_TYPE_VERTEX)
+        {
+            unsigned int row, rows = max(e->register_count, 1), d, k;
+
+            for (row = 0; row < rows; ++row)
+            {
+                for (c = 0, k = 0; c < VKD3D_VEC4_SIZE; ++c)
+                {
+                    if (!(e->mask & (VKD3DSP_WRITEMASK_0 << c)))
+                        continue;
+                    d = wgsl_clip_distance_base(gen, i) + row * vkd3d_popcount(e->mask) + k++;
+                    if (d >= 8)
+                        continue;
+                    if (rows > 1)
+                        vkd3d_string_buffer_printf(buffer, "    output.clip_distances[%u] = bitcast<f32>(o_e%u[%u].%c);\n",
+                                d, i, row, components[c]);
+                    else
+                        vkd3d_string_buffer_printf(buffer, "    output.clip_distances[%u] = bitcast<f32>(o[%u].%c);\n",
+                                d, i, components[c]);
+                }
+            }
+            continue;
+        }
 
         if (e->register_count > 1)
             continue;
@@ -3771,6 +4133,8 @@ static int wgsl_generator_generate(struct wgsl_generator *gen, struct vkd3d_shad
     MESSAGE("Generating a WGSL shader. This is unsupported; you get to keep all the pieces if it breaks.\n");
 
     vkd3d_string_buffer_printf(gen->buffer, "/* Generated by %s. */\n\n", vkd3d_shader_get_version(NULL, NULL));
+    if (wgsl_clip_distance_count(gen))
+        vkd3d_string_buffer_printf(gen->buffer, "enable clip_distances;\n");
     vkd3d_string_buffer_printf(gen->buffer, "diagnostic(off, derivative_uniformity);\n\n");
 
     if (flags & ignored_flags)
@@ -3792,6 +4156,7 @@ static int wgsl_generator_generate(struct wgsl_generator *gen, struct vkd3d_shad
         wgsl_generate_output_struct_declarations(gen);
     }
     wgsl_generate_immediate_constant_buffers(gen);
+    wgsl_generate_parameter_buffer_declarations(gen);
     wgsl_generate_descriptor_declarations(gen);
 
     if (gen->program->temp_count)
@@ -3799,8 +4164,22 @@ static int wgsl_generator_generate(struct wgsl_generator *gen, struct vkd3d_shad
                 gen->program->temp_count);
     if (type != VKD3D_SHADER_TYPE_COMPUTE)
     {
+        unsigned int i;
+
         vkd3d_string_buffer_printf(gen->buffer, "var<private> v: array<vec4<u32>, %u>;\n", MAX_IO_REG_COUNT);
         vkd3d_string_buffer_printf(gen->buffer, "var<private> o: array<vec4<u32>, %u>;\n", MAX_IO_REG_COUNT);
+        for (i = 0; i < gen->program->input_signature.element_count; ++i)
+        {
+            if (gen->program->input_signature.elements[i].register_count > 1)
+                vkd3d_string_buffer_printf(gen->buffer, "var<private> v_e%u: array<vec4<u32>, %u>;\n",
+                        i, gen->program->input_signature.elements[i].register_count);
+        }
+        for (i = 0; i < gen->program->output_signature.element_count; ++i)
+        {
+            if (gen->program->output_signature.elements[i].register_count > 1)
+                vkd3d_string_buffer_printf(gen->buffer, "var<private> o_e%u: array<vec4<u32>, %u>;\n",
+                        i, gen->program->output_signature.elements[i].register_count);
+        }
     }
     if (bitmap_is_set(gen->program->io_dcls, VSIR_REGISTER_DEPTHOUT))
         vkd3d_string_buffer_printf(gen->buffer, "var<private> o_depth: f32;\n");
@@ -3871,6 +4250,12 @@ static int wgsl_generator_init(struct wgsl_generator *gen, struct vsir_program *
     }
     gen->interface_info = vkd3d_find_struct(compile_info->next, INTERFACE_INFO);
     gen->target_info = vkd3d_find_struct(compile_info->next, WGSL_TARGET_INFO);
+    if ((gen->binding_info = (struct vkd3d_shader_wgsl_binding_info *)vkd3d_find_struct(
+            compile_info->next, WGSL_BINDING_INFO)))
+    {
+        gen->binding_info->bindings = NULL;
+        gen->binding_info->binding_count = 0;
+    }
     if ((gen->interpolation_info = (struct vkd3d_shader_varying_interpolation_info *)vkd3d_find_struct(
             compile_info->next, VARYING_INTERPOLATION_INFO)) && type == VKD3D_SHADER_TYPE_PIXEL)
     {
@@ -3878,6 +4263,9 @@ static int wgsl_generator_init(struct wgsl_generator *gen, struct vsir_program *
         gen->interpolation_info->noperspective_mask = 0;
         gen->interpolation_info->centroid_mask = 0;
         gen->interpolation_info->sample_mask = 0;
+        gen->interpolation_info->location_mask = 0;
+        gen->interpolation_info->int_mask = 0;
+        gen->interpolation_info->uint_mask = 0;
     }
 
     return VKD3D_OK;
@@ -3903,7 +4291,18 @@ int wgsl_compile(struct vsir_program *program, uint64_t config_flags,
     if ((ret = wgsl_generator_init(&generator, program, compile_info, message_context)) < 0)
         return ret;
     ret = wgsl_generator_generate(&generator, out);
+    if (ret < 0 && generator.binding_info)
+        vkd3d_shader_free_wgsl_binding_info(generator.binding_info);
     wgsl_generator_cleanup(&generator);
 
     return ret;
+}
+
+void vkd3d_shader_free_wgsl_binding_info(struct vkd3d_shader_wgsl_binding_info *info)
+{
+    TRACE("info %p.\n", info);
+
+    vkd3d_free(info->bindings);
+    info->bindings = NULL;
+    info->binding_count = 0;
 }
