@@ -1514,14 +1514,15 @@ void wayland_surface_set_opacity(struct wayland_surface *surface, BYTE alpha, UI
  * DWM's glass, drawn by the compositor (gex_glass_v1): the rectangles are
  * relative to the window's visible rect, which is the surface's origin.
  */
-void wayland_surface_set_glass(struct wayland_surface *surface, const RECT *rects, UINT count,
-                               UINT argb, UINT balance, UINT blur_balance)
+void wayland_surface_set_glass(struct wayland_surface *surface, const struct window_glass *glass)
 {
+    const RECT *b = glass->buttons;
+    const UINT *st = glass->button_states;
     struct wl_region *region;
     UINT i;
 
     if (!process_wayland.gex_glass_manager_v1) return;
-    if (!count)
+    if (!glass->count)
     {
         if (surface->gex_glass_v1)
         {
@@ -1536,10 +1537,14 @@ void wayland_surface_set_glass(struct wayland_surface *surface, const RECT *rect
     if (!surface->gex_glass_v1) return;
 
     region = wl_compositor_create_region(process_wayland.wl_compositor);
-    for (i = 0; i < count; i++)
-        wl_region_add(region, rects[i].left, rects[i].top, rects[i].right - rects[i].left,
-                      rects[i].bottom - rects[i].top);
+    for (i = 0; i < glass->count; i++)
+        wl_region_add(region, glass->rects[i].left, glass->rects[i].top,
+                      glass->rects[i].right - glass->rects[i].left, glass->rects[i].bottom - glass->rects[i].top);
     gex_glass_v1_set_region(surface->gex_glass_v1, region);
     wl_region_destroy(region);
-    gex_glass_v1_set_colorization(surface->gex_glass_v1, argb, balance, blur_balance);
+    gex_glass_v1_set_colorization(surface->gex_glass_v1, glass->argb, glass->balance, glass->blur_balance);
+    gex_glass_v1_set_frame(surface->gex_glass_v1, glass->frame,
+            b[0].left, b[0].top, b[0].right - b[0].left, b[0].bottom - b[0].top, st[0],
+            b[1].left, b[1].top, b[1].right - b[1].left, b[1].bottom - b[1].top, st[1],
+            b[2].left, b[2].top, b[2].right - b[2].left, b[2].bottom - b[2].top, st[2]);
 }

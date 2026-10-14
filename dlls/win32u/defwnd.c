@@ -1495,6 +1495,7 @@ static void draw_close_button( HWND hwnd, HDC hdc, BOOL down, BOOL grayed )
         rect.right -= 2;
     }
 
+    set_window_glass_pushed( hwnd, 1, down );
     if (down) flags |= DFCS_PUSHED;
     if (grayed) flags |= DFCS_INACTIVE;
     draw_frame_caption( hdc, &rect, flags );
@@ -1518,6 +1519,7 @@ static void draw_max_button( HWND hwnd, HDC hdc, BOOL down, BOOL grayed )
     rect.bottom = rect.top + get_system_metrics( SM_CYSIZE ) - 2;
     rect.top += 2;
     rect.right -= 2;
+    set_window_glass_pushed( hwnd, 2, down );
     if (down) flags |= DFCS_PUSHED;
     if (grayed) flags |= DFCS_INACTIVE;
     draw_frame_caption( hdc, &rect, flags );
@@ -1544,9 +1546,49 @@ static void draw_min_button( HWND hwnd, HDC hdc, BOOL down, BOOL grayed )
     rect.bottom = rect.top + get_system_metrics( SM_CYSIZE ) - 2;
     rect.top += 2;
     rect.right -= 2;
+    set_window_glass_pushed( hwnd, 3, down );
     if (down) flags |= DFCS_PUSHED;
     if (grayed) flags |= DFCS_INACTIVE;
     draw_frame_caption( hdc, &rect, flags );
+}
+
+/* For DWM's glass frame (window.c): the box inside a window's borders and
+ * caption, which the glass frame surrounds, in window coordinates. */
+void get_glass_frame_inner( HWND hwnd, RECT *rect )
+{
+    DWORD style = get_window_long( hwnd, GWL_STYLE );
+    DWORD ex_style = get_window_long( hwnd, GWL_EXSTYLE );
+
+    get_inside_rect( hwnd, COORDS_WINDOW, rect, style, ex_style );
+    if ((style & WS_CAPTION) == WS_CAPTION)
+        rect->top += get_system_metrics( (ex_style & WS_EX_TOOLWINDOW) ? SM_CYSMCAPTION : SM_CYCAPTION );
+}
+
+/* The caption buttons as draw_*_button() place them, in window coordinates,
+ * and their states (struct window_glass's): close, maximize, minimize. */
+void get_caption_buttons( HWND hwnd, RECT rects[3], UINT states[3], UINT pushed )
+{
+    DWORD style = get_window_long( hwnd, GWL_STYLE );
+    DWORD ex_style = get_window_long( hwnd, GWL_EXSTYLE );
+    int cx = get_system_metrics( SM_CXSIZE ), cy = get_system_metrics( SM_CYSIZE );
+    RECT inside;
+    unsigned int i;
+
+    memset( rects, 0, 3 * sizeof(*rects) );
+    memset( states, 0, 3 * sizeof(*states) );
+    if ((style & WS_CAPTION) != WS_CAPTION || !(style & WS_SYSMENU)) return;
+    get_inside_rect( hwnd, COORDS_WINDOW, &inside, style, ex_style );
+
+    SetRect( &rects[0], inside.right - cx, inside.top + 2, inside.right - 2, inside.top + cy - 2 );
+    states[0] = 1;
+    if (!(ex_style & WS_EX_TOOLWINDOW) && (style & (WS_MAXIMIZEBOX | WS_MINIMIZEBOX)))
+    {
+        SetRect( &rects[1], inside.right - 2 * cx, inside.top + 2, inside.right - cx - 2, inside.top + cy - 2 );
+        SetRect( &rects[2], inside.right - 3 * cx + 2, inside.top + 2, inside.right - 2 * cx, inside.top + cy - 2 );
+        states[1] = (style & WS_MAXIMIZEBOX) ? 1 : 4;
+        states[2] = (style & WS_MINIMIZEBOX) ? 1 : 4;
+    }
+    for (i = 0; i < 3; i++) if (pushed == i + 1 && states[i] == 1) states[i] = 3;
 }
 
 static void draw_nc_caption( HDC hdc, RECT *rect, HWND hwnd, DWORD  style,
@@ -1821,6 +1863,10 @@ static void nc_paint( HWND hwnd, HRGN clip )
     }
 
     NtUserReleaseDC( hwnd, hdc );
+
+    /* A glass frame is the driver's to draw: it follows the activation the
+     * frame was just painted for. */
+    update_window_glass( hwnd );
 }
 
 static LRESULT handle_nc_paint( HWND hwnd , HRGN clip )

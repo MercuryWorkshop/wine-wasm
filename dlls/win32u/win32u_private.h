@@ -73,6 +73,10 @@ extern BOOL draw_nc_sys_button( HWND hwnd, HDC hdc, BOOL down );
 extern BOOL draw_rect_edge( HDC hdc, RECT *rc, UINT uType, UINT uFlags, UINT width );
 extern void fill_rect( HDC dc, const RECT *rect, HBRUSH hbrush );
 extern void get_sys_popup_pos( HWND hwnd, RECT *rect );
+extern void get_glass_frame_inner( HWND hwnd, RECT *rect );
+extern void get_caption_buttons( HWND hwnd, RECT rects[3], UINT states[3], UINT pushed );
+extern void set_window_glass_pushed( HWND hwnd, UINT button, BOOL down );
+extern BOOL update_window_glass( HWND hwnd );
 extern LRESULT handle_nc_hit_test( HWND hwnd, POINT pt );
 
 /* hook.c */
