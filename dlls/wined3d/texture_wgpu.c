@@ -881,6 +881,11 @@ static BOOL wined3d_texture_wgpu_load_sysmem(struct wined3d_texture_wgpu *textur
     struct wined3d_box src_box;
 
     sub_resource = &texture_wgpu->t.sub_resources[sub_resource_idx];
+    /* A clear not made yet is made on the GPU, and read back from there. */
+    if (!(sub_resource->locations & WINED3D_LOCATION_TEXTURE_RGB)
+            && (sub_resource->locations & WINED3D_LOCATION_CLEARED)
+            && wined3d_texture_wgpu_load_texture(texture_wgpu, sub_resource_idx, context))
+        wined3d_texture_validate_location(&texture_wgpu->t, sub_resource_idx, WINED3D_LOCATION_TEXTURE_RGB);
     if (!(sub_resource->locations & WINED3D_LOCATION_TEXTURE_RGB))
     {
         ERR("Unimplemented load from %s.\n", wined3d_debug_location(sub_resource->locations));
