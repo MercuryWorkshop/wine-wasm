@@ -3097,6 +3097,28 @@ struct vkd3d_shader_wgsl_uav_format
 };
 
 /**
+ * The format of a typed buffer shader resource view, which a WGSL module
+ * reads as words of a storage buffer and decodes itself: WebGPU has no
+ * texel buffers.
+ */
+struct vkd3d_shader_wgsl_buffer_format
+{
+    unsigned int register_space;
+    unsigned int register_index;
+    /** Float, unsigned or signed integer: what each component is. */
+    enum vkd3d_shader_component_type component_type;
+    /** 1 to 4. */
+    unsigned int component_count;
+    /** Bytes per component: 1, 2 (a half float, if float) or 4. */
+    unsigned int component_size;
+    /** Integer components normalised to [0, 1] or [-1, 1] (UNORM, SNORM). */
+    bool normalised;
+    /** Components in the bound range before the view's first element: a
+     *  binding's offset must be aligned, a view's need not be. */
+    unsigned int first_component;
+};
+
+/**
  * A chained structure with WGSL-specific parameters.
  *
  * This structure is passed to vkd3d_shader_compile() and extends
@@ -3137,6 +3159,14 @@ struct vkd3d_shader_wgsl_target_info
      * them as uint32, and they are unpacked, with w 1.0.
      */
     uint32_t vertex_r11g11b10_float_mask;
+
+    /**
+     * The formats of typed buffer shader resource views. A view with none
+     * given is read as 32-bit components of its declared type, four to an
+     * element.
+     */
+    const struct vkd3d_shader_wgsl_buffer_format *srv_buffer_formats;
+    unsigned int srv_buffer_format_count;
 };
 
 /** What a binding of a WGSL module is, as a WebGPU bind group layout entry

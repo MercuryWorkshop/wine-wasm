@@ -1236,6 +1236,31 @@ static void wined3d_context_wgpu_load_resources(struct wined3d_context_wgpu *con
     }
 }
 
+/* The range a typed buffer view is bound with: from its first element
+ * aligned down to what a storage binding's offset must be, the shader told
+ * how many components lie before the element (shader_wgsl.c). */
+bool wined3d_wgpu_buffer_srv_range(const struct wined3d_context_wgpu *context_wgpu,
+        const struct wined3d_shader_resource_view *srv, uint64_t *offset, uint64_t *size,
+        unsigned int *first_component)
+{
+    const struct wined3d_buffer *buffer = buffer_from_resource(srv->resource);
+    uint64_t align = max(context_wgpu->wgpu_info->limits.minStorageBufferOffsetAlignment, 4);
+    unsigned int component_size = srv->format->red_size / 8;
+    uint64_t start, end;
+
+    if (srv->desc.format_id == WINED3DFMT_UNKNOWN || (srv->desc.flags & WINED3D_VIEW_BUFFER_RAW)
+            || !component_size || !srv->format->byte_count)
+        return false;
+    start = (uint64_t)srv->desc.u.buffer.start_idx * srv->format->byte_count;
+    end = start + (uint64_t)srv->desc.u.buffer.count * srv->format->byte_count;
+    end = min(end, buffer->resource.size);
+    *offset = start & ~(align - 1);
+    *first_component = (start - *offset) / component_size;
+    /* Whole words, within the buffer. */
+    *size = min((end - *offset + 3) & ~(uint64_t)3, (buffer->resource.size - *offset) & ~(uint64_t)3);
+    return start < end;
+}
+
 static WGPUTextureView wined3d_context_wgpu_null_view(struct wined3d_context_wgpu *context_wgpu,
         const struct wined3d_shader_binding_wgpu *binding)
 {
@@ -1315,10 +1340,20 @@ static bool wined3d_context_wgpu_bind_resources(struct wined3d_context_wgpu *con
                             && buffer_from_resource(srv->resource)->buffer_object)
                     {
                         struct wined3d_bo_wgpu *bo = wined3d_bo_wgpu(buffer_from_resource(srv->resource)->buffer_object);
+                        unsigned int first_component;
+                        uint64_t offset, size;
 
                         wined3d_context_wgpu_reference_bo(context_wgpu, bo);
                         e->buffer = bo->buffer;
                         e->size = bo->size;
+                        /* A typed view: its own range (raw and structured
+                         * ones are bound whole). */
+                        if (wined3d_wgpu_buffer_srv_range(context_wgpu, srv, &offset, &size, &first_component)
+                                && size)
+                        {
+                            e->offset = bo->b.buffer_offset + offset;
+                            e->size = size;
+                        }
                     }
                     else
                     {
@@ -1571,6 +1606,12 @@ bool wined3d_context_wgpu_apply_draw_state(struct wined3d_context_wgpu *context_
         context_wgpu->c.shader_update_mask |= (1u << WINED3D_SHADER_TYPE_VERTEX);
     if (wined3d_context_is_graphics_state_dirty(&context_wgpu->c, STATE_SHADER(WINED3D_SHADER_TYPE_GEOMETRY)))
         context_wgpu->c.shader_update_mask |= (1u << WINED3D_SHADER_TYPE_GEOMETRY);
+    /* A typed buffer view's format and offset are compiled into the shader
+     * that reads it (shader_wgsl_srv_buffer_args()), and a view unbound
+     * changes them as much as one bound. */
+    if (wined3d_context_is_graphics_state_dirty(&context_wgpu->c, STATE_GRAPHICS_SHADER_RESOURCE_BINDING))
+        context_wgpu->c.shader_update_mask |= (1u << WINED3D_SHADER_TYPE_VERTEX)
+                | (1u << WINED3D_SHADER_TYPE_PIXEL);
 
     if ((topology = wgpu_topology_from_wined3d(state->primitive_type)) == WGPUPrimitiveTopology_Undefined)
         return false;

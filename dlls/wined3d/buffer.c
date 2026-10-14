@@ -1439,11 +1439,11 @@ HRESULT wined3d_buffer_wgpu_init(struct wined3d_buffer_wgpu *buffer_wgpu, struct
     TRACE("buffer_wgpu %p, device %p, desc %p, data %p, parent %p, parent_ops %p.\n",
             buffer_wgpu, device, desc, data, parent, parent_ops);
 
+    /* A stream output buffer is an ordinary buffer here: WebGPU has no
+     * stream output, so nothing writes it, but Direct3D 10 programs make
+     * them whether or not they draw with them. */
     if (desc->bind_flags & WINED3D_BIND_STREAM_OUTPUT)
-    {
-        WARN("WebGPU has no stream output.\n");
-        return WINED3DERR_INVALIDCALL;
-    }
+        FIXME("Stream output buffers are not written.\n");
 
     if (desc->access & WINED3D_RESOURCE_ACCESS_GPU)
         buffer_wgpu->b.flags |= WINED3D_BUFFER_USE_BO;

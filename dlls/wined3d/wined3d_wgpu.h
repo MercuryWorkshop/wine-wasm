@@ -296,6 +296,10 @@ struct wined3d_context_wgpu
     struct wine_rb_tree graphics_pipelines;
 };
 
+bool wined3d_wgpu_buffer_srv_range(const struct wined3d_context_wgpu *context_wgpu,
+        const struct wined3d_shader_resource_view *srv, uint64_t *offset, uint64_t *size,
+        unsigned int *first_component);
+
 static inline struct wined3d_context_wgpu *wined3d_context_wgpu(struct wined3d_context *context)
 {
     return CONTAINING_RECORD(context, struct wined3d_context_wgpu, c);
