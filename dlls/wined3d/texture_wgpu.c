@@ -1480,6 +1480,15 @@ void wined3d_device_wgpu_destroy_null_resources(struct wined3d_device_wgpu *devi
     }
     if (r->depth_read_pipeline)
         wgpuRenderPipelineRelease(r->depth_read_pipeline);
+    for (i = 0; i < ARRAY_SIZE(r->mip_pipelines); ++i)
+    {
+        if (r->mip_pipelines[i].pipeline)
+            wgpuRenderPipelineRelease(r->mip_pipelines[i].pipeline);
+    }
+    if (r->mip_layout)
+        wgpuBindGroupLayoutRelease(r->mip_layout);
+    if (r->mip_layout_3d)
+        wgpuBindGroupLayoutRelease(r->mip_layout_3d);
     if (r->depth_2d)
         wgpuTextureViewRelease(r->depth_2d);
     if (r->depth_cube)
@@ -1501,4 +1510,222 @@ void wined3d_device_wgpu_destroy_null_resources(struct wined3d_device_wgpu *devi
     if (r->fragment_module)
         wgpuShaderModuleRelease(r->fragment_module);
     memset(r, 0, sizeof(*r));
+}
+
+static WGPURenderPipeline wgpu_mip_pipeline(struct wined3d_device_wgpu *device_wgpu, WGPUTextureFormat format,
+        bool is_3d)
+{
+    /* For a 3D texture, the slice drawn (a constant: one pipeline makes all
+     * slices, the source slice pair given by the instance index). */
+    static const char code_3d[] =
+        "@group(0) @binding(0) var src: texture_3d<f32>;\n"
+        "struct V { @builtin(position) p: vec4f, @location(0) @interpolate(flat) z: u32 };\n"
+        "@vertex fn vs(@builtin(vertex_index) i: u32, @builtin(instance_index) z: u32) -> V {\n"
+        "    let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+        "    return V(vec4f(p * vec2f(2.0, -2.0) + vec2f(-1.0, 1.0), 0.0, 1.0), z);\n"
+        "}\n"
+        "@fragment fn fs(v: V) -> @location(0) vec4f {\n"
+        "    let m = vec3i(textureDimensions(src)) - vec3i(1, 1, 1);\n"
+        "    let c = vec3i(vec2i(v.p.xy) * 2, i32(v.z) * 2);\n"
+        "    var sum = vec4f(0.0);\n"
+        "    for (var i = 0; i < 8; i++) {\n"
+        "        sum += textureLoad(src, min(c + vec3i(i & 1, (i >> 1) & 1, i >> 2), m), 0);\n"
+        "    }\n"
+        "    return sum * 0.125;\n"
+        "}\n";
+    static const char code[] =
+        "@group(0) @binding(0) var src: texture_2d<f32>;\n"
+        "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+        "    let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+        "    return vec4f(p * vec2f(2.0, -2.0) + vec2f(-1.0, 1.0), 0.0, 1.0);\n"
+        "}\n"
+        /* A box filter of the 2x2 texels under the pixel, the last row and
+         * column repeated for odd sizes: loads, so any float format works. */
+        "@fragment fn fs(@builtin(position) p: vec4f) -> @location(0) vec4f {\n"
+        "    let m = vec2i(textureDimensions(src)) - vec2i(1, 1);\n"
+        "    let c = vec2i(p.xy) * 2;\n"
+        "    return (textureLoad(src, min(c, m), 0) + textureLoad(src, min(c + vec2i(1, 0), m), 0)\n"
+        "            + textureLoad(src, min(c + vec2i(0, 1), m), 0) + textureLoad(src, min(c + vec2i(1, 1), m), 0))\n"
+        "            * 0.25;\n"
+        "}\n";
+    struct wined3d_null_resources_wgpu *r = &device_wgpu->null_resources;
+    WGPUBindGroupLayoutDescriptor layout_desc = WGPU_BIND_GROUP_LAYOUT_DESCRIPTOR_INIT;
+    WGPUPipelineLayoutDescriptor pipeline_layout_desc = WGPU_PIPELINE_LAYOUT_DESCRIPTOR_INIT;
+    WGPURenderPipelineDescriptor desc = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;
+    WGPUShaderModuleDescriptor module_desc = WGPU_SHADER_MODULE_DESCRIPTOR_INIT;
+    WGPUBindGroupLayoutEntry entry = WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT;
+    WGPUColorTargetState target = WGPU_COLOR_TARGET_STATE_INIT;
+    WGPUFragmentState fragment = WGPU_FRAGMENT_STATE_INIT;
+    WGPUShaderSourceWGSL wgsl = WGPU_SHADER_SOURCE_WGSL_INIT;
+    WGPURenderPipeline pipeline;
+    WGPUShaderModule module;
+    unsigned int i;
+
+    for (i = 0; i < ARRAY_SIZE(r->mip_pipelines); ++i)
+    {
+        if (r->mip_pipelines[i].pipeline && r->mip_pipelines[i].format == format
+                && r->mip_pipelines[i].is_3d == is_3d)
+            return r->mip_pipelines[i].pipeline;
+    }
+
+    if (!(is_3d ? r->mip_layout_3d : r->mip_layout))
+    {
+        entry.binding = 0;
+        entry.visibility = WGPUShaderStage_Fragment;
+        entry.texture.sampleType = WGPUTextureSampleType_UnfilterableFloat;
+        entry.texture.viewDimension = is_3d ? WGPUTextureViewDimension_3D : WGPUTextureViewDimension_2D;
+        layout_desc.entryCount = 1;
+        layout_desc.entries = &entry;
+        if (!(*(is_3d ? &r->mip_layout_3d : &r->mip_layout)
+                = wgpuDeviceCreateBindGroupLayout(device_wgpu->device, &layout_desc)))
+            return NULL;
+    }
+
+    wgsl.code = wgpu_string(is_3d ? code_3d : code);
+    module_desc.nextInChain = &wgsl.chain;
+    if (!(module = wgpuDeviceCreateShaderModule(device_wgpu->device, &module_desc)))
+        return NULL;
+    pipeline_layout_desc.bindGroupLayoutCount = 1;
+    pipeline_layout_desc.bindGroupLayouts = is_3d ? &r->mip_layout_3d : &r->mip_layout;
+    desc.layout = wgpuDeviceCreatePipelineLayout(device_wgpu->device, &pipeline_layout_desc);
+    desc.vertex.module = module;
+    desc.vertex.entryPoint = wgpu_string("vs");
+    target.format = format;
+    fragment.module = module;
+    fragment.entryPoint = wgpu_string("fs");
+    fragment.targetCount = 1;
+    fragment.targets = &target;
+    desc.fragment = &fragment;
+    wined3d_device_wgpu_push_error_scope(device_wgpu);
+    pipeline = wgpuDeviceCreateRenderPipeline(device_wgpu->device, &desc);
+    if (!wined3d_device_wgpu_pop_error_scope(device_wgpu, "a mipmap pipeline") && pipeline)
+    {
+        wgpuRenderPipelineRelease(pipeline);
+        pipeline = NULL;
+    }
+    wgpuPipelineLayoutRelease(desc.layout);
+    wgpuShaderModuleRelease(module);
+    if (!pipeline)
+        return NULL;
+
+    /* Replace the oldest. */
+    i = ARRAY_SIZE(r->mip_pipelines) - 1;
+    if (r->mip_pipelines[i].pipeline)
+        wgpuRenderPipelineRelease(r->mip_pipelines[i].pipeline);
+    memmove(&r->mip_pipelines[1], &r->mip_pipelines[0], i * sizeof(r->mip_pipelines[0]));
+    r->mip_pipelines[0].format = format;
+    r->mip_pipelines[0].is_3d = is_3d;
+    r->mip_pipelines[0].pipeline = pipeline;
+    return pipeline;
+}
+
+/* GenerateMips: each level after the view's first made from the one before,
+ * by a render pass per level and layer. */
+void wined3d_texture_wgpu_generate_mipmaps(struct wined3d_context_wgpu *context_wgpu,
+        struct wined3d_shader_resource_view *view)
+{
+    struct wined3d_device_wgpu *device_wgpu = wined3d_device_wgpu(context_wgpu->c.device);
+    unsigned int base, count, first_layer, layer_count, level, layer, sub_resource_idx;
+    struct wined3d_texture_wgpu *texture_wgpu;
+    struct wined3d_texture *texture;
+    WGPUTextureFormat format;
+    WGPURenderPipeline pipeline;
+    WGPUCommandEncoder encoder;
+
+    bool is_3d = view->resource->type == WINED3D_RTYPE_TEXTURE_3D;
+
+    if (view->resource->type != WINED3D_RTYPE_TEXTURE_2D && !is_3d)
+    {
+        FIXME("Unhandled resource type %s.\n", debug_d3dresourcetype(view->resource->type));
+        return;
+    }
+    texture = texture_from_resource(view->resource);
+    texture_wgpu = wined3d_texture_wgpu(texture);
+    base = view->desc.u.texture.level_idx;
+    count = view->desc.u.texture.level_count;
+    first_layer = view->desc.u.texture.layer_idx;
+    layer_count = view->desc.u.texture.layer_count;
+
+    wined3d_texture_load(texture, &context_wgpu->c, FALSE);
+    /* A pass on a texture that cannot be rendered to would be an error, and
+     * one error discards the encoder's every command. */
+    if (!texture_wgpu->texture || !(wgpuTextureGetUsage(texture_wgpu->texture) & WGPUTextureUsage_RenderAttachment))
+    {
+        FIXME("Cannot render to the texture of format %s.\n", debug_d3dformat(view->format->id));
+        return;
+    }
+    format = wined3d_format_wgpu(view->format)->texture_format;
+    if (format != texture_wgpu->format && format != wined3d_format_wgpu(view->resource->format)->srgb_toggle_format)
+        format = texture_wgpu->format;
+    if (is_3d)
+    {
+        first_layer = 0;
+        layer_count = 1;
+    }
+    if (!(pipeline = wgpu_mip_pipeline(device_wgpu, format, is_3d)))
+    {
+        FIXME("Cannot generate mipmaps of format %s.\n", debug_d3dformat(view->format->id));
+        return;
+    }
+
+    encoder = wined3d_context_wgpu_get_encoder(context_wgpu);
+    wined3d_context_wgpu_end_passes(context_wgpu);
+    for (layer = first_layer; layer < first_layer + layer_count; ++layer)
+    {
+        for (level = base + 1; level < base + count; ++level)
+        {
+            WGPURenderPassColorAttachment attachment = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
+            WGPUTextureViewDescriptor view_desc = WGPU_TEXTURE_VIEW_DESCRIPTOR_INIT;
+            WGPURenderPassDescriptor pass_desc = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
+            WGPUBindGroupDescriptor group_desc = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
+            WGPUBindGroupEntry entry = WGPU_BIND_GROUP_ENTRY_INIT;
+            WGPUTextureView src, dst;
+            WGPURenderPassEncoder pass;
+            WGPUBindGroup group;
+
+            sub_resource_idx = layer * texture->level_count + level;
+            unsigned int slice, slice_count = is_3d ? wined3d_texture_get_level_depth(texture, level) : 1;
+
+            view_desc.format = format;
+            view_desc.dimension = is_3d ? WGPUTextureViewDimension_3D : WGPUTextureViewDimension_2D;
+            view_desc.baseMipLevel = level - 1;
+            view_desc.mipLevelCount = 1;
+            view_desc.baseArrayLayer = layer;
+            view_desc.arrayLayerCount = 1;
+            src = wgpuTextureCreateView(texture_wgpu->texture, &view_desc);
+            view_desc.baseMipLevel = level;
+            dst = wgpuTextureCreateView(texture_wgpu->texture, &view_desc);
+
+            entry.binding = 0;
+            entry.textureView = src;
+            group_desc.layout = is_3d ? device_wgpu->null_resources.mip_layout_3d
+                    : device_wgpu->null_resources.mip_layout;
+            group_desc.entryCount = 1;
+            group_desc.entries = &entry;
+            group = wgpuDeviceCreateBindGroup(device_wgpu->device, &group_desc);
+
+            /* A pass per slice of a 3D level. */
+            for (slice = 0; slice < slice_count; ++slice)
+            {
+                attachment.view = dst;
+                attachment.depthSlice = is_3d ? slice : WGPU_DEPTH_SLICE_UNDEFINED;
+                attachment.loadOp = WGPULoadOp_Clear;
+                attachment.storeOp = WGPUStoreOp_Store;
+                pass_desc.colorAttachmentCount = 1;
+                pass_desc.colorAttachments = &attachment;
+                pass = wgpuCommandEncoderBeginRenderPass(encoder, &pass_desc);
+                wgpuRenderPassEncoderSetPipeline(pass, pipeline);
+                wgpuRenderPassEncoderSetBindGroup(pass, 0, group, 0, NULL);
+                wgpuRenderPassEncoderDraw(pass, 3, 1, 0, slice);
+                wgpuRenderPassEncoderEnd(pass);
+                wgpuRenderPassEncoderRelease(pass);
+            }
+            wgpuBindGroupRelease(group);
+            wgpuTextureViewRelease(dst);
+            wgpuTextureViewRelease(src);
+
+            wined3d_texture_validate_location(texture, sub_resource_idx, WINED3D_LOCATION_TEXTURE_RGB);
+            wined3d_texture_invalidate_location(texture, sub_resource_idx, ~WINED3D_LOCATION_TEXTURE_RGB);
+        }
+    }
 }
