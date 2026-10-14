@@ -100,6 +100,7 @@
 # @ stub LdrGetDllHandleEx
 @ stdcall LdrGetDllPath(wstr long ptr ptr)
 @ stdcall LdrGetProcedureAddress(ptr ptr long ptr)
+@ stdcall LdrGetProcedureAddressEx(ptr ptr long ptr long)
 # @ stub LdrHotPatchRoutine
 @ stub LdrInitShimEngineDynamic
 @ stdcall LdrInitializeThunk(ptr long long long)
@@ -111,6 +112,7 @@
 @ stdcall LdrQueryProcessModuleInformation(ptr long ptr)
 @ stdcall LdrRegisterDllNotification(long ptr ptr ptr)
 @ stdcall LdrRemoveDllDirectory(ptr)
+@ stdcall LdrResFindResource(ptr long long long ptr ptr ptr ptr long)
 @ stdcall LdrResolveDelayLoadedAPI(ptr ptr ptr ptr ptr long)
 @ stub LdrSetAppCompatDllRedirectionCallback
 @ stdcall LdrSetDefaultDllDirectories(long)
