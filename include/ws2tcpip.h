@@ -195,6 +195,11 @@ int WINAPI  GetAddrInfoExW(const WCHAR*,const WCHAR*,DWORD,GUID*, const ADDRINFO
 #define     GetAddrInfoEx WINELIB_NAME_AW(GetAddrInfoExW)
 int WINAPI  GetAddrInfoExOverlappedResult(OVERLAPPED*);
 int WINAPI  GetAddrInfoExCancel(HANDLE*);
+int WINAPI  SetAddrInfoExA(const char*,const char*,SOCKET_ADDRESS*,DWORD,BLOB*,DWORD,DWORD,GUID*,struct WS(timeval)*,
+                           OVERLAPPED*,LPLOOKUPSERVICE_COMPLETION_ROUTINE,HANDLE*);
+int WINAPI  SetAddrInfoExW(const WCHAR*,const WCHAR*,SOCKET_ADDRESS*,DWORD,BLOB*,DWORD,DWORD,GUID*,struct WS(timeval)*,
+                           OVERLAPPED*,LPLOOKUPSERVICE_COMPLETION_ROUTINE,HANDLE*);
+#define     SetAddrInfoEx WINELIB_NAME_AW(SetAddrInfoEx)
 int WINAPI  WS(getnameinfo)(const SOCKADDR*,WS(socklen_t),PCHAR,DWORD,PCHAR,DWORD,INT);
 #define     GetNameInfoA WS(getnameinfo)
 INT WINAPI  GetNameInfoW(const SOCKADDR*,WS(socklen_t),PWCHAR,DWORD,PWCHAR,DWORD,INT);

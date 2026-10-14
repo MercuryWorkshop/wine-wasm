@@ -533,6 +533,32 @@ int WINAPI GetAddrInfoExCancel( HANDLE *handle )
 
 
 /***********************************************************************
+ *      SetAddrInfoExA   (ws2_32.@)
+ */
+int WINAPI SetAddrInfoExA( const char *name, const char *service, SOCKET_ADDRESS *addrs, DWORD count,
+                           BLOB *blob, DWORD flags, DWORD namespace, GUID *provider, struct timeval *timeout,
+                           OVERLAPPED *overlapped, LPLOOKUPSERVICE_COMPLETION_ROUTINE routine, HANDLE *handle )
+{
+    FIXME( "name %s, service %s, namespace %lu: stub\n", debugstr_a(name), debugstr_a(service), namespace );
+    SetLastError( WSAEOPNOTSUPP );
+    return WSAEOPNOTSUPP;
+}
+
+
+/***********************************************************************
+ *      SetAddrInfoExW   (ws2_32.@)
+ */
+int WINAPI SetAddrInfoExW( const WCHAR *name, const WCHAR *service, SOCKET_ADDRESS *addrs, DWORD count,
+                           BLOB *blob, DWORD flags, DWORD namespace, GUID *provider, struct timeval *timeout,
+                           OVERLAPPED *overlapped, LPLOOKUPSERVICE_COMPLETION_ROUTINE routine, HANDLE *handle )
+{
+    FIXME( "name %s, service %s, namespace %lu: stub\n", debugstr_w(name), debugstr_w(service), namespace );
+    SetLastError( WSAEOPNOTSUPP );
+    return WSAEOPNOTSUPP;
+}
+
+
+/***********************************************************************
  *      GetAddrInfoW   (ws2_32.@)
  */
 int WINAPI GetAddrInfoW(const WCHAR *nodename, const WCHAR *servname, const ADDRINFOW *hints, ADDRINFOW **res)
