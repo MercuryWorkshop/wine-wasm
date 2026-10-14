@@ -1256,6 +1256,11 @@ static void loaderdrv_SetWindowRgn( HWND hwnd, HRGN hrgn, BOOL redraw )
 
 static BOOL loaderdrv_SetWindowGlass( HWND hwnd, const struct window_glass *glass )
 {
+    /* Whether the driver draws glass is not worth loading it for: Windows 7's
+     * uxtheme asks (IsThreadDesktopComposited) in its DllMain, under the
+     * loader lock, where loading the driver deadlocks. Until a window loads
+     * it, the answer is no. */
+    if (!hwnd) return FALSE;
     return load_driver()->pSetWindowGlass( hwnd, glass );
 }
 
