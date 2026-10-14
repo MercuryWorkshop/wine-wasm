@@ -45,6 +45,9 @@
 /* Define to 1 if you have the <cups/ppd.h> header file. */
 #undef HAVE_CUPS_PPD_H
 
+/* Define to 1 if webgpu.dll links a host webgpu.h (DAWN_LIBS). */
+#undef HAVE_DAWN
+
 /* Define to 1 if you have the <dev/evdev/input.h> header file. */
 #undef HAVE_DEV_EVDEV_INPUT_H
 

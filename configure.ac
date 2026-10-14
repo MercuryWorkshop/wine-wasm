@@ -718,6 +718,8 @@ AC_SUBST(OPENGL_LIBS,"")
 
 dnl webgpu.dll's Unix side makes its calls on a host webgpu.h (Dawn).
 AC_ARG_VAR([DAWN_LIBS],[linker flags for the webgpu.h webgpu.dll's Unix side uses, such as Dawn's])
+dnl Without one it serves the wire only through gex's /dev/gex-gpu.
+AS_IF([test -n "$DAWN_LIBS"],[AC_DEFINE(HAVE_DAWN, 1, [Define to 1 if webgpu.dll links a host webgpu.h (DAWN_LIBS).])])
 
 dnl **** Check for header files ****
 
