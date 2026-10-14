@@ -3130,6 +3130,13 @@ struct vkd3d_shader_wgsl_target_info
      * cannot be rendered to, so the caller makes them 2D, one texel high.
      */
     bool textures_1d_as_2d;
+
+    /**
+     * Vertex shader inputs, by location, fed DXGI_FORMAT_R11G11B10_FLOAT
+     * attributes, which WebGPU has no vertex format for: the caller feeds
+     * them as uint32, and they are unpacked, with w 1.0.
+     */
+    uint32_t vertex_r11g11b10_float_mask;
 };
 
 /** What a binding of a WGSL module is, as a WebGPU bind group layout entry
