@@ -1007,6 +1007,21 @@ DWORD WINAPI SetLayout( HDC hdc, DWORD layout )
 }
 
 /***********************************************************************
+ *           SetLayoutWidth    (GDI32.@)
+ *
+ * SetLayout, mirroring about a given width rather than the device's.
+ */
+DWORD WINAPI SetLayoutWidth( HDC hdc, LONG width, DWORD layout )
+{
+    DC_ATTR *dc_attr;
+
+    if (is_meta_dc( hdc )) return METADC_SetLayout( hdc, layout );
+    if (!(dc_attr = get_dc_attr( hdc ))) return GDI_ERROR;
+    if (dc_attr->emf && !EMFDC_SetLayout( dc_attr, layout )) return GDI_ERROR;
+    return NtGdiSetLayout( hdc, width, layout );
+}
+
+/***********************************************************************
  *           GetMapMode  (GDI32.@)
  */
 INT WINAPI GetMapMode( HDC hdc )

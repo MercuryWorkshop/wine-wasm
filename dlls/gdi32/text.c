@@ -2907,3 +2907,74 @@ found:
     *cs = charset_info[i];
     return TRUE;
 }
+
+
+/***********************************************************************
+ *           AnyLinkedFonts    (GDI32.@)
+ *
+ * Whether the system has fonts linked for end-user-defined characters: none.
+ */
+BOOL WINAPI AnyLinkedFonts(void)
+{
+    return FALSE;
+}
+
+
+/***********************************************************************
+ *           GdiSetLastError    (GDI32.@)
+ */
+void WINAPI GdiSetLastError( DWORD err )
+{
+    SetLastError( err );
+}
+
+
+/* Windows 7 moved these from usp10 to gdi32 (its usp10.dll forwards them
+ * here); Windows 7's lpk.dll calls them through that usp10. */
+
+/***********************************************************************
+ *           LpkPresent    (GDI32.@)
+ */
+void WINAPI LpkPresent(void)
+{
+}
+
+
+/***********************************************************************
+ *           UspAllocCache    (GDI32.@)
+ */
+HRESULT WINAPI UspAllocCache( SIZE_T size, void **ptr )
+{
+    if (!(*ptr = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, size ))) return E_OUTOFMEMORY;
+    return S_OK;
+}
+
+
+/***********************************************************************
+ *           UspAllocTemp    (GDI32.@)
+ */
+HRESULT WINAPI UspAllocTemp( SIZE_T size, void **ptr )
+{
+    return UspAllocCache( size, ptr );
+}
+
+
+/***********************************************************************
+ *           UspFreeMem    (GDI32.@)
+ */
+HRESULT WINAPI UspFreeMem( void *ptr )
+{
+    HeapFree( GetProcessHeap(), 0, ptr );
+    return S_OK;
+}
+
+
+/***********************************************************************
+ *           QueryFontAssocStatus    (GDI32.@)
+ *
+ * Which font association (for DBCS charsets) is on: none.
+ */
+ULONG WINAPI QueryFontAssocStatus(void)
+{
+    return 0;
+}

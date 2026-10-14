@@ -234,7 +234,7 @@ static void thread_detach(void)
  */
 BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
 {
-    static HMODULE imm32_module;
+    static HMODULE imm32_module, lpk_module;
     BOOL ret = TRUE;
 
     switch(reason)
@@ -243,13 +243,22 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
         user32_module = inst;
         ret = process_attach();
         if(ret)
+        {
             imm32_module = LoadLibraryW(L"imm32.dll");
+            /* Windows' user32 always has the language pack loaded. Windows 7's
+             * comctl32 v6 relies on that: its edit control calls through
+             * GetProcAddress(GetModuleHandle("LPK"), "LpkEditControl") without
+             * a NULL check. Wine has no lpk of its own, so load a native one
+             * when the prefix holds it (and quietly do without otherwise). */
+            lpk_module = LoadLibraryExW(L"lpk.dll", 0, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        }
         break;
     case DLL_THREAD_DETACH:
         thread_detach();
         break;
     case DLL_PROCESS_DETACH:
         FreeLibrary(imm32_module);
+        if (lpk_module) FreeLibrary(lpk_module);
         break;
     }
     return ret;

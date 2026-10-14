@@ -494,6 +494,19 @@ NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrFindResource_U( HMODULE hmod, const LDR_RES
 }
 
 
+/**********************************************************************
+ *	LdrFindResourceEx_U  (NTDLL.@)
+ *
+ * LdrFindResource_U with flags first (Windows 7's lpk.dll imports it); no flag
+ * changes what is found.
+ */
+NTSTATUS WINAPI LdrFindResourceEx_U( ULONG flags, HMODULE hmod, const LDR_RESOURCE_INFO *info,
+                                     ULONG level, const IMAGE_RESOURCE_DATA_ENTRY **entry )
+{
+    if (flags) FIXME( "flags %#lx ignored\n", flags );
+    return LdrFindResource_U( hmod, info, level, entry );
+}
+
 /* don't penalize other platforms with stuff needed on i386 for compatibility */
 #ifdef __i386__
 NTSTATUS WINAPI access_resource( HMODULE hmod, const IMAGE_RESOURCE_DATA_ENTRY *entry,
