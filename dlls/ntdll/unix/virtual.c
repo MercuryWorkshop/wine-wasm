@@ -3457,7 +3457,7 @@ static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_inf
  * Map a PE image section into memory.
  */
 #ifdef __wasm__
-__attribute__((import_module("gex"), import_name("image_mapped"))) void gex_image_mapped( int base, int fd );
+__attribute__((import_module("gex"), import_name("image_mapped"))) void gex_image_mapped( gex_addr_t base, int fd );
 #endif
 
 static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size_ptr,
@@ -4540,9 +4540,9 @@ static const WCHAR shared_data_nameW[] = {'\\','K','e','r','n','e','l','O','b','
  * (usd_copy), and the first boot's fill is written back to it (usd_publish).
  * Both return the bytes copied, or -1 without a door session. */
 __attribute__((import_module("gex"), import_name("usd_copy")))
-extern int gex_usd_copy( int dst, unsigned int size );
+extern int gex_usd_copy( gex_addr_t dst, unsigned int size );
 __attribute__((import_module("gex"), import_name("usd_publish")))
-extern int gex_usd_publish( int src, unsigned int size );
+extern int gex_usd_publish( gex_addr_t src, unsigned int size );
 
 /* a process's own USD clocks (virtual_map_user_shared_data) */
 static void usd_store( volatile KSYSTEM_TIME *t, ULONGLONG v )
@@ -7188,7 +7188,7 @@ NTSTATUS WINAPI NtSetInformationVirtualMemory( HANDLE process,
  *           NtFlushInstructionCache  (NTDLL.@)
  */
 #ifdef __wasm__
-__attribute__((import_module("gex"), import_name("code_changed"))) void gex_code_changed( int addr, int len );
+__attribute__((import_module("gex"), import_name("code_changed"))) void gex_code_changed( gex_addr_t addr, int len );
 #endif
 
 NTSTATUS WINAPI NtFlushInstructionCache( HANDLE handle, const void *addr, SIZE_T size )

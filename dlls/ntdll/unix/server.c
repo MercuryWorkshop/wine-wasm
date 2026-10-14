@@ -340,7 +340,7 @@ static void reqstats_note( int code, unsigned long long ns )
  * not know this thread yet): use the pipes; 2: the thread died in the
  * request, as a closed reply pipe. WINEGEX_DOOR=0 turns it off. */
 __attribute__((import_module("gex"), import_name("door_call")))
-extern int gex_door_call( int req, int unix_pid, int unix_tid );
+extern int gex_door_call( gex_addr_t req, int unix_pid, int unix_tid );
 
 static int door_on = -1;
 static int door_pid;
