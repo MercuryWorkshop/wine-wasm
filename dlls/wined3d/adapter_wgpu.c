@@ -105,6 +105,9 @@ static void wgpu_uncaptured_error_callback(WGPUDevice const *device, WGPUErrorTy
 /* The state templates use no extensions. */
 static const BOOL supported_extensions[1] = {TRUE};
 
+static void wgpu_adapter_callback(WGPURequestAdapterStatus status, WGPUAdapter adapter,
+        WGPUStringView message, void *userdata1, void *userdata2);
+
 static HRESULT adapter_wgpu_create_device(struct wined3d *wined3d, const struct wined3d_adapter *adapter,
         enum wined3d_device_type device_type, HWND focus_window, unsigned int flags, BYTE surface_alignment,
         const enum wined3d_feature_level *levels, unsigned int level_count,
@@ -116,6 +119,7 @@ static HRESULT adapter_wgpu_create_device(struct wined3d *wined3d, const struct 
     WGPUDeviceDescriptor device_desc = WGPU_DEVICE_DESCRIPTOR_INIT;
     WGPUFeatureName features[16];
     struct wined3d_device_wgpu *device_wgpu;
+    WGPUAdapter wgpu_adapter = NULL;
     WGPUDevice wgpu_device = NULL;
     unsigned int feature_count = 0;
     HRESULT hr;
@@ -146,16 +150,37 @@ static HRESULT adapter_wgpu_create_device(struct wined3d *wined3d, const struct 
     device_desc.deviceLostCallbackInfo.callback = wgpu_device_lost_callback;
     device_desc.uncapturedErrorCallbackInfo.callback = wgpu_uncaptured_error_callback;
 
+    /* An adapter makes one device: each device gets an adapter of its own,
+     * asked for as the first was. */
+    {
+        WGPURequestAdapterCallbackInfo adapter_info = WGPU_REQUEST_ADAPTER_CALLBACK_INFO_INIT;
+        WGPURequestAdapterOptions options = WGPU_REQUEST_ADAPTER_OPTIONS_INIT;
+
+        options.powerPreference = WGPUPowerPreference_HighPerformance;
+        adapter_info.mode = WGPUCallbackMode_WaitAnyOnly;
+        adapter_info.callback = wgpu_adapter_callback;
+        adapter_info.userdata1 = &wgpu_adapter;
+        if (!wined3d_wgpu_wait(wgpu_info->instance, wgpuInstanceRequestAdapter(wgpu_info->instance,
+                &options, adapter_info)) || !wgpu_adapter)
+        {
+            WARN("No WebGPU adapter.\n");
+            free(device_wgpu);
+            return E_FAIL;
+        }
+    }
+
     callback_info.mode = WGPUCallbackMode_WaitAnyOnly;
     callback_info.callback = wgpu_device_callback;
     callback_info.userdata1 = &wgpu_device;
-    if (!wined3d_wgpu_wait(wgpu_info->instance, wgpuAdapterRequestDevice(wgpu_info->adapter,
+    if (!wined3d_wgpu_wait(wgpu_info->instance, wgpuAdapterRequestDevice(wgpu_adapter,
             &device_desc, callback_info)) || !wgpu_device)
     {
         WARN("Failed to create a WebGPU device.\n");
+        wgpuAdapterRelease(wgpu_adapter);
         free(device_wgpu);
         return E_FAIL;
     }
+    wgpuAdapterRelease(wgpu_adapter);
 
     device_wgpu->device = wgpu_device;
     device_wgpu->queue = wgpuDeviceGetQueue(wgpu_device);
