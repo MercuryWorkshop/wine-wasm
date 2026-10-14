@@ -1,4 +1,4 @@
-@ stub AllowPermLayer
+@ stdcall AllowPermLayer(wstr)
 @ stdcall ApphelpCheckExe(wstr long long long)
 @ stdcall ApphelpCheckInstallShieldPackage(ptr wstr)
 @ stdcall ApphelpCheckMsiPackage(ptr wstr)
@@ -81,7 +81,7 @@
 @ stub SdbGetLayerName
 @ stub SdbGetLayerTagRef
 @ stub SdbGetLocalPDB
-@ stub SdbGetMatchingExe
+@ stdcall SdbGetMatchingExe(ptr wstr wstr wstr long ptr)
 @ stub SdbGetMsiPackageInformation
 @ stub SdbGetNamedLayer
 @ stub SdbGetNextChild
@@ -134,7 +134,7 @@
 @ stub SdbReadStringTagRef
 @ stub SdbReadWORDTagRef
 @ stub SdbRegisterDatabase
-@ stub SdbReleaseDatabase
+@ stdcall SdbReleaseDatabase(ptr)
 @ stub SdbReleaseMatchingExe
 @ stub SdbResolveDatabase
 @ stub SdbSetApphelpDebugParameters

@@ -60,6 +60,26 @@ BOOL WINAPI ApphelpCheckExe( LPCWSTR path, BOOL shim, BOOL use_module_name, BOOL
     return TRUE;
 }
 
+/* Whether a program on this path may take permanent compatibility layers
+ * (Windows 7's shell32 asks when it starts one). None are supported here. */
+BOOL WINAPI AllowPermLayer( PCWSTR path )
+{
+    TRACE("%s\n", debugstr_w(path));
+    return FALSE;
+}
+
+/* No compatibility database, so no executable ever matches one. */
+BOOL WINAPI SdbGetMatchingExe( HSDB hsdb, LPCWSTR path, LPCWSTR module, LPCWSTR env, DWORD flags, void *result )
+{
+    TRACE("%p %s %s %s %#lx %p\n", hsdb, debugstr_w(path), debugstr_w(module), debugstr_w(env), flags, result);
+    return FALSE;
+}
+
+void WINAPI SdbReleaseDatabase( HSDB hsdb )
+{
+    TRACE("%p\n", hsdb);
+}
+
 PDB WINAPI SdbCreateDatabase( LPCWSTR path, PATH_TYPE type )
 {
     FIXME("stub: %s %u\n", debugstr_w(path), type);
