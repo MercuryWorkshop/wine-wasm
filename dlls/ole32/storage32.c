@@ -8547,8 +8547,11 @@ static HRESULT create_storagefile(
     goto end;
   }
 
-  /* in direct mode, can only use SHARE_EXCLUSIVE */
-  if (!(grfMode & STGM_TRANSACTED) && (STGM_SHARE_MODE(grfMode) != STGM_SHARE_EXCLUSIVE))
+  /* in direct mode, can only use SHARE_EXCLUSIVE, or DENY_WRITE as the
+   * single writer of a single-writer, multiple-readers file (Windows 7's
+   * Sticky Notes creates its notes so) */
+  if (!(grfMode & STGM_TRANSACTED) && (STGM_SHARE_MODE(grfMode) != STGM_SHARE_EXCLUSIVE) &&
+      !((grfMode & STGM_DIRECT_SWMR) && STGM_SHARE_MODE(grfMode) == STGM_SHARE_DENY_WRITE))
     goto end;
 
   /* but in transacted mode, any share mode is valid */
