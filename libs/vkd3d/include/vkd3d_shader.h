@@ -3123,6 +3123,13 @@ struct vkd3d_shader_wgsl_target_info
      */
     uint32_t vertex_uint_to_float_mask;
     uint32_t vertex_sint_to_float_mask;
+
+    /**
+     * 1D and 1D array resources are declared as 2D and 2D array ones, read
+     * at y = 0: WebGPU's 1D textures have neither mipmaps nor layers, and
+     * cannot be rendered to, so the caller makes them 2D, one texel high.
+     */
+    bool textures_1d_as_2d;
 };
 
 /** What a binding of a WGSL module is, as a WebGPU bind group layout entry
