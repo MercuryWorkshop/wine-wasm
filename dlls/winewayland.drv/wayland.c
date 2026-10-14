@@ -164,6 +164,11 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
         process_wayland.wp_viewporter =
             wl_registry_bind(registry, id, &wp_viewporter_interface, 1);
     }
+    else if (strcmp(interface, "gex_glass_manager_v1") == 0)
+    {
+        process_wayland.gex_glass_manager_v1 =
+            wl_registry_bind(registry, id, &gex_glass_manager_v1_interface, 1);
+    }
     else if (strcmp(interface, "wl_subcompositor") == 0)
     {
         process_wayland.wl_subcompositor =

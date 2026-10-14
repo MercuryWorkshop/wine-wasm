@@ -42,6 +42,7 @@
 #include "alpha-modifier-v1-client-protocol.h"
 #include "fractional-scale-v1-client-protocol.h"
 #include "gex-window-placement-v1-client-protocol.h"
+#include "gex-glass-v1-client-protocol.h"
 
 #include "windef.h"
 #include "winbase.h"
@@ -180,6 +181,7 @@ struct wayland
      * placed by position and z-order, and Win32 -- not the compositor --
      * moves, sizes, maximizes, activates and raises. */
     struct gex_window_placement_manager_v1 *gex_window_placement_manager_v1;
+    struct gex_glass_manager_v1 *gex_glass_manager_v1;
     struct wl_subcompositor *wl_subcompositor;
     struct wp_fractional_scale_manager_v1 *wp_fractional_scale_manager_v1;
     struct zwp_pointer_constraints_v1 *zwp_pointer_constraints_v1;
@@ -321,6 +323,7 @@ struct wayland_surface
     UINT placed_layer;
     HWND placed_below;
     BOOL placed_stacked;
+    struct gex_glass_v1 *gex_glass_v1;
 
     struct wayland_surface_config pending, requested, processing, current;
     BOOL resizing;
@@ -350,6 +353,8 @@ void wayland_output_use_xdg_extension(struct wayland_output *output);
 struct wayland_surface *wayland_surface_create(HWND hwnd);
 void wayland_surface_place(struct wayland_surface *surface, BOOL restack);
 void wayland_surface_destroy(struct wayland_surface *surface);
+void wayland_surface_set_glass(struct wayland_surface *surface, const RECT *rects, UINT count,
+                               UINT argb, UINT balance, UINT blur_balance);
 void wayland_surface_make_toplevel(struct wayland_surface *surface);
 void wayland_surface_make_subsurface(struct wayland_surface *surface,
                                      struct wayland_surface *parent);
@@ -409,6 +414,10 @@ struct wayland_win_data
     BOOL resizeable;
     BOOL managed;
     BOOL layered_attribs_set;
+    /* DWM's glass (pSetWindowGlass), for the surface whenever it has one */
+    RECT glass[5];
+    UINT glass_count;
+    UINT glass_argb, glass_balance, glass_blur_balance;
 };
 
 struct wayland_win_data *wayland_win_data_get(HWND hwnd);
@@ -484,6 +493,7 @@ BOOL WAYLAND_SetIMECompositionRect(HWND hwnd, RECT rect);
 void WAYLAND_SetCursor(HWND hwnd, HCURSOR hcursor);
 BOOL WAYLAND_SetCursorPos(INT x, INT y);
 void WAYLAND_SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha, DWORD flags);
+BOOL WAYLAND_SetWindowGlass(HWND hwnd, const RECT *rects, UINT count, UINT argb, UINT balance, UINT blur_balance);
 void WAYLAND_SetWindowIcons(HWND hwnd, HICON icon, const ICONINFO *ii, HICON icon_small, const ICONINFO *ii_small);
 void WAYLAND_SetWindowStyle(HWND hwnd, INT offset, STYLESTRUCT *style);
 void WAYLAND_SetWindowText(HWND hwnd, LPCWSTR text);

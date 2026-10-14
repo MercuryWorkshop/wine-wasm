@@ -27,10 +27,53 @@
 #include "winbase.h"
 #include "wingdi.h"
 #include "winuser.h"
+#include "winreg.h"
 #include "dwmapi.h"
+#include "ntuser.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dwmapi);
+
+/* Whether the display driver draws DWM's glass (gex's compositor does):
+ * then composition is on, whatever version is reported. */
+static BOOL driver_draws_glass(void)
+{
+    static LONG state = -1;
+
+    if (state == -1) state = NtUserSetWindowGlass( NULL, NULL ) ? 1 : 0;
+    return state;
+}
+
+/* The colorization, as Windows 7 keeps it; its default is "sky". */
+static void get_colorization( DWORD *argb, DWORD *balance, DWORD *blur_balance )
+{
+    DWORD size;
+    HKEY key;
+
+    *argb = 0x6b74b8fc;
+    *balance = 8;
+    *blur_balance = 49;
+    if (RegOpenKeyExW( HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\DWM", 0, KEY_READ, &key )) return;
+    size = sizeof(*argb);
+    RegQueryValueExW( key, L"ColorizationColor", NULL, NULL, (BYTE *)argb, &size );
+    size = sizeof(*balance);
+    RegQueryValueExW( key, L"ColorizationColorBalance", NULL, NULL, (BYTE *)balance, &size );
+    size = sizeof(*blur_balance);
+    RegQueryValueExW( key, L"ColorizationBlurBalance", NULL, NULL, (BYTE *)blur_balance, &size );
+    RegCloseKey( key );
+}
+
+static BOOL set_glass( HWND hwnd, struct set_window_glass_params *params )
+{
+    DWORD argb, balance, blur_balance;
+
+    get_colorization( &argb, &balance, &blur_balance );
+    params->mask |= WINDOW_GLASS_COLORIZATION;
+    params->argb = argb;
+    params->balance = min( balance, 100 );
+    params->blur_balance = min( blur_balance, 100 );
+    return NtUserSetWindowGlass( hwnd, params );
+}
 
 
 /**********************************************************************
@@ -49,6 +92,7 @@ HRESULT WINAPI DwmIsCompositionEnabled(BOOL *enabled)
     version.dwOSVersionInfoSize = sizeof(version);
     if (!RtlGetVersion(&version))
         *enabled = (version.dwMajorVersion > 6 || (version.dwMajorVersion == 6 && version.dwMinorVersion >= 3));
+    if (!*enabled) *enabled = driver_draws_glass();
 
     return S_OK;
 }
@@ -87,9 +131,21 @@ HRESULT WINAPI DwmEnableComposition(UINT uCompositionAction)
  */
 HRESULT WINAPI DwmExtendFrameIntoClientArea(HWND hwnd, const MARGINS* margins)
 {
-    FIXME("(%p, %p) stub\n", hwnd, margins);
+    struct set_window_glass_params params = {.mask = WINDOW_GLASS_MARGINS};
 
-    return S_OK;
+    TRACE("(%p, %p)\n", hwnd, margins);
+
+    if (!margins) return E_INVALIDARG;
+    if (!driver_draws_glass())
+    {
+        FIXME("(%p, %p) stub\n", hwnd, margins);
+        return S_OK;
+    }
+    params.margins[0] = margins->cxLeftWidth;
+    params.margins[1] = margins->cxRightWidth;
+    params.margins[2] = margins->cyTopHeight;
+    params.margins[3] = margins->cyBottomHeight;
+    return set_glass( hwnd, &params ) ? S_OK : E_HANDLE;
 }
 
 /**********************************************************************
@@ -97,9 +153,19 @@ HRESULT WINAPI DwmExtendFrameIntoClientArea(HWND hwnd, const MARGINS* margins)
  */
 HRESULT WINAPI DwmGetColorizationColor(DWORD *colorization, BOOL *opaque_blend)
 {
-    FIXME("(%p, %p) stub\n", colorization, opaque_blend);
+    DWORD balance, blur_balance;
 
-    return E_NOTIMPL;
+    TRACE("(%p, %p)\n", colorization, opaque_blend);
+
+    if (!colorization || !opaque_blend) return E_INVALIDARG;
+    if (!driver_draws_glass())
+    {
+        FIXME("(%p, %p) stub\n", colorization, opaque_blend);
+        return E_NOTIMPL;
+    }
+    get_colorization( colorization, &balance, &blur_balance );
+    *opaque_blend = FALSE;
+    return S_OK;
 }
 
 /**********************************************************************
@@ -181,9 +247,22 @@ HRESULT WINAPI DwmGetGraphicsStreamTransformHint(UINT uIndex, MilMatrix3x2D *pTr
  */
 HRESULT WINAPI DwmEnableBlurBehindWindow(HWND hWnd, const DWM_BLURBEHIND *pBlurBuf)
 {
-    FIXME("%p %p\n", hWnd, pBlurBuf);
+    struct set_window_glass_params params = {.mask = WINDOW_GLASS_BLUR};
 
-    return E_NOTIMPL;
+    TRACE("%p %p\n", hWnd, pBlurBuf);
+
+    if (!pBlurBuf) return E_INVALIDARG;
+    if (!driver_draws_glass())
+    {
+        FIXME("%p %p\n", hWnd, pBlurBuf);
+        return E_NOTIMPL;
+    }
+    /* Only what the flags name changes; the rest stays as it was. */
+    if (!(pBlurBuf->dwFlags & DWM_BB_ENABLE)) return S_OK;
+    params.blur = pBlurBuf->fEnable;
+    if ((pBlurBuf->dwFlags & DWM_BB_BLURREGION) && pBlurBuf->hRgnBlur)
+        GetRgnBox( pBlurBuf->hRgnBlur, &params.blur_rect );
+    return set_glass( hWnd, &params ) ? S_OK : E_HANDLE;
 }
 
 /**********************************************************************

@@ -270,6 +270,12 @@ void wayland_surface_destroy(struct wayland_surface *surface)
         surface->wp_alpha_modifier_surface_v1 = NULL;
     }
 
+    if (surface->gex_glass_v1)
+    {
+        gex_glass_v1_destroy(surface->gex_glass_v1);
+        surface->gex_glass_v1 = NULL;
+    }
+
     if (surface->wp_viewport)
     {
         wp_viewport_destroy(surface->wp_viewport);
@@ -1618,4 +1624,40 @@ void wayland_surface_set_opacity(struct wayland_surface *surface, BYTE alpha, UI
         wl_surface_commit(surface->wl_surface);
         wl_display_flush(process_wayland.wl_display);
     }
+}
+
+/**********************************************************************
+ *          wayland_surface_set_glass
+ *
+ * DWM's glass, drawn by the compositor (gex_glass_v1): the rectangles are
+ * relative to the window's visible rect, which is the surface's origin.
+ */
+void wayland_surface_set_glass(struct wayland_surface *surface, const RECT *rects, UINT count,
+                               UINT argb, UINT balance, UINT blur_balance)
+{
+    struct wl_region *region;
+    UINT i;
+
+    if (!process_wayland.gex_glass_manager_v1) return;
+    if (!count)
+    {
+        if (surface->gex_glass_v1)
+        {
+            gex_glass_v1_destroy(surface->gex_glass_v1);
+            surface->gex_glass_v1 = NULL;
+        }
+        return;
+    }
+    if (!surface->gex_glass_v1)
+        surface->gex_glass_v1 = gex_glass_manager_v1_get_glass(process_wayland.gex_glass_manager_v1,
+                                                               surface->wl_surface);
+    if (!surface->gex_glass_v1) return;
+
+    region = wl_compositor_create_region(process_wayland.wl_compositor);
+    for (i = 0; i < count; i++)
+        wl_region_add(region, rects[i].left, rects[i].top, rects[i].right - rects[i].left,
+                      rects[i].bottom - rects[i].top);
+    gex_glass_v1_set_region(surface->gex_glass_v1, region);
+    wl_region_destroy(region);
+    gex_glass_v1_set_colorization(surface->gex_glass_v1, argb, balance, blur_balance);
 }
