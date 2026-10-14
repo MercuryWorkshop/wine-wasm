@@ -3119,6 +3119,17 @@ struct vkd3d_shader_wgsl_buffer_format
 };
 
 /**
+ * A sampler's level of detail bias (D3D's MipLODBias), which WebGPU's
+ * samplers lack: added to the level of detail of the samples taken with it.
+ */
+struct vkd3d_shader_wgsl_sampler_lod_bias
+{
+    unsigned int register_space;
+    unsigned int register_index;
+    float bias;
+};
+
+/**
  * A chained structure with WGSL-specific parameters.
  *
  * This structure is passed to vkd3d_shader_compile() and extends
@@ -3167,6 +3178,10 @@ struct vkd3d_shader_wgsl_target_info
      */
     const struct vkd3d_shader_wgsl_buffer_format *srv_buffer_formats;
     unsigned int srv_buffer_format_count;
+
+    /** Samplers with a level of detail bias; the others have none. */
+    const struct vkd3d_shader_wgsl_sampler_lod_bias *sampler_lod_biases;
+    unsigned int sampler_lod_bias_count;
 };
 
 /** What a binding of a WGSL module is, as a WebGPU bind group layout entry

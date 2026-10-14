@@ -401,7 +401,7 @@ static void wined3d_sampler_wgpu_cs_init(void *object)
         sampler_desc.maxAnisotropy = min(desc->max_anisotropy, 16);
 
     if (desc->lod_bias)
-        FIXME("Unhandled LOD bias %.8e.\n", desc->lod_bias);
+        TRACE("LOD bias %.8e, applied by the shaders sampling with it.\n", desc->lod_bias);
     if (desc->mip_base_level)
         FIXME("Unhandled mip_base_level %u.\n", desc->mip_base_level);
 
