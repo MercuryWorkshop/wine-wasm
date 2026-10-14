@@ -368,6 +368,14 @@ struct wined3d_null_resources_wgpu
     /* Depth to r32float, for reading back depth formats WebGPU cannot copy
      * (texture_wgpu.c), made when first needed. */
     WGPURenderPipeline depth_read_pipeline;
+    /* Mipmap generation, a pipeline per format (texture_wgpu.c). */
+    struct
+    {
+        WGPUTextureFormat format;
+        bool is_3d;
+        WGPURenderPipeline pipeline;
+    } mip_pipelines[8];
+    WGPUBindGroupLayout mip_layout, mip_layout_3d;
 };
 
 struct wined3d_device_wgpu
@@ -388,6 +396,8 @@ static inline struct wined3d_device_wgpu *wined3d_device_wgpu(struct wined3d_dev
 }
 
 bool wined3d_device_wgpu_create_null_resources(struct wined3d_device_wgpu *device_wgpu);
+void wined3d_texture_wgpu_generate_mipmaps(struct wined3d_context_wgpu *context_wgpu,
+        struct wined3d_shader_resource_view *view);
 void wined3d_device_wgpu_push_error_scope(struct wined3d_device_wgpu *device_wgpu);
 bool wined3d_device_wgpu_pop_error_scope(struct wined3d_device_wgpu *device_wgpu, const char *what);
 void wined3d_device_wgpu_destroy_null_resources(struct wined3d_device_wgpu *device_wgpu);
