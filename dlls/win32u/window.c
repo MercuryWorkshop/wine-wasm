@@ -2453,9 +2453,11 @@ static BOOL apply_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags, stru
 /* Whether the display driver draws glass at all; asked once. */
 static BOOL driver_draws_glass(void)
 {
-    static LONG state = -1;
+    static LONG state;
 
-    if (state == -1) state = user_driver->pSetWindowGlass( NULL, NULL ) ? 1 : 0;
+    /* Kept once yes: before the driver is loaded the answer is no for now
+     * (loaderdrv_SetWindowGlass). */
+    if (!state && user_driver->pSetWindowGlass( NULL, NULL )) state = 1;
     return state;
 }
 
