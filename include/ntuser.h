@@ -1718,6 +1718,8 @@ struct set_window_glass_params
     UINT argb;          /* colorization colour */
     UINT balance;       /* 0..100: colour over the blurred backdrop */
     UINT blur_balance;  /* 0..100: how much blurred backdrop shows */
+    UINT afterglow;     /* afterglow colour, laid over by the backdrop's brightness */
+    UINT afterglow_balance; /* 0..100 */
 };
 
 /* With a null window and parameters: whether the driver draws glass. */

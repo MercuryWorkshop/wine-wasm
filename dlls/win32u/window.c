@@ -2564,6 +2564,8 @@ BOOL update_window_glass( HWND hwnd )
         draw.argb = glass.argb;
         draw.balance = glass.balance;
         draw.blur_balance = glass.blur_balance;
+        draw.afterglow = glass.afterglow;
+        draw.afterglow_balance = glass.afterglow_balance;
     }
     else
     {
@@ -2571,6 +2573,8 @@ BOOL update_window_glass( HWND hwnd )
         draw.argb = 0x6b74b8fc;
         draw.balance = 8;
         draw.blur_balance = 49;
+        draw.afterglow = 0x6b74b8fc;
+        draw.afterglow_balance = 43;
     }
     if (frame)
     {
@@ -2619,6 +2623,8 @@ static BOOL set_window_glass( HWND hwnd, const struct set_window_glass_params *p
         win->glass.argb = params->argb;
         win->glass.balance = params->balance;
         win->glass.blur_balance = params->blur_balance;
+        win->glass.afterglow = params->afterglow;
+        win->glass.afterglow_balance = params->afterglow_balance;
     }
     win->glass.mask |= params->mask;
     release_win_ptr( win );
