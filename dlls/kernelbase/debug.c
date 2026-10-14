@@ -784,6 +784,14 @@ LONG WINAPI UnhandledExceptionFilter( EXCEPTION_POINTERS *epointers )
             if (ret != EXCEPTION_CONTINUE_SEARCH) return ret;
         }
 
+        {
+            const UNICODE_STRING *image = &NtCurrentTeb()->Peb->ProcessParameters->ImagePathName;
+            /* Said whatever the debug channels and whether a debugger starts, so that
+             * a crash (which on gex ends with no winedbg output) is never silent. */
+            MESSAGE( "wine: unhandled exception %08lx at address %p, process %04lx %s, thread %04lx\n",
+                     rec->ExceptionCode, rec->ExceptionAddress, GetCurrentProcessId(),
+                     debugstr_wn( image->Buffer, image->Length / sizeof(WCHAR) ), GetCurrentThreadId() );
+        }
         if ((GetErrorMode() & SEM_NOGPFAULTERRORBOX) ||
             !start_debugger_atomic( epointers ) || !NtCurrentTeb()->Peb->BeingDebugged)
             return nested ? EXCEPTION_CONTINUE_SEARCH : EXCEPTION_EXECUTE_HANDLER;

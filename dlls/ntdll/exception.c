@@ -346,6 +346,19 @@ EXCEPTION_DISPOSITION WINAPI user_callback_handler( EXCEPTION_RECORD *record, vo
  *
  * Implementation of KiUserCallbackDispatcher.
  */
+static LONG CALLBACK user_callback_filter( EXCEPTION_POINTERS *ptrs )
+{
+    const EXCEPTION_RECORD *rec = ptrs->ExceptionRecord;
+    const UNICODE_STRING *image = &NtCurrentTeb()->Peb->ProcessParameters->ImagePathName;
+
+    /* Said whatever the debug channels, so a page's log shows which thread stopped
+     * doing its job (a window procedure that faults is abandoned here). */
+    MESSAGE( "wine: exception %08lx at address %p in a window callback, process %04lx %s, "
+             "thread %04lx; the callback was abandoned\n", rec->ExceptionCode, rec->ExceptionAddress,
+             GetCurrentProcessId(), debugstr_us( image ), GetCurrentThreadId() );
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
 NTSTATUS WINAPI dispatch_user_callback( void *args, ULONG len, ULONG id )
 {
     NTSTATUS status;
@@ -355,7 +368,7 @@ NTSTATUS WINAPI dispatch_user_callback( void *args, ULONG len, ULONG id )
         KERNEL_CALLBACK_PROC func = NtCurrentTeb()->Peb->KernelCallbackTable[id];
         status = func( args, len );
     }
-    __EXCEPT_ALL
+    __EXCEPT( user_callback_filter )
     {
         status = GetExceptionCode();
         ERR( "ignoring exception %lx\n", status );
