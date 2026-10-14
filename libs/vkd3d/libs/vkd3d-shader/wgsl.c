@@ -590,6 +590,10 @@ static enum wgsl_operand_kind wgsl_print_operand_name(struct vkd3d_string_buffer
         case VSIR_REGISTER_UNDEF:
             return WGSL_OPERAND_IMMEDIATE;
 
+        case VSIR_REGISTER_POINT_COORD:
+            vkd3d_string_buffer_printf(buffer, "v_point_coord");
+            return WGSL_OPERAND_VEC4_U32;
+
         case VSIR_REGISTER_OUT_POINT_SIZE:
             /* WebGPU draws points one pixel wide; the size goes nowhere. */
             vkd3d_string_buffer_printf(buffer, "o_point_size");
@@ -3598,6 +3602,12 @@ static const char *wgsl_vertex_input_conversion(const struct wgsl_generator *gen
     return NULL;
 }
 
+/* Points drawn as quads (vkd3d_shader_wgsl_target_info.point_quads). */
+static bool wgsl_point_quads(const struct wgsl_generator *gen)
+{
+    return gen->target_info && gen->target_info->point_quads;
+}
+
 static void wgsl_generate_input_struct_declarations(struct wgsl_generator *gen)
 {
     const struct vsir_signature *signature = &gen->program->input_signature;
@@ -3610,6 +3620,20 @@ static void wgsl_generate_input_struct_declarations(struct wgsl_generator *gen)
     unsigned int i;
 
     vkd3d_string_buffer_printf(buffer, "struct vkd3d_%s_in\n{\n", gen->prefix);
+
+    /* A point's corner (wgsl_point_quads()). */
+    if (wgsl_point_quads(gen) && type == VKD3D_SHADER_TYPE_VERTEX)
+    {
+        vkd3d_string_buffer_printf(buffer, "    @builtin(vertex_index) vkd3d_corner: u32,\n");
+        empty = false;
+    }
+    /* A point sprite's coordinate, from the vertex shader. */
+    if (wgsl_point_quads(gen) && type == VKD3D_SHADER_TYPE_PIXEL && gen->program->has_point_coord)
+    {
+        vkd3d_string_buffer_printf(buffer, "    @location(%u) vkd3d_point_coord: vec2<f32>,\n",
+                gen->target_info->point_coord_location);
+        empty = false;
+    }
 
     for (i = 0; i < signature->element_count; ++i)
     {
@@ -3742,6 +3766,9 @@ static void wgsl_generate_output_struct_declarations(struct wgsl_generator *gen)
      * stage reads it. */
     if (type == VKD3D_SHADER_TYPE_VERTEX)
         vkd3d_string_buffer_printf(buffer, "    @builtin(position) position: vec4<f32>,\n");
+    if (type == VKD3D_SHADER_TYPE_VERTEX && wgsl_point_quads(gen))
+        vkd3d_string_buffer_printf(buffer, "    @location(%u) vkd3d_point_coord: vec2<f32>,\n",
+                gen->target_info->point_coord_location);
 
     for (i = 0; i < signature->element_count; ++i)
     {
@@ -4307,6 +4334,9 @@ static void wgsl_generate_entrypoint(struct wgsl_generator *gen)
         }
     }
 
+    if (type == VKD3D_SHADER_TYPE_PIXEL && gen->program->has_point_coord && wgsl_point_quads(gen))
+        vkd3d_string_buffer_printf(buffer, "    v_point_coord = vec4<u32>(bitcast<vec2<u32>>(input.vkd3d_point_coord), "
+                "0u, bitcast<u32>(1.0f));\n");
     vkd3d_string_buffer_printf(buffer, "\n    %s_main();\n\n", gen->prefix);
 
     /* An output's components are where its mask puts them. */
@@ -4381,6 +4411,24 @@ static void wgsl_generate_entrypoint(struct wgsl_generator *gen)
         vkd3d_string_buffer_printf(buffer, "    output.depth = o_depth;\n");
     if (bitmap_is_set(gen->program->io_dcls, VSIR_REGISTER_SAMPLEMASK))
         vkd3d_string_buffer_printf(buffer, "    output.mask = o_mask;\n");
+
+    /* A point as a quad: the corner moved out by half the point size, in
+     * pixels, and the sprite's coordinate, (0, 0) at its top left. */
+    if (type == VKD3D_SHADER_TYPE_VERTEX && wgsl_point_quads(gen))
+    {
+        const float *vp = gen->target_info->point_viewport;
+
+        vkd3d_string_buffer_printf(buffer, "    {\n");
+        vkd3d_string_buffer_printf(buffer, "        let corner = vec2<f32>(f32(input.vkd3d_corner & 1u), "
+                "f32(input.vkd3d_corner >> 1u)) * 2.0f - 1.0f;\n");
+        vkd3d_string_buffer_printf(buffer, "        let size = max(o_point_size, 1.0f);\n");
+        vkd3d_string_buffer_printf(buffer, "        output.position.x += corner.x * size / %.8ef * output.position.w;\n",
+                vp[0] > 0.0f ? vp[0] : 1.0f);
+        vkd3d_string_buffer_printf(buffer, "        output.position.y -= corner.y * size / %.8ef * output.position.w;\n",
+                vp[1] > 0.0f ? vp[1] : 1.0f);
+        vkd3d_string_buffer_printf(buffer, "        output.vkd3d_point_coord = corner * 0.5f + 0.5f;\n");
+        vkd3d_string_buffer_printf(buffer, "    }\n");
+    }
 
     vkd3d_string_buffer_printf(buffer, "    return output;\n}\n");
 }
@@ -4458,6 +4506,8 @@ static int wgsl_generator_generate(struct wgsl_generator *gen, struct vkd3d_shad
         vkd3d_string_buffer_printf(gen->buffer, "var<private> o_mask: u32;\n");
     if (type == VKD3D_SHADER_TYPE_VERTEX)
         vkd3d_string_buffer_printf(gen->buffer, "var<private> o_point_size: f32;\n");
+    if (type == VKD3D_SHADER_TYPE_PIXEL && gen->program->has_point_coord)
+        vkd3d_string_buffer_printf(gen->buffer, "var<private> v_point_coord: vec4<u32>;\n");
     if (bitmap_is_set(gen->program->io_dcls, VSIR_REGISTER_THREADID))
         vkd3d_string_buffer_printf(gen->buffer, "var<private> v_thread_id: vec4<u32>;\n");
     if (bitmap_is_set(gen->program->io_dcls, VSIR_REGISTER_THREADGROUPID))
