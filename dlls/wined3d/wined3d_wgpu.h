@@ -376,6 +376,16 @@ struct wined3d_null_resources_wgpu
         WGPURenderPipeline pipeline;
     } mip_pipelines[8];
     WGPUBindGroupLayout mip_layout, mip_layout_3d;
+    /* Partial clears: a pipeline per attachment format, sample count and
+     * aspects written (texture_wgpu.c). */
+    struct
+    {
+        WGPUTextureFormat format;
+        unsigned int samples;
+        uint32_t flags;
+        WGPURenderPipeline pipeline;
+    } clear_pipelines[8];
+    WGPUShaderModule clear_module;
 };
 
 struct wined3d_device_wgpu
