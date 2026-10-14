@@ -147,6 +147,24 @@ static WGPUPrimitiveTopology wgpu_topology_from_wined3d(enum wined3d_primitive_t
     }
 }
 
+/* Direct3D 9's big points and point sprites, which WebGPU does not draw:
+ * each point is drawn as a quad (vkd3d's point_quads). */
+bool wined3d_wgpu_point_quads(const struct wined3d_state *state)
+{
+    const struct wined3d_shader *vs = state->shader[WINED3D_SHADER_TYPE_VERTEX];
+    union
+    {
+        DWORD d;
+        float f;
+    } size;
+
+    if (state->primitive_type != WINED3D_PT_POINTLIST)
+        return false;
+    size.d = state->render_states[WINED3D_RS_POINTSIZE];
+    return state->render_states[WINED3D_RS_POINTSPRITEENABLE] || size.f != 1.0f
+            || (vs && vs->reg_maps.point_size);
+}
+
 static WGPUStencilOperation wgpu_stencil_op_from_wined3d(enum wined3d_stencil_op op)
 {
     switch (op)
@@ -655,7 +673,9 @@ static void wined3d_context_wgpu_update_vertex_input(struct wined3d_context_wgpu
             slot = stream_slots[e->stream_idx] = key->buffer_count++;
             slot_streams[slot] = e->stream_idx;
             key->buffers[slot].stride = e->stride;
-            key->buffers[slot].step_mode = e->instanced ? WGPUVertexStepMode_Instance : WGPUVertexStepMode_Vertex;
+            /* A point drawn as a quad is an instance. */
+            key->buffers[slot].step_mode = e->instanced || context_wgpu->point_quads
+                    ? WGPUVertexStepMode_Instance : WGPUVertexStepMode_Vertex;
             if (e->instanced && e->divisor > 1)
                 FIXME("Unhandled instance divisor %u.\n", e->divisor);
             if (e->stride & 3)
@@ -1616,6 +1636,19 @@ bool wined3d_context_wgpu_apply_draw_state(struct wined3d_context_wgpu *context_
     if ((topology = wgpu_topology_from_wined3d(state->primitive_type)) == WGPUPrimitiveTopology_Undefined)
         return false;
 
+    /* Points as quads change both shaders and how vertices step; the
+     * viewport's size is in the vertex shader. */
+    if (wined3d_wgpu_point_quads(state) != context_wgpu->point_quads)
+    {
+        context_wgpu->point_quads = !context_wgpu->point_quads;
+        context_wgpu->c.shader_update_mask |= (1u << WINED3D_SHADER_TYPE_VERTEX) | (1u << WINED3D_SHADER_TYPE_PIXEL);
+        context_wgpu->vertex_input_valid = false;
+    }
+    else if (context_wgpu->point_quads && wined3d_context_is_graphics_state_dirty(&context_wgpu->c, STATE_VIEWPORT))
+    {
+        context_wgpu->c.shader_update_mask |= 1u << WINED3D_SHADER_TYPE_VERTEX;
+    }
+
     /* Render targets: clears are made when the pass begins. */
     sample_count = 0;
     for (i = 0; i < ARRAY_SIZE(state->fb.render_targets); ++i)
@@ -1705,6 +1738,8 @@ bool wined3d_context_wgpu_apply_draw_state(struct wined3d_context_wgpu *context_
     }
 
     /* The pipeline. */
+    if (context_wgpu->point_quads)
+        topology = WGPUPrimitiveTopology_TriangleStrip;
     key->vs = context_wgpu->graphics.modules[WINED3D_SHADER_TYPE_VERTEX];
     key->fs = context_wgpu->graphics.modules[WINED3D_SHADER_TYPE_PIXEL];
     if (wined3d_context_is_graphics_state_dirty(&context_wgpu->c, STATE_VDECL)

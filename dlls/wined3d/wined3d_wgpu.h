@@ -211,6 +211,10 @@ struct wined3d_shader_bindings_wgpu
     bool layout_valid;
 };
 
+/* The varying a point sprite's coordinate takes, from the vertex shader to
+ * the pixel shader: the last WebGPU guarantees. */
+#define WINED3D_WGPU_POINT_COORD_LOCATION 15
+
 /* Draws and dispatches recorded before a submit, as context_vk.c's. */
 #define WINED3D_WGPU_PERIODIC_SUBMIT_WORK_COUNT 512
 
@@ -240,6 +244,8 @@ struct wined3d_context_wgpu
     uint64_t completed_encoder_id;
     uint64_t submitted_encoder_id;
     unsigned int work_count;
+    /* Points are being drawn as quads (wined3d_wgpu_point_quads()). */
+    bool point_quads;
 
     WGPURenderPassEncoder render_pass;
     WGPUComputePassEncoder compute_pass;
@@ -311,6 +317,7 @@ struct wined3d_context_wgpu
     struct wine_rb_tree graphics_pipelines;
 };
 
+bool wined3d_wgpu_point_quads(const struct wined3d_state *state);
 bool wined3d_wgpu_buffer_srv_range(const struct wined3d_context_wgpu *context_wgpu,
         const struct wined3d_shader_resource_view *srv, uint64_t *offset, uint64_t *size,
         unsigned int *first_component);

@@ -1140,7 +1140,16 @@ static void adapter_wgpu_draw_primitive(struct wined3d_device *device,
         if (!(instance_count = parameters->u.direct.instance_count))
             instance_count = 1;
 
-        if (state->primitive_type == WINED3D_PT_TRIANGLEFAN)
+        if (context_wgpu->point_quads)
+        {
+            /* An instance of a four-vertex strip per point. */
+            if (parameters->indexed || instance_count > 1)
+                FIXME("Unhandled %s point sprites.\n", parameters->indexed ? "indexed" : "instanced");
+            else
+                wgpuRenderPassEncoderDraw(context_wgpu->render_pass, 4, parameters->u.direct.index_count,
+                        0, parameters->u.direct.start_idx);
+        }
+        else if (state->primitive_type == WINED3D_PT_TRIANGLEFAN)
             wgpu_draw_triangle_fan(context_wgpu, state, parameters, instance_count);
         else if (parameters->indexed)
             wgpuRenderPassEncoderDrawIndexed(context_wgpu->render_pass, parameters->u.direct.index_count,
@@ -1411,7 +1420,8 @@ static void wined3d_adapter_wgpu_init_d3d_info(struct wined3d_adapter_wgpu *adap
     d3d_info->limits.max_rt_count = min(WINED3D_MAX_RENDER_TARGETS, wgpu_info->limits.maxColorAttachments);
     d3d_info->limits.max_clip_distances = wgpu_info->clip_distances ? WINED3D_MAX_CLIP_DISTANCES : 0;
     d3d_info->limits.texture_size = wgpu_info->limits.maxTextureDimension2D;
-    d3d_info->limits.pointsize_max = 1.0f;
+    /* Points are drawn as quads (wined3d_wgpu_point_quads()), so any size. */
+    d3d_info->limits.pointsize_max = 256.0f;
     /* WebGPU has 1 and 4 samples. */
     d3d_info->limits.sample_count = 4;
 
