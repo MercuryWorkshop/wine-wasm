@@ -806,6 +806,11 @@ static void mmap_init( const struct preload_info *preload_info )
     /* if we don't have a preloader, try to reserve the space now */
     reserve_area( (void *)0x000000010000, (void *)0x000068000000 );
     reserve_area( (void *)0x00007f000000, (void *)0x00007fff0000 );
+#ifdef __wasm64__
+    /* W64: nothing is reserved above the address space gex gives the
+     * process (virtual_init's limit, 4 GiB when lowered) */
+    if ((char *)host_addr_space_limit > (char *)0x7ffffe000000)
+#endif
     reserve_area( (void *)0x7ffffe000000, (void *)0x7fffffff0000 );
 
 #endif
@@ -3745,6 +3750,15 @@ void virtual_init(void)
 #ifdef _WIN64
     host_addr_space_limit = get_host_addr_space_limit();
     TRACE( "host addr space limit: %p\n", host_addr_space_limit );
+#ifdef __wasm64__
+    /* W64 (gex docs/wine-native-x64.md): the address space is what gex
+     * gives the process, found above (4 GiB when lowered to wasm32, more
+     * in a memory64 flavour), and Windows' limits are clamped to it: a
+     * setting the process starts with, not a constant. */
+    if (address_space_limit > host_addr_space_limit) address_space_limit = host_addr_space_limit;
+    if (user_space_limit > host_addr_space_limit) user_space_limit = host_addr_space_limit;
+    if (working_set_limit > host_addr_space_limit) working_set_limit = host_addr_space_limit;
+#endif
 #else
     host_addr_space_limit = address_space_limit;
 #endif

@@ -1806,6 +1806,12 @@ static void init_supported_machines(void)
 #if defined(__i386__) || defined(__wasm32__)
     /* wasm32: Wine is native, i386 programs run on gex (BTCpu) */
     if (prefix_type == PREFIX_32BIT) supported_machines[count++] = IMAGE_FILE_MACHINE_I386;
+#ifdef __wasm32__
+    /* W64 (gex docs/wine-native-x64.md): the same wineserver serves 64-bit
+     * native Wine, whose x86-64 programs run on gex; a win64 prefix is
+     * AMD64 only (no WoW64 yet) */
+    else if (prefix_type == PREFIX_64BIT) supported_machines[count++] = IMAGE_FILE_MACHINE_AMD64;
+#endif
 #elif defined(__x86_64__)
     if (prefix_type == PREFIX_64BIT) supported_machines[count++] = IMAGE_FILE_MACHINE_AMD64;
     supported_machines[count++] = IMAGE_FILE_MACHINE_I386;
@@ -1884,6 +1890,10 @@ void init_registry(void)
     {
         if ((p = getenv( "WINEARCH" )) && !strcmp( p, "win32" ))
             prefix_type = PREFIX_32BIT;
+#ifdef __wasm32__
+        else if (p && !strcmp( p, "win64" ))
+            prefix_type = PREFIX_64BIT;  /* W64: a 64-bit prefix from the wasm32 server */
+#endif
         else
             prefix_type = sizeof(void *) > sizeof(int) ? PREFIX_64BIT : PREFIX_32BIT;
 

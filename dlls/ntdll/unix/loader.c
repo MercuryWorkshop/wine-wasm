@@ -1854,7 +1854,11 @@ static void load_ntdll_functions( HMODULE module )
         *p__wine_unix_call_dispatcher = *p__wine_unix_call_dispatcher_arm64ec;
         *p__wine_unix_call_dispatcher_arm64ec = __wine_unix_call_dispatcher;
     }
-#ifdef __wasm__
+#ifdef __wasm64__
+    /* x86-64 code calls through it: the entry on the page after the USD
+     * (signal_wasm64.c) */
+    else *p__wine_unix_call_dispatcher = (void *)W64_UNIX_CALL_ENTRY;
+#elif defined(__wasm__)
     /* i386 code calls through it too: gex's trampoline page's Unix-call
      * entry, which comes back to __wine_unix_call_dispatcher (wasm code
      * reaches it through its indirect-call check, as guest code) */
