@@ -1708,7 +1708,7 @@ BOOL WINAPI CopyContext( CONTEXT *dst, DWORD context_flags, CONTEXT *src )
 }
 
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__wasm64__)
 
 /***********************************************************************
  *             GetEnabledXStateFeatures   (kernelbase.@)

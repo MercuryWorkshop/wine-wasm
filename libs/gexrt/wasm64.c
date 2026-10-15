@@ -373,21 +373,91 @@ static inline void callout_push( int ctx, struct gexw_callout *rec, uint64_t pad
 int __gexw_entry_raw( int ctx, int depth, unsigned int need, unsigned long long ret,
                       int (*body)( int, int, unsigned int, unsigned long long ) );
 
+/* gex's NATIVE_LEFT (gex_nr), its `jmp rax` (the trampoline page's
+ * JMP_EAX_32: ff e0 is jmp rax in 64-bit code), the mark on a system call
+ * from native code, the context's spare slot (ctx::BALLAST), and how far
+ * above a native caller's call-out the guest must be to have left it
+ * (NATIVE_UNWOUND) */
+#define GEX_NR_NATIVE_LEFT 0x7f000003u
+#define GEXW_JMP_RAX 0x3f0080ull
+#define GEX_NATIVE_SYSCALL 0x2000000000000000ull
+#define GEX_CTX_BALLAST 344u
+#define GEXW_NATIVE_UNWOUND 512u
+/* the TEB's NtTib.StackBase and DeallocationStack: the stack the guest is
+ * on (a fiber switch changes it) */
+#define TEB_STACK_BASE 0x08
+#define TEB_DEALLOCATION_STACK 0x1478
+
+/* Whether the guest, at its stack pointer now, is above the call-out
+ * `head` on the same stack: it has left the native frames that made it. */
+static int left_callout( int ctx, uint64_t teb, uint64_t head )
+{
+    uint64_t pad, rsp = REG( X_RSP );
+
+    if (!teb || !head) return 0;
+    pad = ((const struct gexw_callout *)(uintptr_t)head)->pad_rsp;
+    if (pad < GQ( teb + TEB_DEALLOCATION_STACK ) || pad >= GQ( teb + TEB_STACK_BASE )) return 0;
+    return rsp > pad + GEXW_NATIVE_UNWOUND;
+}
+
 /* An entry from the guest into native code (the adapters' and the
  * dispatchers'). Its native frames are gone when it ends, by returning or
  * by a __gexw_unwind (NtContinue, an abandoned call-out): so are the
  * call-outs they made, whose records were on them. The chain goes back to
  * what it was at entry, less the call-outs the guest state it leaves with
  * is above (a trap or a jump out of their guest code); a record left on it
- * would be stack that native code reuses, read as a call-out. */
+ * would be stack that native code reuses, read as a call-out. After a
+ * fiber switch it is left as it is: the stack is another one. */
 int __gexw_entry( int ctx, int depth, unsigned int need, unsigned long long ret,
                   int (*body)( int, int, unsigned int, unsigned long long ) )
 {
     uint64_t teb = GEX_C64( GEX_CTX_TPIDRRO ), head = teb ? GQ( teb + GEXW_TEB_CALLOUTS ) : 0, rsp;
-    int r = __gexw_entry_raw( ctx, depth, need, ret, body );
+    uint64_t stack = teb ? GQ( teb + TEB_STACK_BASE ) : 0;
+    int r;
+
+    /* Guest code entering from above the innermost call-out's frame has
+     * left the native frames that made it (a catch block continuing in an
+     * outer frame, a longjmp) and is running nested inside them: one more
+     * level of host and native frames per throw that way. As on wasm32
+     * (NATIVE_LEFT): gex abandons that call-out, its native caller drops its
+     * frames (run_callout), and the guest re-enters this function from
+     * gex's `jmp rax` (an address of the trampoline page's, which the bridge
+     * does not take for this function's "ran nothing"), one level flatter,
+     * until it is not nested. gex checks the mark (NATIVE_UNWOUND). */
+    if (left_callout( ctx, teb, head ))
+    {
+        uint64_t rax = REG( X_RAX ), pc = GEX_C64( GEX_CTX_PC );
+
+        GEX_C64( GEX_CTX_PC ) = GEXW_JMP_RAX;
+        REG( X_RAX ) = GEX_NR_NATIVE_LEFT;
+        GEX_C64( GEX_CTX_BALLAST ) = GEX_C64( GEX_CTX_LAST_TARGET );  /* this function's address, for RAX */
+        gex_syscall( ctx, (int64_t)(GEX_NATIVE_SYSCALL | GEXW_JMP_RAX) );
+        /* reached only when no call-out was left: as if nothing */
+        REG( X_RAX ) = rax;
+        GEX_C64( GEX_CTX_PC ) = pc;
+    }
+    r = __gexw_entry_raw( ctx, depth, need, ret, body );
+
+    /* The same at the end: an entry made inside a call-out that leaves the
+     * guest above it (NtContinue to a catch block's continuation in an
+     * outer frame, a longjmp) would have the guest go on nested in the
+     * native frames that made the call-out, a level more per C++ throw.
+     * gex abandons the call-out now, and the guest goes on from the state
+     * this entry left (RAX back from the context's spare slot). Not after
+     * a fiber switch (the TEB's stack changed): the guest is on another
+     * stack, and the call-outs stay the other fiber's. */
+    if (teb && stack == GQ( teb + TEB_STACK_BASE ) && left_callout( ctx, teb, head ))
+    {
+        uint64_t rax = REG( X_RAX );
+
+        GEX_C64( GEX_CTX_BALLAST ) = rax;
+        REG( X_RAX ) = GEX_NR_NATIVE_LEFT;
+        gex_syscall( ctx, (int64_t)(GEX_NATIVE_SYSCALL | GEX_C64( GEX_CTX_PC )) );
+        REG( X_RAX ) = rax;
+    }
 
     teb = GEX_C64( GEX_CTX_TPIDRRO );
-    if (teb)
+    if (teb && stack == GQ( teb + TEB_STACK_BASE ))
     {
         rsp = REG( X_RSP );
         while (head && ((const struct gexw_callout *)(uintptr_t)head)->pad_rsp <= rsp)
@@ -607,7 +677,9 @@ int gexw_cas16( volatile void *ptr, void *expected, unsigned __int128 desired, i
 
     while (__atomic_exchange_n( &cas16_lock, 1, __ATOMIC_ACQUIRE )) __builtin_wasm_memory_atomic_wait32( (int *)&cas16_lock, 1, 1000 );
     __builtin_memcpy( &cur, (const void *)ptr, 16 );
-    if ((ok = !__builtin_memcmp( &cur, expected, 16 ))) __builtin_memcpy( (void *)ptr, &desired, 16 );
+    /* (compared as a value, not by memcmp: gexrt has no C runtime, and in
+     * the one PE module ntdll's memcmp is ntdll's own) */
+    if ((ok = cur == *(unsigned __int128 *)expected)) __builtin_memcpy( (void *)ptr, &desired, 16 );
     else __builtin_memcpy( expected, &cur, 16 );
     __atomic_store_n( &cas16_lock, 0, __ATOMIC_RELEASE );
     __builtin_wasm_memory_atomic_notify( (int *)&cas16_lock, 1 );
@@ -706,6 +778,21 @@ uint64_t __gexw_va_start( int ctx, uint32_t k )
     return REG( X_RSP ) + 8 + 8 * (uint64_t)k;
 }
 
+/* The guest's FP control and status words (wine/gex/runtime.h), as on
+ * wasm32: 0 the x87 control word, 1 its status word, 2 MXCSR. */
+unsigned int __gexw_guest_fpu( unsigned int which, unsigned int set, unsigned int v )
+{
+    int ctx = cur_ctx();
+    unsigned int off = which == 0 ? GEX_CTX_X87_CW : which == 1 ? GEX_CTX_X87_SW : GEX_CTX_MXCSR;
+    unsigned int old = which == 2 ? GEX_C32( off ) : GEX_C16( off );
+    if (set)
+    {
+        if (which == 2) GEX_C32( off ) = v;
+        else GEX_C16( off ) = (uint16_t)v;
+    }
+    return old;
+}
+
 /* The ICALL pass's entry thunks: { function, thunk } pairs of table
  * indices (8 bytes each) in the data section gexw_entries, as on wasm32. */
 extern const char __start_gexw_entries[], __stop_gexw_entries[];
@@ -714,5 +801,13 @@ const void *const __gexw_entries[2] __attribute__((used)) = { __start_gexw_entri
 extern const char __start_gexw_entries_decl[], __stop_gexw_entries_decl[];
 static const void *const gexw_entries_decl_anchor[2] __attribute__((used, section("gexw_entries_decl")));
 const void *const __gexw_entries_decl[2] __attribute__((used)) = { __start_gexw_entries_decl, __stop_gexw_entries_decl };
+
+/* The DLLs a native module imports, for ntdll's loader (its skeleton has
+ * no import table): pelink.py's moduleimports.c in the one PE module; none
+ * for a DLL linked as its own module. */
+__attribute__((weak)) const char *__gexw_module_imports( const unsigned short *name )
+{
+    return 0;
+}
 
 #endif /* __wasm64__ && !GEX_MEMORY64 */

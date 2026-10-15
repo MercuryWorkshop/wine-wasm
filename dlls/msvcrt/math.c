@@ -50,7 +50,7 @@
 
 #include "wine/asm.h"
 #include "wine/debug.h"
-#ifdef __wasm32__
+#if defined(__wasm32__) || defined(__wasm64__)
 #include "wine/gex/runtime.h"
 #endif
 
@@ -294,7 +294,7 @@ __ASM_GLOBAL_FUNC( asm_sqrtf, "vsqrt s0,s0; bx lr" )
 #elif defined __x86_64__
 float CDECL asm_sqrtf(float);
 __ASM_GLOBAL_FUNC( asm_sqrtf, "sqrtss %xmm0, %xmm0; ret" )
-#elif defined __wasm32__
+#elif defined __wasm32__ || defined __wasm64__
 static float CDECL asm_sqrtf(float x) { return __builtin_sqrtf( x ); }
 #endif
 #endif
@@ -444,7 +444,7 @@ __ASM_GLOBAL_FUNC( asm_sqrt, "vsqrt d0,d0; bx lr" )
 #elif defined __x86_64__
 double CDECL asm_sqrt(double);
 __ASM_GLOBAL_FUNC( asm_sqrt, "sqrtsd %xmm0, %xmm0; ret" )
-#elif defined __wasm32__
+#elif defined __wasm32__ || defined __wasm64__
 static double CDECL asm_sqrt(double x) { return __builtin_sqrt( x ); }
 #elif defined __i386__
 double CDECL asm_sqrt(double);
@@ -742,7 +742,7 @@ __int64 CDECL _abs64( __int64 n )
     return n >= 0 ? n : -n;
 }
 
-#if (defined(__i386__) || defined(__wasm32__)) || defined(__x86_64__)
+#if (defined(__i386__) || defined(__wasm32__)) || defined(__x86_64__) || defined(__wasm64__)
 
 static unsigned int get_mxcsr(void)
 {
@@ -751,7 +751,7 @@ static unsigned int get_mxcsr(void)
     extern NTSTATUS (*__os_arm64x_get_x64_information)(ULONG,void*,void*);
     __os_arm64x_get_x64_information( 0, &ret, NULL );
 #else
-    #ifdef __wasm32__
+    #if defined(__wasm32__) || defined(__wasm64__)
     ret = __gexw_guest_fpu( 2, 0, 0 );
     #else
     __asm__ __volatile__( "stmxcsr %0" : "=m" (ret) );
@@ -766,7 +766,7 @@ static void set_mxcsr( unsigned int val )
     extern NTSTATUS (*__os_arm64x_set_x64_information)(ULONG,ULONG_PTR,void*);
     __os_arm64x_set_x64_information( 0, val, NULL );
 #else
-    #ifdef __wasm32__
+    #if defined(__wasm32__) || defined(__wasm64__)
     __gexw_guest_fpu( 2, 1, val );
     #else
     __asm__ __volatile__( "ldmxcsr %0" : : "m" (val) );
@@ -1004,7 +1004,7 @@ static void _setfp( unsigned int *cw, unsigned int cw_mask,
         #else
         __asm__ __volatile__( "fldcw %0" : : "m" (newcw) );
         #endif
-#elif defined(__x86_64__)
+#elif defined(__x86_64__) || defined(__wasm64__)
     _setfp_sse(cw, cw_mask, sw, sw_mask);
 #elif defined(__aarch64__)
     ULONG_PTR old_fpsr = 0, fpsr = 0, old_fpcr = 0, fpcr = 0;
@@ -1339,7 +1339,7 @@ int CDECL _controlfp_s(unsigned int *cur, unsigned int newval, unsigned int mask
     return 0;
 }
 
-#if _MSVCR_VER >= 140 && ((defined(__i386__) || defined(__wasm32__)) || defined(__x86_64__))
+#if _MSVCR_VER >= 140 && ((defined(__i386__) || defined(__wasm32__)) || defined(__x86_64__) || defined(__wasm64__))
 enum fenv_masks
 {
     FENV_X_INVALID = 0x00100010,
@@ -2925,7 +2925,7 @@ float CDECL _scalbf(float num, __msvcrt_long power)
  */
 double CDECL MSVCRT_remainder(double x, double y)
 {
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(__wasm64__)
     if (isnan(x) || isnan(y)) *_errno() = EDOM;
 #endif
     return remainder(x, y);
@@ -2936,7 +2936,7 @@ double CDECL MSVCRT_remainder(double x, double y)
  */
 float CDECL MSVCRT_remainderf(float x, float y)
 {
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(__wasm64__)
     if (isnan(x) || isnan(y)) *_errno() = EDOM;
 #endif
     return remainderf(x, y);

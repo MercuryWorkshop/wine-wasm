@@ -18,7 +18,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#if defined(__x86_64__) && !defined(__arm64ec__)
+#if (defined(__x86_64__) && !defined(__arm64ec__)) || defined(__wasm64__)
 
 #include <stdarg.h>
 #include <fpieee.h>
@@ -39,6 +39,15 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
 
+#ifdef __wasm64__
+/* (wasm64: native Wine for x86-64 programs. A catch or unwind funclet is
+ * the guest's, reached through the ICALL pass's exit stub as a guest call:
+ * the handler in RCX, the establisher frame in RDX, as below.) */
+static void *call_exc_handler( void *handler, ULONG_PTR frame, UINT flags )
+{
+    return ((void *(CDECL *)( void *, ULONG_PTR, UINT ))handler)( handler, frame, flags );
+}
+#else
 extern void *call_exc_handler( void *handler, ULONG_PTR frame, UINT flags );
 __ASM_GLOBAL_FUNC( call_exc_handler,
                    "subq $0x28,%rsp\n\t"
@@ -52,6 +61,7 @@ __ASM_GLOBAL_FUNC( call_exc_handler,
                    "addq $0x28,%rsp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset -0x28\n\t")
                    "ret" )
+#endif
 
 
 /*******************************************************************
@@ -89,7 +99,7 @@ ULONG_PTR get_exception_pc( DISPATCHER_CONTEXT *dispatch )
 /*******************************************************************
  *		longjmp (MSVCRT.@)
  */
-#ifndef __WINE_PE_BUILD
+#if !defined(__WINE_PE_BUILD) && !defined(__wasm64__)  /* (wasm64: ntdll's, msvcrt.spec) */
 void __cdecl longjmp( _JUMP_BUFFER *jmp, int retval )
 {
     EXCEPTION_RECORD rec;
@@ -153,4 +163,4 @@ void __cdecl __crtCapturePreviousContext( CONTEXT *ctx )
 }
 #endif
 
-#endif  /* __x86_64__ */
+#endif  /* __x86_64__ || __wasm64__ */

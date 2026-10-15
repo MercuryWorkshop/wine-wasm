@@ -87,7 +87,10 @@ extern "C" {
 #  define __stdcall
 #  define __cdecl
 # endif
-# ifdef __wasm32__
+# if defined(__wasm32__) || defined(__wasm64__)
+/* (wasm64: x86-64 has one convention, but a method referenced only from a
+ * vtable written in assembly still needs its entry thunk: the ICALL pass
+ * finds it by this annotation) */
 #  define __fastcall __attribute__((annotate("gex.fastcall")))
 #  define __thiscall __attribute__((annotate("gex.thiscall")))
 # else

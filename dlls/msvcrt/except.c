@@ -1250,7 +1250,7 @@ EXCEPTION_DISPOSITION WINAPI __C_specific_handler( EXCEPTION_RECORD *rec, void *
 
 #endif /* __arm__ */
 
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(__wasm64__)
 
 EXCEPTION_DISPOSITION WINAPI __C_specific_handler( EXCEPTION_RECORD *rec, void *frame, CONTEXT *context,
                                                    DISPATCHER_CONTEXT *dispatch )
@@ -1328,4 +1328,4 @@ EXCEPTION_DISPOSITION WINAPI __C_specific_handler( EXCEPTION_RECORD *rec, void *
     return ExceptionContinueSearch;
 }
 
-#endif /* __x86_64__ */
+#endif /* __x86_64__ || __wasm64__ */

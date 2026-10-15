@@ -1021,6 +1021,18 @@ __ASM_GLOBAL_FUNC( switch_fiber,
                    "ldr x30, [x1, #0x108]\n\t"      /* new->Pc */
                    "mov sp, x2\n\t"
                    "ret" )
+#elif defined(__wasm64__)
+/* W64 (gex docs/wine-native-x64.md): a fiber is the guest's state. The
+ * old one is the x86-64 caller's as SwitchToFiber returns to it (ntdll's
+ * capture at the innermost entry, callee-saved and XMM registers
+ * included); loading the new one leaves this call's native frames, as
+ * every guest state load does. */
+static void WINAPI switch_fiber( CONTEXT *old, CONTEXT *new )
+{
+    old->ContextFlags = CONTEXT_FULL;
+    RtlCaptureContext( old );
+    NtContinue( new, FALSE );
+}
 #else
 static void WINAPI switch_fiber( CONTEXT *old, CONTEXT *new )
 {
@@ -1058,6 +1070,17 @@ static void init_fiber_context( struct fiber_data *fiber )
 #elif defined(__x86_64__)
     fiber->context.Rsp = (ULONG_PTR)fiber->stack_base - 0x28;
     fiber->context.Rip = (ULONG_PTR)start_fiber;
+#elif defined(__wasm64__)
+    /* a whole guest state (switch_fiber loads it all); start_fiber's
+     * address is its table index, where gex binds its entry thunk */
+    memset( &fiber->context, 0, sizeof(fiber->context) );
+    fiber->context.ContextFlags = CONTEXT_FULL;
+    fiber->context.Rsp = (ULONG_PTR)fiber->stack_base - 0x28;
+    fiber->context.Rip = (ULONG_PTR)start_fiber;
+    fiber->context.EFlags = 0x202;
+    fiber->context.MxCsr = 0x1f80;
+    fiber->context.FltSave.ControlWord = 0x27f;
+    fiber->context.FltSave.MxCsr = 0x1f80;
 #elif defined(__arm__)
     fiber->context.Sp = (ULONG_PTR)fiber->stack_base;
     fiber->context.Pc = (ULONG_PTR)start_fiber;

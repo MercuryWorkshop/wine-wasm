@@ -268,7 +268,8 @@
 @ cdecl _scalb(double long)
 @ cdecl _searchenv(str str ptr)
 @ cdecl _seterrormode(long)
-@ cdecl -norelay _setjmp(ptr)
+@ cdecl -arch=!wasm64 -norelay _setjmp(ptr)
+@ cdecl -arch=wasm64 -norelay _setjmp(ptr) ntdll._setjmp
 @ cdecl _setmode(long long)
 @ stub _setsystime(ptr long)
 @ cdecl _sleep(long)
@@ -434,7 +435,8 @@
 @ cdecl -arch=win64 localtime(ptr) _localtime64
 @ cdecl log(double)
 @ cdecl log10(double)
-@ cdecl -arch=!wasm32 longjmp(ptr long)
+@ cdecl -arch=!wasm32,!wasm64 longjmp(ptr long)
+@ cdecl -arch=wasm64 longjmp(ptr long) ntdll.longjmp
 @ cdecl -arch=wasm32 longjmp(ptr long) MSVCRT_longjmp
 @ cdecl malloc(long)
 @ cdecl mblen(ptr long)

@@ -94,8 +94,10 @@
 @ cdecl __fpecode()
 @ cdecl __initialize_lconv_for_unsigned_char() __lconv_init
 @ cdecl __intrinsic_abnormal_termination()
-@ cdecl -norelay __intrinsic_setjmp(ptr) _setjmp
-@ cdecl -arch=!i386 -norelay __intrinsic_setjmpex(ptr ptr) _setjmpex
+@ cdecl -arch=!wasm64 -norelay __intrinsic_setjmp(ptr) _setjmp
+@ cdecl -arch=wasm64 -norelay __intrinsic_setjmp(ptr) ntdll._setjmp
+@ cdecl -arch=!i386,!wasm64 -norelay __intrinsic_setjmpex(ptr ptr) _setjmpex
+@ cdecl -arch=wasm64 -norelay __intrinsic_setjmpex(ptr ptr) ntdll._setjmpex
 @ cdecl __isascii(long)
 @ cdecl __iscsym(long)
 @ cdecl __iscsymf(long)
@@ -2405,7 +2407,8 @@
 @ cdecl logbf(float)
 @ cdecl logbl(double) logb
 @ cdecl -arch=!i386 logf(float)
-@ cdecl -arch=!wasm32 longjmp(ptr long)
+@ cdecl -arch=!wasm32,!wasm64 longjmp(ptr long)
+@ cdecl -arch=wasm64 longjmp(ptr long) ntdll.longjmp
 @ cdecl -arch=wasm32 longjmp(ptr long) MSVCRT_longjmp
 @ cdecl lrint(double)
 @ cdecl lrintf(float)
@@ -2488,7 +2491,8 @@
 @ cdecl set_terminate(ptr)
 @ cdecl set_unexpected(ptr)
 @ cdecl setbuf(ptr ptr)
-@ cdecl -arch=arm,x86_64 -norelay -private setjmp(ptr ptr) _setjmp
+@ cdecl -arch=arm,x86_64,!wasm64 -norelay -private setjmp(ptr ptr) _setjmp
+@ cdecl -arch=wasm64 -norelay -private setjmp(ptr ptr) ntdll._setjmp
 @ cdecl setlocale(long str)
 @ cdecl setvbuf(ptr str long long)
 @ cdecl signal(long long)

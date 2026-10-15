@@ -1,6 +1,6 @@
 /*
  * gexrt's interface for native Wine code that works on the guest's i386
- * state (msvcrt's exception handling, setjmp/longjmp, thiscall calls into
+ * (or, wasm64, x86-64) state (msvcrt's exception handling, setjmp/longjmp, thiscall calls into
  * guest objects): libs/gexrt/wasm32.c, docs/wine-native.md (gex) §3.15.
  */
 #ifndef __WINE_GEX_RUNTIME_H
@@ -47,6 +47,24 @@ static inline int __gexw_is_native( const void *f )
     return (unsigned int)(unsigned long)f < GEXW_ICALL_FLOOR;
 }
 
-#endif  /* __wasm32__ */
+#elif defined(__wasm64__)
+
+/* W64's (libs/gexrt/wasm64.c, gex docs/wine-native-x64.md): native Wine
+ * for x86-64 programs. */
+
+/* Function pointers below this are native (function-table indices); at or
+ * above it, guest addresses. */
+#define GEXW_ICALL_FLOOR 0x3f0000u
+
+/* The guest's FP control and status words: 0 the x87 control word, 1 its
+ * status word, 2 MXCSR. `set`: write `v`; the value (old, or read) back. */
+unsigned int __gexw_guest_fpu( unsigned int which, unsigned int set, unsigned int v );
+
+static inline int __gexw_is_native( const void *f )
+{
+    return (unsigned long long)f < GEXW_ICALL_FLOOR;
+}
+
+#endif  /* __wasm64__ */
 
 #endif  /* __WINE_GEX_RUNTIME_H */

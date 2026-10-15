@@ -544,7 +544,8 @@
 @ cdecl _set_sbh_threshold(long)
 @ cdecl _set_security_error_handler(ptr)
 @ cdecl _seterrormode(long)
-@ cdecl -norelay _setjmp(ptr)
+@ cdecl -arch=!wasm64 -norelay _setjmp(ptr)
+@ cdecl -arch=wasm64 -norelay _setjmp(ptr) ntdll._setjmp
 @ cdecl -arch=i386 -norelay _setjmp3(ptr long)
 @ cdecl _setmaxstdio(long)
 @ cdecl _setmbcp(long)
@@ -804,7 +805,8 @@
 @ cdecl -arch=win64 localtime(ptr) _localtime64
 @ cdecl log(double)
 @ cdecl log10(double)
-@ cdecl -arch=!wasm32 longjmp(ptr long)
+@ cdecl -arch=!wasm32,!wasm64 longjmp(ptr long)
+@ cdecl -arch=wasm64 longjmp(ptr long) ntdll.longjmp
 @ cdecl -arch=wasm32 longjmp(ptr long) MSVCRT_longjmp
 @ cdecl malloc(long)
 @ cdecl mblen(ptr long)

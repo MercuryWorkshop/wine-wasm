@@ -59,6 +59,18 @@
              __ASM_NAME(#name "_vtable") ":\n" funcs \
              "\t.size " __ASM_NAME(#name "_vtable") ", 4\n\t.text" )
 
+#elif defined(__wasm64__)
+
+/* As wasm32's, 8 bytes an entry: the ICALL pass gives each method an entry
+ * thunk (__thiscall's annotation), which x86-64 code calls at its index. */
+#define VTABLE_ADD_FUNC(name) "\t.type " THISCALL_NAME(name) ",@function\n\t.int64 " THISCALL_NAME(name) "\n"
+#define __ASM_VTABLE(name,funcs) \
+    __asm__( ".section .data." #name "_vtable,\"\",@\n\t.p2align 3\n" \
+             "\t.int64 " __ASM_NAME(#name "_rtti") "\n" \
+             "\t.globl " __ASM_NAME(#name "_vtable") "\n\t.hidden " __ASM_NAME(#name "_vtable") "\n" \
+             __ASM_NAME(#name "_vtable") ":\n" funcs \
+             "\t.size " __ASM_NAME(#name "_vtable") ", 8\n\t.text" )
+
 #elif defined(_WIN64)
 
 #define VTABLE_ADD_FUNC(name) "\t.quad " THISCALL_NAME(name) "\n"
@@ -102,7 +114,7 @@ const rtti_object_locator name ## _rtti = \
 
 #define INIT_RTTI(name,base) /* nothing to do */
 
-#elif defined __WINE_PE_BUILD
+#elif defined __WINE_PE_BUILD && !defined(__wasm64__)
 
 #define DEFINE_RTTI_DATA2(name, off, mangled_name, ...) \
 extern const rtti_object_locator name##_rtti; \
@@ -159,7 +171,14 @@ static void init_ ## name ## _rtti(char *base) \
     name ## _rtti.object_locator = (char*)&name ## _rtti - base; \
 }
 
+#ifdef __wasm64__
+/* wasm64: one module serves every native DLL, its data outside the DLL's
+ * image, so the RVAs are from 0 (addresses, all below 4 GiB): what
+ * RtlPcToFileHeader's 0 for them and get_obj_locator_base reach */
+#define INIT_RTTI(name,base) init_ ## name ## _rtti((void *)0)
+#else
 #define INIT_RTTI(name,base) init_ ## name ## _rtti((void *)(base))
+#endif
 
 #endif  /* RTTI_USE_RVA */
 
@@ -177,7 +196,7 @@ static const cxx_exception_type type ## _exception_type = \
 
 #define INIT_CXX_TYPE(name,base) (void)name ## _exception_type
 
-#elif defined __WINE_PE_BUILD
+#elif defined __WINE_PE_BUILD && !defined(__wasm64__)
 
 #define DEFINE_CXX_TYPE2(type, dtor, ...) \
 extern const cxx_type_info type ## _cxx_type_info[1]; \
@@ -225,7 +244,11 @@ static void init_ ## type ## _cxx(char *base) \
     type ## _exception_type.type_info_table = (char *)&type ## _cxx_type_table - base; \
 }
 
+#ifdef __wasm64__
+#define INIT_CXX_TYPE(name,base) init_ ## name ## _cxx((void *)0)  /* (as INIT_RTTI) */
+#else
 #define INIT_CXX_TYPE(name,base) init_ ## name ## _cxx((void *)(base))
+#endif
 
 #endif  /* CXX_USE_RVA */
 

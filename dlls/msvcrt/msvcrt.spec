@@ -906,9 +906,11 @@
 @ cdecl _set_output_format(long)
 @ cdecl _set_sbh_threshold(long)
 @ cdecl _seterrormode(long)
-@ cdecl -norelay _setjmp(ptr)
+@ cdecl -arch=!wasm64 -norelay _setjmp(ptr)
+@ cdecl -arch=wasm64 -norelay _setjmp(ptr) ntdll._setjmp
 @ cdecl -arch=i386 -norelay _setjmp3(ptr long)
-@ cdecl -arch=!i386 -norelay _setjmpex(ptr ptr)
+@ cdecl -arch=!i386,!wasm64 -norelay _setjmpex(ptr ptr)
+@ cdecl -arch=wasm64 -norelay _setjmpex(ptr ptr) ntdll._setjmpex
 @ cdecl _setmaxstdio(long)
 @ cdecl _setmbcp(long)
 @ cdecl _setmode(long long)
@@ -1370,7 +1372,8 @@
 @ cdecl log10(double)
 @ cdecl -arch=!i386 logf(float)
 @ cdecl -arch=!i386 log10f(float)
-@ cdecl -arch=!wasm32 longjmp(ptr long)
+@ cdecl -arch=!wasm32,!wasm64 longjmp(ptr long)
+@ cdecl -arch=wasm64 longjmp(ptr long) ntdll.longjmp
 @ cdecl -arch=wasm32 longjmp(ptr long) MSVCRT_longjmp
 @ cdecl malloc(long)
 @ cdecl mblen(ptr long)
@@ -1415,7 +1418,8 @@
 @ varargs scanf(str)
 @ varargs scanf_s(str)
 @ cdecl setbuf(ptr ptr)
-@ cdecl -arch=arm,x86_64 -norelay -private setjmp(ptr ptr) _setjmp
+@ cdecl -arch=arm,x86_64,!wasm64 -norelay -private setjmp(ptr ptr) _setjmp
+@ cdecl -arch=wasm64 -norelay -private setjmp(ptr ptr) ntdll._setjmp
 @ cdecl setlocale(long str)
 @ cdecl setvbuf(ptr str long long)
 @ cdecl signal(long long)

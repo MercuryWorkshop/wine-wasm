@@ -1504,7 +1504,7 @@ static NTSTATUS fixup_imports( WINE_MODREF *wm, LPCWSTR load_path )
 
     if (alloc_tls_slot( &wm->ldr )) wm->ldr.TlsIndex = -1;
 
-#ifdef __wasm32__
+#if defined(__wasm32__) || defined(__wasm64__)
     {
         /* a native module's skeleton has no import table: the DLLs it
          * imports come from the module (tools/wine-wasm/pelink.py), loaded
