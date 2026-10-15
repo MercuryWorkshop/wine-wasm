@@ -1598,6 +1598,24 @@ static void run_wineboot( WCHAR *env, SIZE_T size )
     NtResumeThread( thread, NULL );
     NtClose( thread );
     handles[count++] = process;
+#ifdef __wasm32__
+    /* paint-fast (gex): with WINEGEX_FASTBOOT the first process goes on
+     * beside wineboot instead of waiting for its boot event. Its prefix is
+     * current and has the user's environment already (Volatile Environment
+     * in user.reg), which is all it reads from wineboot here; a missing
+     * \KnownDlls only means the DLLs are found the usual way. The event's
+     * handle is kept, so the event lives until wineboot opens it. */
+    {
+        static const WCHAR fastW[] = {'W','I','N','E','G','E','X','_','F','A','S','T','B','O','O','T'};
+        WCHAR *fast = get_env_var( env, size, fastW, ARRAY_SIZE(fastW) );
+        if (fast)
+        {
+            free( fast );
+            NtClose( process );
+            return;
+        }
+    }
+#endif
 
 wait:
     timeout.QuadPart = (ULONGLONG)5 * 60 * 1000 * -10000;
