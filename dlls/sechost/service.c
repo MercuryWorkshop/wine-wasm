@@ -25,6 +25,7 @@
 #include "windef.h"
 #include "winbase.h"
 #include "winsvc.h"
+#include "winreg.h"
 #include "winternl.h"
 #include "winuser.h"
 #include "dbt.h"
@@ -248,6 +249,92 @@ static BOOL set_error( DWORD err )
     return !err;
 }
 
+/* paint-fast (gex), WINEGEX_THEMES_INPROC: a service whose ServiceMain a
+ * process runs itself, with no service manager (winlogon hosts the Themes
+ * service so). Its status handle is this one; SetServiceStatus keeps no
+ * record and sets the named event below once it says it is running. */
+#define INPROC_SERVICE_HANDLE ((SC_HANDLE)(ULONG_PTR)0x5e7c0001)
+/* And with no service manager in the session, the service manager as far as
+ * the theme client (UXInit) asks it: a handle to it, and one to the Themes
+ * service, whose status is running once the event is set (in any process),
+ * and whose configuration is its registry key's. */
+#define INPROC_SCM_HANDLE   ((SC_HANDLE)(ULONG_PTR)0x5e7c0002)
+#define INPROC_THEMES_HANDLE ((SC_HANDLE)(ULONG_PTR)0x5e7c0003)
+
+static BOOL inproc_services(void)
+{
+    static int ret = -1;
+    if (ret < 0) ret = GetEnvironmentVariableW( L"WINEGEX_THEMES_INPROC", NULL, 0 ) > 0;
+    return ret;
+}
+
+static BOOL inproc_themes_running(void)
+{
+    HANDLE event = OpenEventW( SYNCHRONIZE, FALSE, L"WinegexInprocServiceRunning" );
+    BOOL ret = event && !WaitForSingleObject( event, 0 );
+    if (event) CloseHandle( event );
+    return ret;
+}
+
+static WCHAR *inproc_reg_string( HKEY key, const WCHAR *name )
+{
+    DWORD size = 0;
+    WCHAR *ret;
+    if (RegQueryValueExW( key, name, NULL, NULL, NULL, &size ) || !(ret = calloc( 1, size + 2 * sizeof(WCHAR) )))
+        return NULL;
+    if (RegQueryValueExW( key, name, NULL, NULL, (BYTE *)ret, &size )) { free( ret ); return NULL; }
+    return ret;
+}
+
+static BOOL inproc_themes_config( QUERY_SERVICE_CONFIGW *config, DWORD size, DWORD *ret_size )
+{
+    WCHAR *strs[4] = { NULL };
+    static const WCHAR *names[4] = { L"ImagePath", L"ObjectName", L"DisplayName", L"Group" };
+    DWORD total = sizeof(*config), len[4], value, vsize, i;
+    BYTE *pos;
+    HKEY key;
+
+    if (RegOpenKeyExW( HKEY_LOCAL_MACHINE, L"System\\CurrentControlSet\\Services\\Themes", 0, KEY_READ, &key ))
+        return set_error( ERROR_SERVICE_DOES_NOT_EXIST );
+    for (i = 0; i < 4; i++)
+    {
+        strs[i] = inproc_reg_string( key, names[i] );
+        len[i] = (strs[i] ? wcslen( strs[i] ) : 0) + 1;
+        total += len[i] * sizeof(WCHAR);
+    }
+    total += 2 * sizeof(WCHAR);  /* no dependencies: an empty multi-string */
+    *ret_size = total;
+    if (size < total)
+    {
+        for (i = 0; i < 4; i++) free( strs[i] );
+        RegCloseKey( key );
+        return set_error( ERROR_INSUFFICIENT_BUFFER );
+    }
+    memset( config, 0, sizeof(*config) );
+    vsize = sizeof(value);
+    config->dwServiceType = RegQueryValueExW( key, L"Type", NULL, NULL, (BYTE *)&value, &vsize ) ? SERVICE_WIN32_SHARE_PROCESS : value;
+    vsize = sizeof(value);
+    config->dwStartType = RegQueryValueExW( key, L"Start", NULL, NULL, (BYTE *)&value, &vsize ) ? SERVICE_AUTO_START : value;
+    vsize = sizeof(value);
+    config->dwErrorControl = RegQueryValueExW( key, L"ErrorControl", NULL, NULL, (BYTE *)&value, &vsize ) ? SERVICE_ERROR_NORMAL : value;
+    RegCloseKey( key );
+    pos = (BYTE *)(config + 1);
+    for (i = 0; i < 4; i++)
+    {
+        WCHAR *dst = (WCHAR *)pos;
+        if (strs[i]) memcpy( dst, strs[i], len[i] * sizeof(WCHAR) ); else dst[0] = 0;
+        free( strs[i] );
+        pos += len[i] * sizeof(WCHAR);
+        if (i == 0) config->lpBinaryPathName = dst;
+        else if (i == 1) config->lpServiceStartName = dst;
+        else if (i == 2) config->lpDisplayName = dst;
+        else config->lpLoadOrderGroup = dst;
+    }
+    config->lpDependencies = (WCHAR *)pos;
+    ((WCHAR *)pos)[0] = ((WCHAR *)pos)[1] = 0;
+    return TRUE;
+}
+
 /******************************************************************************
  *     OpenSCManagerA   (sechost.@)
  */
@@ -273,6 +360,8 @@ SC_HANDLE WINAPI DECLSPEC_HOTPATCH OpenSCManagerW( const WCHAR *machine, const W
     DWORD err;
 
     TRACE( "%s %s %#lx\n", debugstr_w(machine), debugstr_w(database), access );
+
+    if (inproc_services() && !machine) return INPROC_SCM_HANDLE;
 
     __TRY
     {
@@ -317,6 +406,12 @@ SC_HANDLE WINAPI DECLSPEC_HOTPATCH OpenServiceW( SC_HANDLE manager, const WCHAR 
     if (!manager)
     {
         SetLastError( ERROR_INVALID_HANDLE );
+        return NULL;
+    }
+    if (manager == INPROC_SCM_HANDLE)
+    {
+        if (name && !wcsicmp( name, L"Themes" )) return INPROC_THEMES_HANDLE;
+        SetLastError( ERROR_SERVICE_DOES_NOT_EXIST );
         return NULL;
     }
 
@@ -450,6 +545,8 @@ BOOL WINAPI DECLSPEC_HOTPATCH CloseServiceHandle( SC_HANDLE handle )
     DWORD err;
 
     TRACE( "%p\n", handle );
+
+    if (handle == INPROC_SCM_HANDLE || handle == INPROC_THEMES_HANDLE) return TRUE;
 
     __TRY
     {
@@ -711,6 +808,8 @@ BOOL WINAPI DECLSPEC_HOTPATCH QueryServiceConfigW( SC_HANDLE service, QUERY_SERV
     TRACE( "%p %p %ld %p\n", service, ret_config, size, ret_size );
 
     memset(&config, 0, sizeof(config));
+
+    if (service == INPROC_THEMES_HANDLE) return inproc_themes_config( ret_config, size, ret_size );
 
     __TRY
     {
@@ -1092,6 +1191,14 @@ BOOL WINAPI DECLSPEC_HOTPATCH QueryServiceStatus( SC_HANDLE service, SERVICE_STA
 
     if (!service) return set_error( ERROR_INVALID_HANDLE );
     if (!status) return set_error( ERROR_INVALID_ADDRESS );
+    if (service == INPROC_THEMES_HANDLE)
+    {
+        memset( status, 0, sizeof(*status) );
+        status->dwServiceType = SERVICE_WIN32_SHARE_PROCESS;
+        status->dwCurrentState = inproc_themes_running() ? SERVICE_RUNNING : SERVICE_START_PENDING;
+        status->dwControlsAccepted = SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
+        return TRUE;
+    }
 
     ret = QueryServiceStatusEx( service, SC_STATUS_PROCESS_INFO, (BYTE *)&process_status,
                                 sizeof(SERVICE_STATUS_PROCESS), &size );
@@ -1460,19 +1567,6 @@ static struct service_data *find_service_by_name( const WCHAR *name )
     for (i = 0; i < nb_services; i++)
         if (!wcsicmp( name, services[i]->name )) return services[i];
     return NULL;
-}
-
-/* paint-fast (gex), WINEGEX_THEMES_INPROC: a service whose ServiceMain a
- * process runs itself, with no service manager (winlogon hosts the Themes
- * service so). Its status handle is this one; SetServiceStatus keeps no
- * record and sets the named event below once it says it is running. */
-#define INPROC_SERVICE_HANDLE ((SC_HANDLE)(ULONG_PTR)0x5e7c0001)
-
-static BOOL inproc_services(void)
-{
-    static int ret = -1;
-    if (ret < 0) ret = GetEnvironmentVariableW( L"WINEGEX_THEMES_INPROC", NULL, 0 ) > 0;
-    return ret;
 }
 
 /******************************************************************************
