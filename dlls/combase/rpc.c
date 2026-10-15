@@ -391,6 +391,44 @@ static HRESULT rpcss_get_class_object(REFCLSID rclsid, PMInterfacePointer *objre
     RPCSS_CALL_END
 }
 
+/* paint-fast (gex): rpcss's answer for a class, without starting rpcss */
+static HRESULT rpcss_get_class_object_running(REFCLSID rclsid, PMInterfacePointer *objref)
+{
+    HRESULT hr;
+
+    __TRY
+    {
+        hr = irpcss_get_class_object(get_irpcss_handle(), rclsid, objref);
+    }
+    __EXCEPT(rpc_filter)
+    {
+        hr = HRESULT_FROM_WIN32(GetExceptionCode());
+    }
+    __ENDTRY
+    return hr;
+}
+
+/* paint-fast (gex): whether the registry names a way to start a local server
+ * for the class (LocalServer32, or its AppID's LocalService or DllSurrogate) */
+static BOOL local_server_registered(REFCLSID rclsid)
+{
+    BOOL is_wow64 = FALSE, ret;
+    HKEY key;
+
+    if (sizeof(void *) > sizeof(int) || (IsWow64Process(GetCurrentProcess(), &is_wow64) && is_wow64))
+        return TRUE;  /* the other view may have it: no shortcut */
+    if (SUCCEEDED(open_key_for_clsid(rclsid, L"LocalServer32", KEY_READ, &key)))
+    {
+        RegCloseKey(key);
+        return TRUE;
+    }
+    if (FAILED(open_appidkey_from_clsid(rclsid, KEY_READ, &key))) return FALSE;
+    ret = !RegQueryValueExW(key, L"LocalService", NULL, NULL, NULL, NULL) ||
+          !RegQueryValueExW(key, L"DllSurrogate", NULL, NULL, NULL, NULL);
+    RegCloseKey(key);
+    return ret;
+}
+
 static DWORD start_local_service(const WCHAR *name, DWORD num, LPCWSTR *params)
 {
     SC_HANDLE handle, hsvc;
@@ -653,6 +691,19 @@ HRESULT rpc_get_local_class_object(REFCLSID rclsid, REFIID riid, void **obj)
     static const int MAXTRIES = 120;
 
     TRACE("clsid %s, riid %s\n", debugstr_guid(rclsid), debugstr_guid(riid));
+
+    /* paint-fast (gex): with WINEGEX_FASTBOOT, a class the registry gives no
+     * local server is not registered when rpcss is not running (a server's
+     * CoRegisterClassObject would have started it): REGDB_E_CLASSNOTREG at
+     * once, not after starting rpcss and waiting for it (Paint's start asks
+     * for such a class; rpcss took 0.8 s to come up, Paint waiting). */
+    if (GetEnvironmentVariableW( L"WINEGEX_FASTBOOT", NULL, 0 ) && !local_server_registered(rclsid) &&
+        rpcss_get_class_object_running(rclsid, &objref) == HRESULT_FROM_WIN32(RPC_S_SERVER_UNAVAILABLE))
+    {
+        TRACE("%s: no local server and rpcss not running\n", debugstr_guid(rclsid));
+        return REGDB_E_CLASSNOTREG;
+    }
+    if (objref) { MIDL_user_free(objref); objref = NULL; }
 
     while (tries++ < MAXTRIES)
     {
