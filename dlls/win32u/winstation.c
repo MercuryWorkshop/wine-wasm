@@ -135,8 +135,18 @@ __attribute__((import_module("gex"), import_name("session_copy")))
 extern int gex_session_copy( void *dst, unsigned int offset, unsigned int size );
 __attribute__((import_module("gex"), import_name("session_seq")))
 extern UINT64 gex_session_seq( unsigned int offset );
+#elif defined(__wasm64__)
+/* W64: the same imports, the destination as gex's address (wine/gex/addr.h) */
+#include "wine/gex/addr.h"
+__attribute__((import_module("gex"), import_name("session_copy")))
+extern int gex_session_copy_at( gex_addr_t dst, unsigned int offset, unsigned int size );
+__attribute__((import_module("gex"), import_name("session_seq")))
+extern UINT64 gex_session_seq( unsigned int offset );
+static inline int gex_session_copy( void *dst, unsigned int offset, unsigned int size )
+{
+    return gex_session_copy_at( GEX_ADDR(dst), offset, size );
+}
 #else
-/* (W64, wasm64: no door yet, the session through requests) */
 static inline int gex_session_copy( void *dst, unsigned int offset, unsigned int size ) { return -1; }
 static inline UINT64 gex_session_seq( unsigned int offset ) { return 0; }
 #endif

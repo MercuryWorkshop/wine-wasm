@@ -339,7 +339,18 @@ static void reqstats_note( int code, unsigned long long ns )
  * no door (not published to this Worker yet, too large, or the server does
  * not know this thread yet): use the pipes; 2: the thread died in the
  * request, as a closed reply pipe. WINEGEX_DOOR=0 turns it off. */
+#ifdef __wasm64__
+/* W64: a 64-bit client's request (LP64 pointers in its gather list), at the
+ * offsets gex's door_call_lp64 reads */
+C_ASSERT( offsetof( struct __server_request_info, data_count ) == 64 );
+C_ASSERT( offsetof( struct __server_request_info, reply_data ) == 72 );
+C_ASSERT( offsetof( struct __server_request_info, data ) == 80 );
+C_ASSERT( sizeof(struct __server_iovec) == 16 );
+C_ASSERT( offsetof( struct __server_iovec, size ) == 8 );
+__attribute__((import_module("gex"), import_name("door_call_lp64")))
+#else
 __attribute__((import_module("gex"), import_name("door_call")))
+#endif
 extern int gex_door_call( gex_addr_t req, int unix_pid, int unix_tid );
 
 static int door_on = -1;
@@ -357,11 +368,6 @@ static void door_init( void )
     {
         const char *env = getenv( "WINEGEX_DOOR" );
         door_on = !(env && !strcmp( env, "0" ));
-#ifdef __wasm64__
-        /* W64: a 64-bit client's requests are LP64; gex's door_call reads
-         * ILP32 ones. Pipes until door_call64 (W64.3). */
-        door_on = 0;
-#endif
         door_pid = getpid();
     }
     if (door_on && !door_tid) door_tid = syscall( SYS_gettid );
