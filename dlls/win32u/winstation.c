@@ -1098,6 +1098,11 @@ HWND get_desktop_window(void)
         if (desktop_thread) {} else
         if (is_desktop_process()) return 0;  /* (explorer /desktop: creating it) */
 #endif
+#ifdef __wasm32__
+        /* the desktop thread is the desktop: no explorer process (one made
+         * here was never resumed nor closed, a fork for nothing) */
+        if (desktop_thread) status = STATUS_SUCCESS; else
+#endif
         if (NtCurrentTeb64() && !NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR])
         {
             NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR] = TRUE;
