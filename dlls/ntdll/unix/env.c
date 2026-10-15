@@ -1533,6 +1533,46 @@ static WCHAR *build_command_line( WCHAR **wargv )
 }
 
 
+#ifdef __wasm32__
+/* paint-fast (gex), WINEGEX_NOWINEBOOT: what the session needs of wineboot
+ * --init's work that its prebuilt prefix does not keep, the volatile
+ * ActiveComputerName key (GetComputerNameEx), copied from ComputerName as
+ * wineboot's create_computer_name_keys does. */
+static void set_active_computer_name(void)
+{
+    static const WCHAR nameW[] = {'\\','R','e','g','i','s','t','r','y','\\','M','a','c','h','i','n','e',
+        '\\','S','y','s','t','e','m','\\','C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t',
+        '\\','C','o','n','t','r','o','l','\\','C','o','m','p','u','t','e','r','N','a','m','e','\\',
+        'C','o','m','p','u','t','e','r','N','a','m','e',0};
+    static const WCHAR activeW[] = {'\\','R','e','g','i','s','t','r','y','\\','M','a','c','h','i','n','e',
+        '\\','S','y','s','t','e','m','\\','C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t',
+        '\\','C','o','n','t','r','o','l','\\','C','o','m','p','u','t','e','r','N','a','m','e','\\',
+        'A','c','t','i','v','e','C','o','m','p','u','t','e','r','N','a','m','e',0};
+    static const WCHAR valueW[] = {'C','o','m','p','u','t','e','r','N','a','m','e',0};
+    char buffer[offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data[256 * sizeof(WCHAR)])];
+    KEY_VALUE_PARTIAL_INFORMATION *info = (KEY_VALUE_PARTIAL_INFORMATION *)buffer;
+    OBJECT_ATTRIBUTES attr;
+    UNICODE_STRING str, value;
+    HANDLE key;
+    ULONG size;
+
+    InitializeObjectAttributes( &attr, &str, OBJ_CASE_INSENSITIVE, 0, NULL );
+    init_unicode_string( &str, nameW );
+    if (NtOpenKey( &key, KEY_READ, &attr )) return;
+    init_unicode_string( &value, valueW );
+    if (NtQueryValueKey( key, &value, KeyValuePartialInformation, buffer, sizeof(buffer), &size ))
+    {
+        NtClose( key );
+        return;
+    }
+    NtClose( key );
+    init_unicode_string( &str, activeW );
+    if (NtCreateKey( &key, KEY_ALL_ACCESS, &attr, 0, NULL, REG_OPTION_VOLATILE, NULL )) return;
+    NtSetValueKey( key, &value, 0, info->Type, info->Data, info->DataLength );
+    NtClose( key );
+}
+#endif
+
 /***********************************************************************
  *           run_wineboot
  */
@@ -1567,6 +1607,25 @@ static void run_wineboot( WCHAR *env, SIZE_T size )
 
     virtual_init_user_shared_data();
     env[size] = 0;
+#ifdef __wasm32__
+    /* paint-fast (gex): with WINEGEX_NOWINEBOOT no wineboot runs. Its
+     * prefix is prebuilt and current; of --init's work only the volatile
+     * computer name is made here, and its services.exe is not started (the
+     * session's one service, Themes, runs in winlogon:
+     * WINEGEX_THEMES_INPROC). The boot event is signalled for later
+     * processes, and its handle kept, so it lives for the session. */
+    {
+        static const WCHAR noW[] = {'W','I','N','E','G','E','X','_','N','O','W','I','N','E','B','O','O','T'};
+        WCHAR *no = get_env_var( env, size, noW, ARRAY_SIZE(noW) );
+        if (no)
+        {
+            free( no );
+            set_active_computer_name();
+            NtSetEvent( handles[0], NULL );
+            return;
+        }
+    }
+#endif
     params.Flags           = PROCESS_PARAMS_FLAG_NORMALIZED;
     params.Environment     = env;
     params.EnvironmentSize = size;

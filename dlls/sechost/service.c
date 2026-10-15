@@ -1462,6 +1462,19 @@ static struct service_data *find_service_by_name( const WCHAR *name )
     return NULL;
 }
 
+/* paint-fast (gex), WINEGEX_THEMES_INPROC: a service whose ServiceMain a
+ * process runs itself, with no service manager (winlogon hosts the Themes
+ * service so). Its status handle is this one; SetServiceStatus keeps no
+ * record and sets the named event below once it says it is running. */
+#define INPROC_SERVICE_HANDLE ((SC_HANDLE)(ULONG_PTR)0x5e7c0001)
+
+static BOOL inproc_services(void)
+{
+    static int ret = -1;
+    if (ret < 0) ret = GetEnvironmentVariableW( L"WINEGEX_THEMES_INPROC", NULL, 0 ) > 0;
+    return ret;
+}
+
 /******************************************************************************
  *     RegisterServiceCtrlHandlerExW   (sechost.@)
  */
@@ -1482,6 +1495,11 @@ SERVICE_STATUS_HANDLE WINAPI DECLSPEC_HOTPATCH RegisterServiceCtrlHandlerExW(
     }
     LeaveCriticalSection( &service_cs );
 
+    if (!handle && !nb_services && inproc_services())
+    {
+        TRACE( "%s runs in this process, without a service manager\n", debugstr_w(name) );
+        return (SERVICE_STATUS_HANDLE)INPROC_SERVICE_HANDLE;
+    }
     if (!handle) SetLastError( ERROR_SERVICE_DOES_NOT_EXIST );
     return (SERVICE_STATUS_HANDLE)handle;
 }
@@ -1496,6 +1514,20 @@ BOOL WINAPI DECLSPEC_HOTPATCH SetServiceStatus( SERVICE_STATUS_HANDLE service, S
     TRACE( "%p %#lx %#lx %#lx %#lx %#lx %#lx %#lx\n", service, status->dwServiceType,
            status->dwCurrentState, status->dwControlsAccepted, status->dwWin32ExitCode,
            status->dwServiceSpecificExitCode, status->dwCheckPoint, status->dwWaitHint );
+
+    if ((SC_HANDLE)service == INPROC_SERVICE_HANDLE)
+    {
+        if (status->dwCurrentState == SERVICE_RUNNING)
+        {
+            HANDLE event = OpenEventW( EVENT_MODIFY_STATE, FALSE, L"WinegexInprocServiceRunning" );
+            if (event)
+            {
+                SetEvent( event );
+                CloseHandle( event );
+            }
+        }
+        return TRUE;
+    }
 
     __TRY
     {

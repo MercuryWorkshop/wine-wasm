@@ -66,6 +66,55 @@ static void trace( const char *fmt, ... )
     va_end( args );
 }
 
+/* paint-fast (gex), WINEGEX_THEMES_INPROC: the Themes service runs here,
+ * its ServiceMain on a thread of this process as svchost would run it, with
+ * no services.exe or svchost (sechost gives it a status handle of its own,
+ * whose SERVICE_RUNNING sets the event below). With WINEGEX_NOWINEBOOT
+ * nothing else in the session needs the service manager. */
+static HANDLE themes_running;
+
+typedef void (WINAPI *service_main_fn)( DWORD, WCHAR ** );
+
+static DWORD WINAPI themes_thread( void *arg )
+{
+    static WCHAR name[] = L"Themes";
+    WCHAR *argv[] = { name, NULL };
+
+    ((service_main_fn)arg)( 1, argv );
+    return 0;
+}
+
+static void start_themes_inproc(void)
+{
+    service_main_fn main_fn;
+    HMODULE dll;
+    HANDLE thread;
+
+    if (!GetEnvironmentVariableW( L"WINEGEX_THEMES_INPROC", NULL, 0 )) return;
+    if (!(themes_running = CreateEventW( NULL, TRUE, FALSE, L"WinegexInprocServiceRunning" )))
+    {
+        fprintf( stderr, "winlogon: no Themes event (%lu)\n", GetLastError() );
+        return;
+    }
+    if (!(dll = LoadLibraryW( L"themeservice.dll" )) ||
+        !(main_fn = (service_main_fn)GetProcAddress( dll, "ThemeServiceMain" )))
+    {
+        fprintf( stderr, "winlogon: no themeservice.dll ThemeServiceMain (%lu)\n", GetLastError() );
+        CloseHandle( themes_running );
+        themes_running = 0;
+        return;
+    }
+    if (!(thread = CreateThread( NULL, 0, themes_thread, main_fn, 0, NULL )))
+    {
+        fprintf( stderr, "winlogon: could not start the Themes service (%lu)\n", GetLastError() );
+        CloseHandle( themes_running );
+        themes_running = 0;
+        return;
+    }
+    CloseHandle( thread );
+    trace( "Themes service started in this process\n" );
+}
+
 /* paint-fast (gex): with WINEGEX_FASTBOOT, wineboot no longer waits for
  * services.exe's autostart, so wait here for the Themes service to run
  * before the theme client asks it for the theme (up to 15 s) */
@@ -75,6 +124,12 @@ static void wait_for_themes(void)
     SERVICE_STATUS st;
     int i;
 
+    if (themes_running)
+    {
+        DWORD r = WaitForSingleObject( themes_running, 15000 );
+        trace( "Themes (in this process): %s\n", r == WAIT_OBJECT_0 ? "running" : "not running after 15 s" );
+        return;
+    }
     if (!GetEnvironmentVariableW( L"WINEGEX_FASTBOOT", NULL, 0 )) return;
     /* services.exe may not be up yet either: wineboot no longer waits for it */
     for (i = 0; i < 1500 && !(scm = OpenSCManagerW( NULL, NULL, SC_MANAGER_CONNECT )); i++) Sleep( 10 );
@@ -200,6 +255,8 @@ int main( void )
     GetDesktopWindow();
     trace( "desktop up\n" );
     if (desktop_gate) SetEvent( desktop_gate );
+    /* the Themes service, when it runs here: from now, beside the rest */
+    start_themes_inproc();
 
     if (!gate) start_shell( shell_token, &shell_thread, FALSE );
 
