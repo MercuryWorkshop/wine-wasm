@@ -970,12 +970,46 @@ static BOOL desktop_up(void)
 }
 #endif
 
+#ifdef __wasm32__
+/* paint-fast (gex): a process started with WINEGEX_SHELL_GATE in its environment
+ * (winlogon's shell, programs/winlogon) runs at once, beside winlogon's theme
+ * logon, and waits here, before it first uses the desktop, for winlogon's
+ * \BaseNamedObjects\WinegexShellGate: the session's desktop and theme are then
+ * up, as when winlogon used to resume it only after its theme logon. */
+static void shell_gate(void)
+{
+    static const WCHAR varW[] = {'W','I','N','E','G','E','X','_','S','H','E','L','L','_','G','A','T','E','='};
+    static const WCHAR nameW[] = {'\\','B','a','s','e','N','a','m','e','d','O','b','j','e','c','t','s',
+        '\\','W','i','n','e','g','e','x','S','h','e','l','l','G','a','t','e',0};
+    static LONG done;
+    const WCHAR *env;
+    UNICODE_STRING name;
+    OBJECT_ATTRIBUTES attr;
+    LARGE_INTEGER timeout;
+    HANDLE ev;
+
+    if (done || InterlockedExchange( &done, 1 )) return;
+    for (env = RtlGetCurrentPeb()->ProcessParameters->Environment; env && *env; env += wcslen( env ) + 1)
+        if (!memcmp( env, varW, sizeof(varW) )) break;
+    if (!env || !*env) return;
+    RtlInitUnicodeString( &name, nameW );
+    InitializeObjectAttributes( &attr, &name, 0, 0, NULL );
+    if (NtOpenEvent( &ev, SYNCHRONIZE, &attr )) return;
+    timeout.QuadPart = (LONGLONG)-10000 * 15000;
+    NtWaitForSingleObject( ev, FALSE, &timeout );
+    NtClose( ev );
+}
+#endif
+
 HWND get_desktop_window(void)
 {
     struct user_thread_info *thread_info = get_user_thread_info();
     BOOL is_service;
 
     if (thread_info->top_window) return thread_info->top_window;
+#ifdef __wasm32__
+    shell_gate();
+#endif
 
     /* don't create an actual explorer desktop window for services */
     is_service = is_service_process();

@@ -113,6 +113,29 @@ static const WCHAR *shell_command_line(void)
     return p;
 }
 
+static void start_shell( HANDLE token, HANDLE *thread, BOOL gated )
+{
+    STARTUPINFOW si = { sizeof(si) };
+    PROCESS_INFORMATION pi;
+    const WCHAR *shell = shell_command_line();
+    WCHAR *cmd;
+
+    if (!*shell) return;
+    cmd = _wcsdup( shell );
+    if (gated) SetEnvironmentVariableW( L"WINEGEX_SHELL_GATE", L"1" );
+    if (CreateProcessAsUserW( token, NULL, cmd, NULL, NULL, FALSE, gated ? 0 : CREATE_SUSPENDED,
+                              NULL, NULL, &si, &pi ))
+    {
+        trace( "created %ls%s\n", cmd, gated ? " (gated)" : "" );
+        if (gated) CloseHandle( pi.hThread );
+        else *thread = pi.hThread;
+        CloseHandle( pi.hProcess );
+    }
+    else fprintf( stderr, "winlogon: could not start %ls (%lu)\n", cmd, GetLastError() );
+    if (gated) SetEnvironmentVariableW( L"WINEGEX_SHELL_GATE", NULL );
+    free( cmd );
+}
+
 int main( void )
 {
     typedef void (WINAPI *void_fn)(void);
@@ -121,8 +144,7 @@ int main( void )
     HANDLE process_token, user_token = 0, shell_token = 0, shutdown = 0;
     set_info_fn set_info;
     HMODULE uxinit;
-    HANDLE shell_thread = 0;
-    const WCHAR *shell;
+    HANDLE shell_thread = 0, gate = 0;
     NTSTATUS status;
 
     verbose = GetEnvironmentVariableW( L"WINLOGON_VERBOSE", NULL, 0 ) > 0;
@@ -143,28 +165,31 @@ int main( void )
     enable_privilege( process_token, L"SeTcbPrivilege" );
     enable_privilege( process_token, L"SeDebugPrivilege" );
 
+    /* paint-fast (gex), with WINEGEX_FASTBOOT: the shell is started first and
+     * runs at once, its process start and DLL loads beside this process's
+     * desktop and theme logon; win32u holds it before it first uses the
+     * desktop (WINEGEX_SHELL_GATE) until the gate below is set, after the
+     * theme logon, where the suspended shell used to be resumed. */
+    if (GetEnvironmentVariableW( L"WINEGEX_FASTBOOT", NULL, 0 ))
+    {
+        SECURITY_DESCRIPTOR sd;
+        SECURITY_ATTRIBUTES sa = { sizeof(sa), &sd, FALSE };
+
+        InitializeSecurityDescriptor( &sd, SECURITY_DESCRIPTOR_REVISION );
+        SetSecurityDescriptorDacl( &sd, TRUE, NULL, FALSE );
+        gate = CreateEventW( &sa, TRUE, FALSE, L"Global\\WinegexShellGate" );
+        if (!gate) fprintf( stderr, "winlogon: no shell gate (%lu)\n", GetLastError() );
+        else start_shell( shell_token, &shell_thread, TRUE );
+    }
+
     /* the session's desktop, before anything runs on it (Windows' winlogon
      * creates it before it starts the shell): a shell starting first raced
      * this process to start the desktop process, and the loser of two
      * desktop processes opened a browser window */
     GetDesktopWindow();
+    trace( "desktop up\n" );
 
-    if (*(shell = shell_command_line()))
-    {
-        STARTUPINFOW si = { sizeof(si) };
-        PROCESS_INFORMATION pi;
-        WCHAR *cmd = _wcsdup( shell );
-
-        if (CreateProcessAsUserW( shell_token, NULL, cmd, NULL, NULL, FALSE, CREATE_SUSPENDED,
-                                  NULL, NULL, &si, &pi ))
-        {
-            trace( "created %ls\n", cmd );
-            shell_thread = pi.hThread;
-            CloseHandle( pi.hProcess );
-        }
-        else fprintf( stderr, "winlogon: could not start %ls (%lu)\n", cmd, GetLastError() );
-        free( cmd );
-    }
+    if (!gate) start_shell( shell_token, &shell_thread, FALSE );
 
     /* then leave the user's logon session: from here this is a system
      * process, which no longer keeps the session alive by itself */
@@ -191,6 +216,11 @@ int main( void )
     else trace( "no UXInit.dll (%lu)\n", GetLastError() );
 
     /* the theme is loaded: the shell runs */
+    if (gate)
+    {
+        trace( "opening the shell gate\n" );
+        SetEvent( gate );
+    }
     if (shell_thread)
     {
         trace( "starting the shell\n" );
