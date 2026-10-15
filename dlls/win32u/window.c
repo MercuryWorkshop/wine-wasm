@@ -2485,6 +2485,26 @@ BOOL is_glass_frame( HWND hwnd )
     return window_has_glass_frame( hwnd, &glass, style );
 }
 
+/* uDWM's CTopLevelWindow::CalculateOutsideMargins: a frame thinner than a
+ * thick frame is drawn out to a thick frame's size, outside the window
+ * (the margins, each <= 0, as left, top, right, bottom). */
+void get_glass_outside_margins( HWND hwnd, RECT *margins )
+{
+    DWORD style = get_window_long( hwnd, GWL_STYLE ), ex_style = get_window_long( hwnd, GWL_EXSTYLE );
+    RECT cur = {0}, thick = {0};
+
+    SetRectEmpty( margins );
+    if (!get_system_metrics( SM_CXPADDEDBORDER ) || (style & WS_THICKFRAME)) return;
+    if (!(style & (WS_BORDER | WS_DLGFRAME)) && !(ex_style & WS_EX_DLGMODALFRAME)) return;
+    adjust_window_rect( &cur, style, FALSE, ex_style, get_system_dpi() );
+    adjust_window_rect( &thick, style | WS_THICKFRAME, FALSE, ex_style, get_system_dpi() );
+    if (cur.left > -1 || cur.right < 1 || cur.bottom < 1) return;
+    margins->left = min( 0, thick.left - cur.left );
+    margins->top = min( 0, thick.top - cur.top );
+    margins->right = min( 0, cur.right - thick.right );
+    margins->bottom = min( 0, cur.bottom - thick.bottom );
+}
+
 /* The rectangles of a window's glass, relative to its visible rect: the
  * frame (if it is glass) and the margins it extends into the client area,
  * as up to four bands around an inner box, and the blur-behind rectangle. */
@@ -2505,6 +2525,17 @@ static UINT get_window_glass_rects( HWND hwnd, const struct set_window_glass_par
     else inner = client;
     OffsetRect( &vis, -vis.left, -vis.top );
     outer = frame ? vis : client;
+    if (frame)
+    {
+        /* a thin frame's glass reaches out to a thick frame's size */
+        RECT b;
+
+        get_glass_outside_margins( hwnd, &b );
+        outer.left += b.left;
+        outer.top += b.top;
+        outer.right -= b.right;
+        outer.bottom -= b.bottom;
+    }
 
     if ((g->mask & WINDOW_GLASS_MARGINS) && g->margins[0] == -1 && g->margins[1] == -1
             && g->margins[2] == -1 && g->margins[3] == -1)

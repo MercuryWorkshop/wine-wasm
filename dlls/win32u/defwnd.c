@@ -1596,13 +1596,17 @@ void get_caption_buttons( HWND hwnd, RECT rects[3], UINT states[3], UINT pushed 
          * from 2 px inside the right border, 1 px below the top edge; a
          * maximized window's against the work area its borders overhang. */
         NONCLIENTMETRICSW ncm = {.cbSize = sizeof(ncm)};
-        RECT window, screen;
-        int top, x, h, w, ot = 0;
+        RECT window, screen, out;
+        int top, x, h, w, ot;
 
         NtUserSystemParametersInfo( SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0 );
         get_window_rect_rel( hwnd, COORDS_WINDOW, &window, get_thread_dpi() );
-        x = max( window.right - inside.right - 2, 2 ); /* N.R - 2; B.R + 2 with B = 0 */
-        top = window.top + 1;
+        /* O, the outside margins (a thin frame drawn out to a thick one's
+         * size): N.R - 2 or O.R + 2 from the right, O.T + 1 from the top */
+        get_glass_outside_margins( hwnd, &out );
+        x = max( window.right - inside.right - 2, out.right + 2 );
+        ot = out.top;
+        top = window.top + out.top + 1;
         if (style & WS_MAXIMIZE)
         {
             MONITORINFO mi = monitor_info_from_window( hwnd, MONITOR_DEFAULTTONEAREST );
@@ -1611,14 +1615,14 @@ void get_caption_buttons( HWND hwnd, RECT rects[3], UINT states[3], UINT pushed 
             get_window_rect( hwnd, &screen, get_thread_dpi() );
             mx_r = max( screen.right - mi.rcWork.right, 0 );
             mx_t = max( mi.rcWork.top - screen.top, 0 );
-            x = max( x, mx_r + 2 );
+            x = max( window.right - inside.right - 2, mx_r + 2 );
             ot = mx_t;
             top = window.top + (mx_t > 0 ? mx_t - 1 : 1);
         }
         if (ex_style & WS_EX_TOOLWINDOW)
         {
             h = ncm.iSmCaptionHeight;
-            top = max( window.top, inside.top + get_system_metrics( SM_CYSMCAPTION ) - h - 4 );
+            top = max( window.top + ot, inside.top + get_system_metrics( SM_CYSMCAPTION ) - h - 4 );
             SetRect( &rects[0], window.right - x - h, top, window.right - x, top + h );
             states[0] = 1;
         }
