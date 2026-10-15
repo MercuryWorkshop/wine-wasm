@@ -278,6 +278,16 @@ struct wasm_module_info;
 extern void *read_wasm_module_info( const char *name );
 extern void wasm_module_layout( const void *info, unsigned int *mem_size, unsigned int *mem_align,
                                 const unsigned char **bytes, size_t *size );
+/* shared with the wasm64 adapters */
+extern const char *find_func_sig( const char *name );
+extern const char *wasm_find_sig64( const char *name );
+extern const char *c_type( char t );
+extern const char *adapter_symbol( const ORDDEF *odp );
+extern const char *output_adapter_header( const ORDDEF *odp );
+/* wasm64 (wasm64.c) */
+extern void output_wasm64_prelude(void);
+extern const char *output_adapter64( const ORDDEF *odp, const char *wasm_sig );
+extern void output_entry64( DLLSPEC *spec, int has_init );
 extern int wasm_module_data_export( const struct wasm_module_info *info, const char *name, unsigned int *offset );
 extern int sort_func_list( ORDDEF **list, int count, int (*compare)(const void *, const void *) );
 extern unsigned int get_section_alignment(void);

@@ -72,3 +72,58 @@ void __wasm_longjmp( void *env, int val )
 }
 
 #endif /* __wasm32__ */
+
+#if defined(__wasm64__) && !defined(GEX_MEMORY64)
+
+#include <stdint.h>
+
+/* The same for W64's PE side (LLP64 wasm64, lowered): the guest state kept
+ * is x86-64's RSP. */
+__asm__(
+    "\t.tagtype __c_longjmp i64\n"
+    "\t.globl __c_longjmp\n"
+    "__c_longjmp:\n"
+);
+
+struct __gexw_jmp_buf
+{
+    void *func_invocation_id;
+    uint32_t label;
+    struct { void *env; int val; } arg;
+    uint64_t rsp;
+    uint32_t depth;
+};
+
+int32_t gexw_get_ctx(void);
+int32_t gexw_get_depth(void);
+void gexw_set_depth(int32_t);
+
+void __wasm_setjmp( void *env, uint32_t label, void *func_invocation_id )
+{
+    struct __gexw_jmp_buf *jb = env;
+    int ctx = gexw_get_ctx();
+    jb->func_invocation_id = func_invocation_id;
+    jb->label = label;
+    jb->rsp = ctx ? *(uint64_t *)(uintptr_t)(uint32_t)(ctx + 32) : 0;
+    jb->depth = gexw_get_depth();
+}
+
+uint32_t __wasm_setjmp_test( void *env, void *func_invocation_id )
+{
+    struct __gexw_jmp_buf *jb = env;
+    int ctx;
+    if (jb->func_invocation_id != func_invocation_id) return 0;
+    if ((ctx = gexw_get_ctx()) && jb->rsp) *(uint64_t *)(uintptr_t)(uint32_t)(ctx + 32) = jb->rsp;
+    gexw_set_depth( jb->depth );
+    return jb->label;
+}
+
+void __wasm_longjmp( void *env, int val )
+{
+    struct __gexw_jmp_buf *jb = env;
+    jb->arg.env = env;
+    jb->arg.val = val ? val : 1;
+    __builtin_wasm_throw( 1, &jb->arg );
+}
+
+#endif /* __wasm64__ && !GEX_MEMORY64 */

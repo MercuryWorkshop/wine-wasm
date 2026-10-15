@@ -107,7 +107,48 @@ static void add_func( const char *name, const char *sig )
     wasm_funcs.count++;
 }
 
-static const char *find_func_sig( const char *name )
+/* gexw.sig64 (the ICALL pass, wasm64): a defined function's signature with
+ * what the wasm types lose, by name (see wasm64.c) */
+static struct
+{
+    struct wasm_func *funcs;
+    unsigned int count, size;
+} wasm_sigs64;
+
+static void add_sig64( const char *name, size_t nlen, const char *sig, size_t slen )
+{
+    if (wasm_sigs64.count == wasm_sigs64.size)
+    {
+        wasm_sigs64.size = wasm_sigs64.size ? 2 * wasm_sigs64.size : 256;
+        wasm_sigs64.funcs = xrealloc( wasm_sigs64.funcs, wasm_sigs64.size * sizeof(*wasm_sigs64.funcs) );
+    }
+    wasm_sigs64.funcs[wasm_sigs64.count].name = strmake( "%.*s", (int)nlen, name );
+    wasm_sigs64.funcs[wasm_sigs64.count].sig = strmake( "%.*s", (int)slen, sig );
+    wasm_sigs64.count++;
+}
+
+const char *wasm_find_sig64( const char *name )
+{
+    unsigned int i;
+    for (i = 0; i < wasm_sigs64.count; i++)
+        if (!strcmp( wasm_sigs64.funcs[i].name, name )) return wasm_sigs64.funcs[i].sig;
+    return NULL;
+}
+
+/* its lines: `name sig` */
+static void read_sigs64( const unsigned char *p, const unsigned char *end )
+{
+    while (p < end)
+    {
+        const unsigned char *nl = memchr( p, '\n', end - p ), *sp;
+        if (!nl) nl = end;
+        if ((sp = memchr( p, ' ', nl - p )) && !wasm_find_sig64( strmake( "%.*s", (int)(sp - p), (const char *)p )))
+            add_sig64( (const char *)p, sp - p, (const char *)sp + 1, nl - sp - 1 );
+        p = nl + 1;
+    }
+}
+
+const char *find_func_sig( const char *name )
 {
     unsigned int i;
     for (i = 0; i < wasm_funcs.count; i++)
@@ -188,7 +229,8 @@ static void read_wasm_object( const unsigned char *data, size_t size )
         else if (id == 0)  /* custom: the linking section's symbol table */
         {
             char *name = wasm_name( &s );
-            if (!strcmp( name, "linking" ))
+            if (!strcmp( name, "gexw.sig64" )) read_sigs64( s.p, s.end );
+            else if (!strcmp( name, "linking" ))
             {
                 leb( &s );  /* version */
                 while (s.p < s.end)
@@ -363,7 +405,7 @@ static void read_wasm_module( const char *name, struct wasm_module_info *info )
                 global_init[i] = -1;
                 if (*s.p == 0x41) { s.p++; global_init[i] = sleb( &s ); }
                 else if (*s.p == 0x23) { s.p++; leb( &s ); }  /* global.get */
-                else if (*s.p == 0x42) { s.p++; sleb( &s ); }
+                else if (*s.p == 0x42) { s.p++; if (target.cpu == CPU_WASM64) global_init[i] = sleb( &s ); else sleb( &s ); }  /* wasm64 */
                 while (s.p < s.end && *s.p != 0x0b) s.p++;  /* skip to end */
                 s.p++;
             }
@@ -401,7 +443,7 @@ int wasm_module_data_export( const struct wasm_module_info *info, const char *na
 
 /* ---- the spec glue: entry adapters ------------------------------------- */
 
-static const char *c_type( char t )
+const char *c_type( char t )
 {
     switch (t)
     {
@@ -448,7 +490,7 @@ static unsigned int spec_arg_size( enum arg_type t )
  * is what gex binds it by. */
 static unsigned int adapter_count;
 
-static const char *adapter_symbol( const ORDDEF *odp )
+const char *adapter_symbol( const ORDDEF *odp )
 {
     /* the skeleton's export table names it, unless it is -noname */
     if (odp->name && !(odp->flags & FLAG_NONAME)) return strmake( "gexp_%s", odp->name );
@@ -459,7 +501,7 @@ static const char *adapter_symbol( const ORDDEF *odp )
  * returns to the guest, and the F_body gex binds, which runs the body
  * through gexrt's __gexw_entry (the C stack moved onto the guest's, the
  * per-thread state, and the catch for a guest state loaded underneath). */
-static const char *output_adapter_header( const ORDDEF *odp )
+const char *output_adapter_header( const ORDDEF *odp )
 {
     const char *ident = strmake( "__gexw_adapter_%u", adapter_count++ );
     output( "static int %s_body(int ctx, int depth, unsigned int need, unsigned long long ret);\n", ident );
@@ -756,7 +798,7 @@ static const char *spec_sig( const ORDDEF *odp )
 }
 
 /* An unimplemented export: raise what Wine raises. */
-static const char *output_stub_adapter( DLLSPEC *spec, const ORDDEF *odp )
+const char *output_stub_adapter( DLLSPEC *spec, const ORDDEF *odp )
 {
     const char *ident = output_adapter_header( odp );
     output( "    __wine_spec_unimplemented_stub(\"%s\", \"%s\");\n", spec->file_name,
@@ -788,9 +830,11 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
     c_file = output_file_name ? open_temp_output_file( ".c" ) : NULL;
     if (!c_file) output_file = stdout;
 
-    output( "/* File generated automatically from %s by winebuild (wasm32); do not edit! */\n\n",
-            spec_file_name ? spec_file_name : spec->file_name );
+    output( "/* File generated automatically from %s by winebuild (%s); do not edit! */\n\n",
+            spec_file_name ? spec_file_name : spec->file_name, target.cpu == CPU_WASM64 ? "wasm64" : "wasm32" );
     output( "int __gexw_entry(int, int, unsigned int, unsigned long long, int (*)(int, int, unsigned int, unsigned long long));\n" );
+    if (target.cpu == CPU_WASM64) output_wasm64_prelude();
+    else {
     output( "unsigned int __gexw_arg32(int, unsigned int);\n" );
     output( "unsigned long long __gexw_arg64(int, unsigned int);\n" );
     output( "float __gexw_argf32(int, unsigned int);\n" );
@@ -802,6 +846,7 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
     output( "int __gexw_ret(int, unsigned long long, unsigned int, unsigned long long);\n" );
     output( "int __gexw_ret32(int, unsigned long long, unsigned int, unsigned int);\n" );
     output( "int __gexw_ret_fp(int, unsigned long long, unsigned int, double);\n" );
+    }
     output( "void __gexw_missing(int);\n" );
     output( "void __wine_spec_unimplemented_stub(const char *, const char *);\n\n" );
 
@@ -828,7 +873,8 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
                          spec->file_name, get_link_name( odp ));
                 continue;
             }
-            if (!(ident = output_varargs_adapter( odp, sig )))
+            if (target.cpu == CPU_WASM64) ident = output_adapter64( odp, sig );
+            else if (!(ident = output_varargs_adapter( odp, sig )))
                 warning( "%s: varargs %s: the .spec's arguments do not fit the code's (%s); no adapter\n",
                          spec->file_name, odp->name ? odp->name : get_link_name( odp ), sig );
             break;
@@ -860,7 +906,7 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
                          spec->file_name, get_link_name( odp ));
                 continue;
             }
-            if (!(ident = output_adapter( odp, sig )))
+            if (!(ident = target.cpu == CPU_WASM64 ? output_adapter64( odp, sig ) : output_adapter( odp, sig )))
                 warning( "%s: %s: the .spec's arguments do not fit the code's (%s); no adapter\n",
                          spec->file_name, odp->name ? odp->name : get_link_name( odp ), sig );
             break;
@@ -870,9 +916,10 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
         if (ident) strarray_add( &names, ident );
     }
 
+    if (target.cpu == CPU_WASM64) output_entry64( spec, spec->init_func && find_func_sig( spec->init_func ));
     /* a program's entry point: mainCRTStartup(void), cdecl (its caller
      * keeps its own stack pointer) */
-    if (spec->init_func && !(spec->characteristics & IMAGE_FILE_DLL))
+    else if (spec->init_func && !(spec->characteristics & IMAGE_FILE_DLL))
     {
         output( "int %s(void);\n", spec->init_func );
         output( "static int gexp__entry_body(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );

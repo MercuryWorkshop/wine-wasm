@@ -10,6 +10,7 @@ SOURCES = \
 	spec16.c \
 	spec32.c \
 	wasm32.c \
+	wasm64.c \
 	utils.c \
 	winebuild.man.in
 

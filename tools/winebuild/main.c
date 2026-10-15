@@ -637,9 +637,9 @@ int main(int argc, char **argv)
             output_data_module( spec );
             break;
         }
-        if (target.cpu == CPU_WASM32 && spec->type == SPEC_WIN32)
+        if ((target.cpu == CPU_WASM32 || target.cpu == CPU_WASM64) && spec->type == SPEC_WIN32)
         {
-            /* the module's glue is C: entry adapters (wasm32.c) */
+            /* the module's glue is C: entry adapters (wasm32.c, wasm64.c) */
             output_wasm_spec( spec, files );
             break;
         }
@@ -663,9 +663,9 @@ int main(int argc, char **argv)
         check_target();
         if (!spec_file_name) fatal_error( "missing .spec file\n" );
         if (!parse_input_file( spec )) break;
-        if (target.cpu == CPU_WASM32)
+        if (target.cpu == CPU_WASM32 || target.cpu == CPU_WASM64)
         {
-            /* wasm32: a DLL's imports stay undefined symbols of its module
+            /* wasm32 and wasm64: a DLL's imports stay undefined symbols of its module
              * (imports bound when gex instantiates it), so the import
              * library has nothing in it but the files given */
             output_static_lib( output_file_name, files, 1 );

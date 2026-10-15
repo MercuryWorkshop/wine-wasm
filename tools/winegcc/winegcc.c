@@ -160,6 +160,13 @@ static const char *isysroot;
 static const char *target_alias;
 static const char *target_version;
 static struct target target;
+
+/* Wine as native wasm (gex): wasm32 serves i386 programs, wasm64 (LLP64,
+ * lowered) x86-64 ones; their DLLs are built the same way */
+static int is_wasm_target(void)
+{
+    return target.cpu == CPU_WASM32 || target.cpu == CPU_WASM64;
+}
 static struct strarray prefix_dirs;
 static struct strarray path_dirs;
 static struct strarray lib_path_dirs;
@@ -511,7 +518,7 @@ static struct strarray get_link_args( const char *output_name )
 
     if (verbose > 1) strarray_add( &flags, "-v" );
 
-    if (target.cpu == CPU_WASM32)
+    if (is_wasm_target())
     {
         /* a position-independent wasm module (the compiler driver knows
          * the rest: docs/wine-native.md in the gex tree) */
@@ -1368,7 +1375,7 @@ static void build(struct strarray input_files, const char *output)
 
     strarray_addall( &link_args, spec_objs );
     /* wasm32: the spec object's data exports, as linker options */
-    if (target.cpu == CPU_WASM32)
+    if (is_wasm_target())
         STRARRAY_FOR_EACH( obj, &spec_objs )
             if (!access( strmake( "%s.rsp", obj ), R_OK ))
                 strarray_add( &link_args, strmake( "-Wl,@%s.rsp", obj ));
@@ -1414,7 +1421,7 @@ static void build(struct strarray input_files, const char *output)
 	}
     }
 
-    if (!nostdlib && !is_pe && target.cpu != CPU_WASM32)
+    if (!nostdlib && !is_pe && !is_wasm_target())
     {
 	strarray_add(&link_args, "-ldl");
 	strarray_add(&link_args, "-lm");
@@ -1424,7 +1431,7 @@ static void build(struct strarray input_files, const char *output)
     /* wasm32: the runtime every native module shares (libs/gexrt), last;
      * a DLL's relocatable object for the one-module PE side leaves it out
      * (tools/wine-wasm/pelink.py links it once) */
-    if (target.cpu == CPU_WASM32 && is_shared)
+    if (is_wasm_target() && is_shared)
     {
         if (wine_objdir) strarray_add( &link_args, strmake( "%s/libs/gexrt/libgexrt.a", wine_objdir ));
         else strarray_add( &link_args, "-lgexrt" );
@@ -1436,7 +1443,7 @@ static void build(struct strarray input_files, const char *output)
      * (OUTPUT.r.o) and its export list (OUTPUT.exports), for linking Wine's
      * whole PE side as one module (tools/wine-wasm/pelink.py in the gex
      * tree) */
-    if (target.cpu == CPU_WASM32 && spec_objs.count)
+    if (is_wasm_target() && spec_objs.count)
     {
         struct strarray r_args = empty_strarray;
         const char *exports = strmake( "%s.exports", spec_objs.str[0] );
@@ -1514,7 +1521,7 @@ static void build(struct strarray input_files, const char *output)
         spawn(implib_args, 0);
     }
 
-    if (target.cpu == CPU_WASM32) generate_app_loader = 0;
+    if (is_wasm_target()) generate_app_loader = 0;
     else if (!is_pe) fixup_constructors( output_file_name );
     else if (wine_builtin) make_wine_builtin( output_file_name );
 

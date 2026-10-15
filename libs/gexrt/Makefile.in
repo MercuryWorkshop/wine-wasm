@@ -2,4 +2,5 @@ STATICLIB = libgexrt.a
 
 SOURCES = \
 	wasm32.c \
-	wasm32_sjlj.c
+	wasm32_sjlj.c \
+	wasm64.c

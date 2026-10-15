@@ -5152,7 +5152,8 @@ int main( int argc, char *argv[] )
     so_dll_supported = !!dll_ext[0][0];  /* non-empty dll ext means supported */
 
     strarray_add( &archs, get_expanded_make_variable( top_makefile, "HOST_ARCH" ));
-    host_wasm32 = !strcmp( archs.str[0], "wasm32" );
+    /* (wasm64, W64: the same layout, LLP64 lowered to wasm32) */
+    host_wasm32 = !strcmp( archs.str[0], "wasm32" ) || !strcmp( archs.str[0], "wasm64" );
     strarray_addall( &archs, get_expanded_make_var_array( top_makefile, "PE_ARCHS" ));
 
     /* check for ARM64X setup */

@@ -1471,7 +1471,8 @@ void output_fake_module( DLLSPEC *spec )
                                                       0xc2, 0x04, 0x00 };            /* ret $4 */
     unsigned int i;
 
-    if (target.cpu == CPU_WASM32 && (wasm_module_file || wasm_shared_module) && spec->type == SPEC_WIN32)
+    if ((target.cpu == CPU_WASM32 || target.cpu == CPU_WASM64) && (wasm_module_file || wasm_shared_module) &&
+        spec->type == SPEC_WIN32)
     {
         output_wasm_skeleton( spec );
         return;
