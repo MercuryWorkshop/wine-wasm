@@ -1590,24 +1590,54 @@ void get_caption_buttons( HWND hwnd, RECT rects[3], UINT states[3], UINT pushed 
 
     if (is_glass_frame( hwnd ))
     {
-        RECT window;
-        int top, right, h, close_w, box_w;
+        /* uDWM's CTopLevelWindow::UpdateNCAreaPositionsAndSizes: the sizes
+         * from NONCLIENTMETRICS' caption heights (close 7/3 of it, maximize
+         * 9/7, minimize 29/21, the height 20/21), right to left with no gaps
+         * from 2 px inside the right border, 1 px below the top edge; a
+         * maximized window's against the work area its borders overhang. */
+        NONCLIENTMETRICSW ncm = {.cbSize = sizeof(ncm)};
+        RECT window, screen;
+        int top, x, h, w, ot = 0;
 
+        NtUserSystemParametersInfo( SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0 );
         get_window_rect_rel( hwnd, COORDS_WINDOW, &window, get_thread_dpi() );
-        if (ex_style & WS_EX_TOOLWINDOW) { h = 16; close_w = 31; box_w = 0; }
-        else { h = 20; close_w = 43; box_w = 26; }
-        /* A maximized window's edges are off the screen: its buttons sit
-         * inside them. */
-        top = (style & WS_MAXIMIZE) ? inside.top - 2 : window.top;
-        right = (style & WS_MAXIMIZE) ? inside.right - 2 : window.right - 6;
-        SetRect( &rects[0], right - close_w, top, right, top + h );
-        states[0] = 1;
-        if (box_w && (style & (WS_MAXIMIZEBOX | WS_MINIMIZEBOX)))
+        x = max( window.right - inside.right - 2, 2 ); /* N.R - 2; B.R + 2 with B = 0 */
+        top = window.top + 1;
+        if (style & WS_MAXIMIZE)
         {
-            SetRect( &rects[1], rects[0].left - box_w, top, rects[0].left, top + h );
-            SetRect( &rects[2], rects[1].left - box_w, top, rects[1].left, top + h );
-            states[1] = (style & WS_MAXIMIZEBOX) ? 1 : 4;
-            states[2] = (style & WS_MINIMIZEBOX) ? 1 : 4;
+            MONITORINFO mi = monitor_info_from_window( hwnd, MONITOR_DEFAULTTONEAREST );
+            int mx_r, mx_t;
+
+            get_window_rect( hwnd, &screen, get_thread_dpi() );
+            mx_r = max( screen.right - mi.rcWork.right, 0 );
+            mx_t = max( mi.rcWork.top - screen.top, 0 );
+            x = max( x, mx_r + 2 );
+            ot = mx_t;
+            top = window.top + (mx_t > 0 ? mx_t - 1 : 1);
+        }
+        if (ex_style & WS_EX_TOOLWINDOW)
+        {
+            h = ncm.iSmCaptionHeight;
+            top = max( window.top, inside.top + get_system_metrics( SM_CYSMCAPTION ) - h - 4 );
+            SetRect( &rects[0], window.right - x - h, top, window.right - x, top + h );
+            states[0] = 1;
+        }
+        else
+        {
+            h = min( (int)(ncm.iCaptionHeight * 0.95238095f + 0.5f),
+                     inside.top + get_system_metrics( SM_CYCAPTION ) - window.top - ot );
+            w = (int)(ncm.iCaptionHeight * 7.0f / 3.0f + 0.5f);
+            SetRect( &rects[0], window.right - x - w, top, window.right - x, top + h );
+            states[0] = 1;
+            if (style & (WS_MAXIMIZEBOX | WS_MINIMIZEBOX))
+            {
+                w = (int)(ncm.iCaptionHeight * 9.0f / 7.0f + 0.5f);
+                SetRect( &rects[1], rects[0].left - w, top, rects[0].left, top + h );
+                w = (int)(ncm.iCaptionHeight * 29.0f / 21.0f + 0.5f);
+                SetRect( &rects[2], rects[1].left - w, top, rects[1].left, top + h );
+                states[1] = (style & WS_MAXIMIZEBOX) ? 1 : 4;
+                states[2] = (style & WS_MINIMIZEBOX) ? 1 : 4;
+            }
         }
         for (i = 0; i < 3; i++) if (pushed == i + 1 && states[i] == 1) states[i] = 3;
         return;
