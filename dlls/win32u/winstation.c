@@ -81,7 +81,7 @@ static struct session_thread_data *get_session_thread_data(void)
     return thread_info->session_data;
 }
 
-#ifdef __wasm32__
+#ifdef __wasm__
 /* No process can map the session (it is in the wineserver's wasm memory, one
  * memory each): each reads it into a local copy laid out as the mapping is,
  * from the server's memory through the door (gex_session_copy) or else
@@ -130,10 +130,16 @@ static ULONGLONG session_ttl_us(void)
  * gex_session_copy returns the bytes copied, -1 without a door session (and
  * the session's size for a size of 0); gex_session_seq reads a live 64-bit
  * word of it (a seqlock's release). */
+#ifdef __wasm32__
 __attribute__((import_module("gex"), import_name("session_copy")))
 extern int gex_session_copy( void *dst, unsigned int offset, unsigned int size );
 __attribute__((import_module("gex"), import_name("session_seq")))
 extern UINT64 gex_session_seq( unsigned int offset );
+#else
+/* (W64, wasm64: no door yet, the session through requests) */
+static inline int gex_session_copy( void *dst, unsigned int offset, unsigned int size ) { return -1; }
+static inline UINT64 gex_session_seq( unsigned int offset ) { return 0; }
+#endif
 static int session_door;
 
 /* once seen, for good (the door's session never goes); not seen, asked again */
@@ -190,7 +196,7 @@ BOOL session_via_requests(void)
 
 void shared_object_acquire_seqlock( const shared_object_t *object, UINT64 *seq )
 {
-#ifdef __wasm32__
+#ifdef __wasm__
     /* the object and its extra bytes (a window's or class's, up to 512),
      * again for as long as the copy caught the server mid-write */
     session_mirror_refresh( object, sizeof(*object) + 512 );
@@ -209,7 +215,7 @@ void shared_object_acquire_seqlock( const shared_object_t *object, UINT64 *seq )
 BOOL shared_object_release_seqlock( const shared_object_t *object, UINT64 seq )
 {
     __SHARED_READ_FENCE;
-#ifdef __wasm32__
+#ifdef __wasm__
     /* the live seq, not the copy's: the copy was taken at the acquire */
     if (session_mirror && session_by_door() && (const char *)object >= session_mirror &&
         (const char *)object < session_mirror + SESSION_MIRROR_SIZE)
@@ -247,7 +253,7 @@ static NTSTATUS map_shared_session_block( SIZE_T offset, SIZE_T size, struct ses
 
     if (!(block = calloc( 1, sizeof(*block) ))) return STATUS_NO_MEMORY;
 
-#ifdef __wasm32__
+#ifdef __wasm__
     {
         /* the server's memory, never this process's: a copy (session_mirror_refresh) */
         if (session_mirror || (session_mirror = calloc( 1, SESSION_MIRROR_SIZE )))
@@ -1098,7 +1104,7 @@ HWND get_desktop_window(void)
         {
             NtResumeThread( thread, NULL );
             TRACE_(win)( "started explorer\n" );
-#ifdef __wasm32__
+#ifdef __wasm__
             {
                 /* a child process starts slower than WaitForInputIdle's
                  * 10 s (and its idle event does not cross to this process):

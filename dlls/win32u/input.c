@@ -503,7 +503,7 @@ static WORD kbd_tables_wchar_to_vkey( const KBDTABLES *tables, WCHAR wch )
     {
         for (entry = table->pVkToWchars; entry->VirtualKey; entry = NEXT_ENTRY(table, entry))
         {
-#ifdef __wasm32__
+#ifdef __wasm__
             /* an SGCAPS entry is the mapping with Caps Lock on; the one
              * after it, which is what VkKeyScan reports, the mapping without
              * (winewayland makes every letter an SGCAPS pair: VkKeyScan('A')

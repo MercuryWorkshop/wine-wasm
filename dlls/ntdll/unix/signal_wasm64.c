@@ -754,12 +754,18 @@ void __wine_wasm64_stub_syscall( const char *name )
     NtRaiseException( &rec, &context, TRUE );
 }
 
-static NTSTATUS call_table( UINT table, UINT id, const ULONG64 *args )
+/* another table (win32u's, W64.4) is registered as typed wrappers that
+ * return the whole of rax (dlls/win32u/syscall_wasm64.cpp) */
+typedef ULONG64 (*wasm64_table_syscall)( const ULONG64 *args );
+
+static ULONG64 call_table( UINT table, UINT id, const ULONG64 *args )
 {
-    /* only ntdll's table is typed so far; win32u's comes with its Unix
-     * side (W64.4) */
-    if (table != 0 || id >= __wine_wasm64_syscall_count) return STATUS_INVALID_SYSTEM_SERVICE;
-    return __wine_wasm64_syscalls[id]( args );
+    const SYSTEM_SERVICE_TABLE *t = &KeServiceDescriptorTable[table];
+
+    if (!table)
+        return (LONG64)(id < __wine_wasm64_syscall_count ? __wine_wasm64_syscalls[id]( args ) : STATUS_INVALID_SYSTEM_SERVICE);
+    if (!t->ServiceTable || id >= t->ServiceLimit) return (LONG64)STATUS_INVALID_SYSTEM_SERVICE;
+    return ((const wasm64_table_syscall *)t->ServiceTable)[id]( args );
 }
 
 /* The program's registers are read from gex's context before anything
@@ -772,7 +778,7 @@ static void syscall_body( int ctx )
     struct syscall_frame *frame = get_syscall_frame( data );
     ULONG64 rsp = REG( R_RSP ), args[MAX_SYSCALL_ARGS];
     UINT id = (UINT)REG( R_RAX ), i;
-    NTSTATUS status;
+    ULONG64 ret;
 
     ctx_to_frame( ctx, frame, *(const ULONG64 *)rsp, rsp + 8 );
     frame->syscall_id = id;
@@ -781,9 +787,9 @@ static void syscall_body( int ctx )
     args[2] = REG( R_R8 );
     args[3] = REG( R_R9 );
     for (i = 4; i < MAX_SYSCALL_ARGS; i++) args[i] = ((const ULONG64 *)(rsp + 0x30))[i - 4];
-    status = call_table( (id >> 12) & 3, id & 0xfff, args );
+    ret = call_table( (id >> 12) & 3, id & 0xfff, args );
     frame = get_syscall_frame( data );
-    if (!(frame->restore_flags & CONTEXT_INTEGER)) frame->rax = status;
+    if (!(frame->restore_flags & CONTEXT_INTEGER)) frame->rax = ret;
     frame_to_ctx( ctx, frame );
 }
 

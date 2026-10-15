@@ -140,6 +140,13 @@ static void stub_syscall( const char *name )
 #define SYSCALL_STUB(name) static void name(void) { stub_syscall( #name ); }
 ALL_SYSCALL_STUBS
 
+#ifdef __wasm64__
+/* the program's system calls reach win32u through typed wrappers
+ * (syscall_wasm64.cpp), whose stubs raise this */
+extern const ULONG_PTR __wine_wasm64_win32u_syscalls[];
+void __wine_wasm64_win32u_stub( const char *name ) { stub_syscall( name ); }
+#endif
+
 #ifdef __wasm32__
 /* ntdll's dispatcher calls every entry as a function returning a 32-bit
  * status (signal_wasm32.c, call_table); on wasm a call through a pointer of
@@ -211,7 +218,11 @@ NTSTATUS __wine_unix_lib_init(void)
         zero_bits = (ULONG_PTR)info.HighestUserAddress | 0x7fffffff;
     }
 #endif
+#ifdef __wasm64__
+    KeAddSystemServiceTable( (ULONG_PTR *)__wine_wasm64_win32u_syscalls, NULL, ARRAY_SIZE(syscalls), arguments, 1 );
+#else
     KeAddSystemServiceTable( syscalls, NULL, ARRAY_SIZE(syscalls), arguments, 1 );
+#endif
     ntdll_add_syscall_debug_info( 1, syscall_names, usercall_names );
     pthread_key_create( &user_thread_info_key, NULL );
     return STATUS_SUCCESS;

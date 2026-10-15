@@ -51,6 +51,7 @@ SOURCES = \
 	spy.c \
 	syscall.c \
 	syscall_wasm32.c \
+	syscall_wasm64.cpp \
 	sysparams.c \
 	systray.c \
 	vertical.c \

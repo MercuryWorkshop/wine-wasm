@@ -485,6 +485,11 @@ static void run_callout( int ctx, uint64_t pad_rsp )
         TEBQ( GEXW_TEB_JUMP_TO ) = 0;
         longjmp( buf, val );
     }
+    /* at the pad but not where this call left it: the guest went on to an
+     * outer call-out's state (NtCallbackReturn ending a user callback that
+     * this call made, from a frame less than NATIVE_UNWOUND above it), so
+     * every native frame up to the innermost entry goes, as after_call's */
+    if (REG( X_RSP ) != pad_rsp) __gexw_throw_unwind();
 }
 
 /* After a call into the Unix side that returns to the pad with RSP at
