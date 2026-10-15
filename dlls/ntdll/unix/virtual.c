@@ -198,6 +198,14 @@ static void *working_set_limit   = (void *)0x7fff0000;
 #endif
 
 static void *host_addr_space_limit;  /* top of the host virtual address space */
+#if defined(__wasm64__) && !defined(GEX_MEMORY64)
+/* W64 lowered to wasm32 (gex docs/wine-native-x64.md): the top of the
+ * space gex runs x86-64 code in (its dispatch directory's reach, gex_abi
+ * DISPATCH_MAX_PAGES * DISPATCH_PAGE: 2 GiB; raising that reach is what
+ * lets this rise), and so of the address space, until code and
+ * data are placed apart. A setting of the flavour, not of Windows. */
+static void *w64_code_space_limit = (void *)0x7fff0000;
+#endif
 
 static struct file_view *arm64ec_view;
 
@@ -3758,6 +3766,13 @@ void virtual_init(void)
     if (address_space_limit > host_addr_space_limit) address_space_limit = host_addr_space_limit;
     if (user_space_limit > host_addr_space_limit) user_space_limit = host_addr_space_limit;
     if (working_set_limit > host_addr_space_limit) working_set_limit = host_addr_space_limit;
+#ifndef GEX_MEMORY64
+    /* the whole address space, since virtual_set_large_address_space
+     * raises the user limit to it */
+    if (address_space_limit > w64_code_space_limit) address_space_limit = w64_code_space_limit;
+    if (user_space_limit > w64_code_space_limit) user_space_limit = w64_code_space_limit;
+    if (working_set_limit > w64_code_space_limit) working_set_limit = w64_code_space_limit;
+#endif
 #endif
 #else
     host_addr_space_limit = address_space_limit;
@@ -4239,8 +4254,9 @@ struct thread_data *virtual_alloc_thread_data(void)
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
 #ifdef __wasm__
     /* gex keeps its dispatch directory at 0x100000-0x300000: bottom-up, this
-     * would take the 0x400000 an exe is linked at */
-    status = map_view( &view, NULL, size, MEM_TOP_DOWN, VPROT_READ | VPROT_WRITE | VPROT_COMMITTED, limit_4g, 0, 0 );
+     * would take the 0x400000 an exe is linked at. No lower limit: on
+     * wasm32 limit_4g is 0, and W64's whole space is below 4 GiB. */
+    status = map_view( &view, NULL, size, MEM_TOP_DOWN, VPROT_READ | VPROT_WRITE | VPROT_COMMITTED, 0, 0, 0 );
 #else
     status = map_view( &view, NULL, size, 0, VPROT_READ | VPROT_WRITE | VPROT_COMMITTED, limit_4g, 0, 0 );
 #endif
