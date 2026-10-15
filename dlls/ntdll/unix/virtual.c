@@ -206,6 +206,11 @@ static void *host_addr_space_limit;  /* top of the host virtual address space */
  * below it (images, executable allocations and mappings); data may use the
  * whole address space, as in gex's memory64 flavour (docs/mem64.md §3). */
 static void *w64_code_space_limit = (void *)0x7fff0000;
+/* and its bottom: native PE code (W64.2) takes a function pointer below
+ * 0x3f0000 for a function-table index, not a guest address (the ICALL
+ * pass's floor, gexrt's GEXW_ICALL_FLOOR), and gex's trampoline page is
+ * 0x3f0000-0x400000; i386 executables load at 0x400000 as well */
+static void *w64_code_space_start = (void *)0x400000;
 #define W64_CODE_SPLIT 1
 
 #endif
@@ -271,7 +276,7 @@ static inline BOOL is_beyond_limit( const void *addr, size_t size, const void *l
 /* executable pages above the code space: gex could never run them */
 static inline BOOL w64_beyond_code_space( const void *base, size_t size )
 {
-    return is_beyond_limit( base, size, w64_code_space_limit );
+    return base < w64_code_space_start || is_beyond_limit( base, size, w64_code_space_limit );
 }
 #endif
 
@@ -2098,8 +2103,8 @@ static NTSTATUS set_protection( struct file_view *view, void *base, SIZE_T size,
     {
         /* data turned to code (a JIT's usual way) where gex cannot run it:
          * refused, not moved (docs/wine-native-x64.md §2) */
-        ERR( "%p-%p made executable above gex's code space (%p): refused\n",
-             base, (char *)base + size, w64_code_space_limit );
+        ERR( "%p-%p made executable %s gex's code space (%p-%p): refused\n", base, (char *)base + size,
+             base < w64_code_space_start ? "below" : "above", w64_code_space_start, w64_code_space_limit );
         return STATUS_INVALID_PAGE_PROTECTION;
     }
 #endif
@@ -2355,12 +2360,13 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
              * image view's vprot carries SEC_IMAGE beside the VPROT_ bits:
              * map_image_view) */
             if (!(vprot & SEC_IMAGE))
-                ERR( "executable view %p-%p above gex's code space (%p) refused\n",
-                     base, (char *)base + size, w64_code_space_limit );
+                ERR( "executable view %p-%p outside gex's code space (%p-%p) refused\n",
+                     base, (char *)base + size, w64_code_space_start, w64_code_space_limit );
             return STATUS_CONFLICTING_ADDRESSES;
         }
         if (!limit_high || limit_high >= (ULONG_PTR)w64_code_space_limit)
             limit_high = (ULONG_PTR)w64_code_space_limit - 1;
+        if (limit_low < (ULONG_PTR)w64_code_space_start) limit_low = (ULONG_PTR)w64_code_space_start;
         if (limit_low >= limit_high) return STATUS_NO_MEMORY;
     }
 #endif
