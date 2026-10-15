@@ -47,7 +47,9 @@ typedef struct __JUMP_BUFFER
 #define _JBLEN 16
 #define _JBTYPE int
 
-#elif defined(__x86_64__)
+#elif defined(__x86_64__) || defined(__wasm64__)
+/* (wasm64: the buffer of the x64 programs native Wine serves, also big
+ * enough for clang's wasm SjLj lowering) */
 
 typedef _CRT_ALIGN(16) struct _SETJMP_FLOAT128
 {
@@ -153,7 +155,7 @@ _ACRTIMP void __cdecl longjmp(jmp_buf,int);
 # define __has_builtin(x) 0
 #endif
 
-#if defined(_UCRT) && !defined(__wasm32__)
+#if defined(_UCRT) && !defined(__wasm32__) && !defined(__wasm64__)
 # ifdef __i386__
 #  define _setjmp __intrinsic_setjmp
 # else
@@ -161,7 +163,7 @@ _ACRTIMP void __cdecl longjmp(jmp_buf,int);
 # endif
 #endif
 
-#ifdef __wasm32__
+#if defined(__wasm32__) || defined(__wasm64__)
 /* a call to setjmp is lowered by clang (-mllvm -wasm-enable-sjlj) */
 int __cdecl __attribute__((__nothrow__,__returns_twice__)) setjmp(jmp_buf);
 #elif defined(__i386__)

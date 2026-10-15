@@ -86,11 +86,21 @@ void __cdecl __wine_rtl_unwind( EXCEPTION_REGISTRATION_RECORD* frame, EXCEPTION_
 
 #endif
 
+#ifdef __wasm64__
+/* gexrt64: guest frames, and the gex call-outs holding them, may stand
+ * between this frame and the one that registered wine_frame */
+extern void DECLSPEC_NORETURN __gexw_far_longjmp( void *buf, int val, ULONG64 frame );
+#endif
+
 static void DECLSPEC_NORETURN unwind_target(void)
 {
     __WINE_FRAME *wine_frame = (__WINE_FRAME *)__wine_get_frame();
     __wine_pop_frame( &wine_frame->frame );
+#ifdef __wasm64__
+    for (;;) __gexw_far_longjmp( &wine_frame->jmp, 1, (ULONG_PTR)wine_frame );
+#else
     for (;;) __wine_longjmp( &wine_frame->jmp, 1 );
+#endif
 }
 
 static void DECLSPEC_NORETURN unwind_frame( EXCEPTION_RECORD *record,

@@ -1667,9 +1667,9 @@ BOOLEAN CDECL RtlAddFunctionTable( RUNTIME_FUNCTION *table, DWORD count, ULONG_P
 
 
 /***********************************************************************
- * x86-64 support
+ * x86-64 support (and wasm64's: the program's code is x86-64)
  */
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(__wasm64__)
 
 union handler_data
 {
@@ -2359,7 +2359,7 @@ BOOLEAN CDECL RtlAddFunctionTable( RUNTIME_FUNCTION *table, DWORD count, ULONG_P
     return !RtlAddGrowableFunctionTable( &ret, table, count, 0, base, end );
 }
 
-#endif  /* __x86_64__ */
+#endif  /* __x86_64__ || __wasm64__ */
 
 
 /***********************************************************************

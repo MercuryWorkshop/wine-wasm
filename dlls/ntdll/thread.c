@@ -310,7 +310,7 @@ void WINAPI RtlExitUserThread( ULONG status )
 }
 
 
-#ifdef __wasm32__
+#if defined(__wasm32__) || defined(__wasm64__)
 /* A thread's entry is called as LPTHREAD_START_ROUTINE (BaseThreadInitThunk);
  * RtlCreateUserThread's callers pass void functions (PRTL_THREAD_START_ROUTINE),
  * which wasm cannot call at the other type: a native one is wrapped. */
@@ -362,8 +362,8 @@ NTSTATUS WINAPI RtlCreateUserThread( HANDLE process, SECURITY_DESCRIPTOR *descr,
 
     InitializeObjectAttributes( &attr, NULL, 0, NULL, descr );
 
-#ifdef __wasm32__
-    if (process == NtCurrentProcess() && PtrToUlong( start ) < 0x3f0000)  /* a native function */
+#if defined(__wasm32__) || defined(__wasm64__)
+    if (process == NtCurrentProcess() && (ULONG_PTR)start < 0x3f0000)  /* a native function */
     {
         struct rtl_thread_start *s = RtlAllocateHeap( GetProcessHeap(), 0, sizeof(*s) );
 

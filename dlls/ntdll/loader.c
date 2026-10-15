@@ -51,7 +51,7 @@ WINE_DECLARE_DEBUG_CHANNEL(imports);
 
 #if defined(__i386__) || defined(__wasm32__)
 static const WCHAR pe_dir[] = L"\\i386-windows";
-#elif defined __x86_64__
+#elif defined __x86_64__ || defined __wasm64__
 static const WCHAR pe_dir[] = L"\\x86_64-windows";
 #elif defined __arm__
 static const WCHAR pe_dir[] = L"\\arm-windows";
@@ -508,7 +508,7 @@ static ULONG_PTR allocate_stub( const char *dll, const char *name )
     return (ULONG_PTR)stub;
 }
 
-#elif defined(__wasm32__)
+#elif defined(__wasm32__) || defined(__wasm64__)
 /* wasm32 has no executable stubs, so a missing import still resolves to
  * 0xdeadbeef; name it here, since a call through it otherwise faults with
  * nothing to say which import it was. */
@@ -2394,7 +2394,7 @@ static void build_ntdll_module(void)
     WINE_MODREF *wm;
     void *module;
 
-#ifdef __wasm32__
+#if defined(__wasm32__) || defined(__wasm64__)
     NtQueryVirtualMemory( GetCurrentProcess(), wasm32_ntdll_address, MemoryBasicInformation,
                           &meminfo, sizeof(meminfo), NULL );
 #else

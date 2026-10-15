@@ -65,6 +65,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(seh);
 /* gex's side: the thread's register context, a guest call, the hooks. */
 unsigned long __gex_get_ctx(void);
 __attribute__((import_module("gex"), import_name("fault_hook"))) void gex_fault_hook( int idx );
+__attribute__((import_module("gex"), import_name("unix_dispatcher"))) int gex_unix_dispatcher( int op, int idx );
 __attribute__((import_module("gex"), import_name("signal_hook"))) void gex_signal_hook( int idx );
 
 static inline int cur_ctx(void) { return (int)__gex_get_ctx(); }
@@ -859,6 +860,22 @@ NTSTATUS WINAPI __wine_unix_call_dispatcher( unixlib_handle_t handle, unsigned i
 }
 
 
+/* The same two entries for native PE code (W64.2, gexrt64's
+ * __gexw_syscall64 and its Unix calls through GEXW_UNIX_CALL_ENTRY): called
+ * directly with the program's state set up as the x86-64 stubs leave it,
+ * the return pad at [rsp]. gex.unix_dispatcher's ops 0 and 4 hold them
+ * under W64. */
+static void __wine_gex_native_syscall( int ctx )
+{
+    __wine_gex_entry_switch( ctx, 0 );
+}
+
+static void __wine_gex_native_unix_call( int ctx )
+{
+    __wine_gex_entry_switch( ctx, 1 );
+}
+
+
 /***********************************************************************
  * Faults in the program's code (gex's fault hook), and the two entries
  */
@@ -1272,6 +1289,8 @@ void signal_init_process( TEB *teb )
 
     /* gex's side: both entries and the program's faults come by the hook */
     gex_fault_hook( GEX_ADDR( __wine_gex_fault ) );
+    gex_unix_dispatcher( 0, GEX_ADDR( __wine_gex_native_syscall ) );
+    gex_unix_dispatcher( 4, GEX_ADDR( __wine_gex_native_unix_call ) );
     install_signal_handlers();
 }
 

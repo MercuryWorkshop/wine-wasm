@@ -39,7 +39,7 @@
 
 #if defined(__i386__) || defined(__wasm32__)
 static const USHORT current_machine = IMAGE_FILE_MACHINE_I386;
-#elif defined(__x86_64__)
+#elif defined(__x86_64__) || defined(__wasm64__)
 static const USHORT current_machine = IMAGE_FILE_MACHINE_AMD64;
 #elif defined(__arm__)
 static const USHORT current_machine = IMAGE_FILE_MACHINE_ARMNT;
@@ -54,7 +54,7 @@ static const UINT_PTR page_size = 0x1000;
 /* exceptions */
 extern NTSTATUS call_seh_handlers( EXCEPTION_RECORD *rec, CONTEXT *context );
 extern NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context );
-#ifdef __wasm32__
+#if defined(__wasm32__) || defined(__wasm64__)
 extern NTSTATUS dispatch_exception_in_place( EXCEPTION_RECORD *rec, CONTEXT *context );
 extern void *wasm32_ntdll_address;
 #endif
@@ -136,7 +136,7 @@ extern void heap_thread_detach(void);
            (c)->Esi, (c)->Edi, LOWORD((c)->SegCs), LOWORD((c)->SegDs), LOWORD((c)->SegEs), \
            LOWORD((c)->SegFs), LOWORD((c)->SegGs), LOWORD((c)->SegSs) ); \
     } while(0)
-#elif defined(__x86_64__)
+#elif defined(__x86_64__) || defined(__wasm64__)
 # define TRACE_CONTEXT(c) do { \
     TRACE( "rip=%016I64x rsp=%016I64x rbp=%016I64x eflags=%08lx\n", (c)->Rip, (c)->Rsp, (c)->Rbp, (c)->EFlags ); \
     TRACE( "rax=%016I64x rbx=%016I64x rcx=%016I64x rdx=%016I64x\n", (c)->Rax, (c)->Rbx, (c)->Rcx, (c)->Rdx ); \

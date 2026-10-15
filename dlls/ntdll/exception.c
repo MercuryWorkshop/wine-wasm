@@ -304,12 +304,12 @@ NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
 }
 
 
-#ifdef __wasm32__
+#if defined(__wasm32__) || defined(__wasm64__)
 /*******************************************************************
  *		dispatch_exception_in_place
  *
- * wasm32: dispatch an exception raised by native code where it is
- * (signal_wasm32.c); STATUS_SUCCESS when a handler continued it.
+ * wasm32 and wasm64: dispatch an exception raised by native code where it is
+ * (signal_wasm32.c, signal_wasm64.c); STATUS_SUCCESS when a handler continued it.
  */
 NTSTATUS dispatch_exception_in_place( EXCEPTION_RECORD *rec, CONTEXT *context )
 {
@@ -321,7 +321,7 @@ NTSTATUS dispatch_exception_in_place( EXCEPTION_RECORD *rec, CONTEXT *context )
 }
 #endif
 
-#if defined(__WINE_PE_BUILD) && !defined(__i386__) && !defined(__wasm32__)
+#if defined(__WINE_PE_BUILD) && !defined(__i386__) && !defined(__wasm32__) && !defined(__wasm64__)
 
 /*******************************************************************
  *		user_callback_handler

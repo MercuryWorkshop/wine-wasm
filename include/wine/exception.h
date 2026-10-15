@@ -107,12 +107,14 @@ typedef struct { int reg[28]; } __wine_jmp_buf;
 typedef struct { __int64 reg[24]; } __wine_jmp_buf;
 #elif defined(__wasm32__)
 typedef struct { int reg[16]; } __wine_jmp_buf;
+#elif defined(__wasm64__)
+typedef struct { __int64 reg[16]; } __wine_jmp_buf;
 #else
 typedef struct { int reg; } __wine_jmp_buf;
 #endif
 
-#ifdef __wasm32__
-/* wasm32: setjmp must be called in the frame that saves, so it is not
+#if defined(__wasm32__) || defined(__wasm64__)
+/* wasm32 (and wasm64): setjmp must be called in the frame that saves, so it is not
  * wrapped; clang lowers it onto wasm exception handling
  * (-mllvm -wasm-enable-sjlj; runtime in winecrt0's wasm32.c). */
 /* By asm label: clang's lowering knows the symbols setjmp and longjmp,

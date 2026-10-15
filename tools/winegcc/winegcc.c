@@ -2076,7 +2076,7 @@ int main(int argc, char **argv)
 
     if (!file_align) file_align = section_align;
 
-    if (!is_pe && target.cpu != CPU_i386 && target.cpu != CPU_x86_64 && target.cpu != CPU_WASM32)
+    if (!is_pe && target.cpu != CPU_i386 && target.cpu != CPU_x86_64 && !is_wasm_target())
         error( "Non-PE builds are not supported on this platform. You need to use something like '--target=%s-windows'.\n",
                target.cpu == CPU_ARM ? "arm" : "aarch64" );
 
