@@ -981,6 +981,10 @@ static void shell_gate(void)
     static const WCHAR varW[] = {'W','I','N','E','G','E','X','_','S','H','E','L','L','_','G','A','T','E','='};
     static const WCHAR nameW[] = {'\\','B','a','s','e','N','a','m','e','d','O','b','j','e','c','t','s',
         '\\','W','i','n','e','g','e','x','S','h','e','l','l','G','a','t','e',0};
+    /* WINEGEX_SHELL_GATE=2: the theme is waited for at \ThemeApiPort (ntdll),
+     * the desktop here */
+    static const WCHAR desktopW[] = {'\\','B','a','s','e','N','a','m','e','d','O','b','j','e','c','t','s',
+        '\\','W','i','n','e','g','e','x','D','e','s','k','t','o','p','G','a','t','e',0};
     static LONG done;
     const WCHAR *env;
     UNICODE_STRING name;
@@ -992,7 +996,7 @@ static void shell_gate(void)
     for (env = RtlGetCurrentPeb()->ProcessParameters->Environment; env && *env; env += wcslen( env ) + 1)
         if (!memcmp( env, varW, sizeof(varW) )) break;
     if (!env || !*env) return;
-    RtlInitUnicodeString( &name, nameW );
+    RtlInitUnicodeString( &name, env[ARRAY_SIZE(varW)] == '2' ? desktopW : nameW );
     InitializeObjectAttributes( &attr, &name, 0, 0, NULL );
     if (NtOpenEvent( &ev, SYNCHRONIZE, &attr )) return;
     timeout.QuadPart = (LONGLONG)-10000 * 15000;

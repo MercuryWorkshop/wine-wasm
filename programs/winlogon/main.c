@@ -116,6 +116,8 @@ static const WCHAR *shell_command_line(void)
     return p;
 }
 
+static const WCHAR *gate_value = L"1";
+
 static void start_shell( HANDLE token, HANDLE *thread, BOOL gated )
 {
     STARTUPINFOW si = { sizeof(si) };
@@ -125,7 +127,7 @@ static void start_shell( HANDLE token, HANDLE *thread, BOOL gated )
 
     if (!*shell) return;
     cmd = _wcsdup( shell );
-    if (gated) SetEnvironmentVariableW( L"WINEGEX_SHELL_GATE", L"1" );
+    if (gated) SetEnvironmentVariableW( L"WINEGEX_SHELL_GATE", gate_value );
     if (CreateProcessAsUserW( token, NULL, cmd, NULL, NULL, FALSE, gated ? 0 : CREATE_SUSPENDED,
                               NULL, NULL, &si, &pi ))
     {
@@ -147,7 +149,7 @@ int main( void )
     HANDLE process_token, user_token = 0, shell_token = 0, shutdown = 0;
     set_info_fn set_info;
     HMODULE uxinit;
-    HANDLE shell_thread = 0, gate = 0;
+    HANDLE shell_thread = 0, gate = 0, desktop_gate = 0;
     NTSTATUS status;
 
     verbose = GetEnvironmentVariableW( L"WINLOGON_VERBOSE", NULL, 0 ) > 0;
@@ -181,6 +183,12 @@ int main( void )
         InitializeSecurityDescriptor( &sd, SECURITY_DESCRIPTOR_REVISION );
         SetSecurityDescriptorDacl( &sd, TRUE, NULL, FALSE );
         gate = CreateEventW( &sa, TRUE, FALSE, L"Global\\WinegexShellGate" );
+        /* WINEGEX_GATE_PORT: the shell waits for the desktop at its first use
+         * of it, and for the theme only at its first connect to the theme
+         * service (ntdll's theme_port_gate) */
+        if (gate && GetEnvironmentVariableW( L"WINEGEX_GATE_PORT", NULL, 0 ) &&
+            (desktop_gate = CreateEventW( &sa, TRUE, FALSE, L"Global\\WinegexDesktopGate" )))
+            gate_value = L"2";
         if (!gate) fprintf( stderr, "winlogon: no shell gate (%lu)\n", GetLastError() );
         else start_shell( shell_token, &shell_thread, TRUE );
     }
@@ -191,6 +199,7 @@ int main( void )
      * desktop processes opened a browser window */
     GetDesktopWindow();
     trace( "desktop up\n" );
+    if (desktop_gate) SetEvent( desktop_gate );
 
     if (!gate) start_shell( shell_token, &shell_thread, FALSE );
 

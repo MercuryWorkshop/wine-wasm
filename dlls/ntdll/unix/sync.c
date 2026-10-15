@@ -3156,6 +3156,47 @@ NTSTATUS WINAPI NtConnectPort( HANDLE *handle, UNICODE_STRING *name, SECURITY_QU
 }
 
 
+#ifdef __wasm32__
+/* paint-fast (gex): a shell started with WINEGEX_SHELL_GATE=2 (winlogon, under
+ * WINEGEX_GATE_PORT) waits for winlogon's theme logon
+ * (\BaseNamedObjects\WinegexShellGate) at its first connect to the theme
+ * service's \ThemeApiPort, not at its first use of the desktop (win32u then
+ * waits for the desktop only): its start runs beside the theme logon up to its
+ * first theme query, whose answer is then the loaded theme's. */
+static void theme_port_gate( const UNICODE_STRING *name )
+{
+    static const WCHAR portW[] = {'\\','T','h','e','m','e','A','p','i','P','o','r','t'};
+    static const WCHAR varW[] = {'W','I','N','E','G','E','X','_','S','H','E','L','L','_','G','A','T','E','=','2',0};
+    static const WCHAR evW[] = {'\\','B','a','s','e','N','a','m','e','d','O','b','j','e','c','t','s',
+        '\\','W','i','n','e','g','e','x','S','h','e','l','l','G','a','t','e',0};
+    static LONG done;
+    const WCHAR *env;
+    UNICODE_STRING evname;
+    OBJECT_ATTRIBUTES attr;
+    LARGE_INTEGER timeout, t0, t1;
+    HANDLE ev;
+
+    if (done || !name || name->Length < sizeof(portW) ||
+        memcmp( (const char *)name->Buffer + name->Length - sizeof(portW), portW, sizeof(portW) )) return;
+    if (InterlockedExchange( &done, 1 )) return;
+    for (env = NtCurrentTeb()->Peb->ProcessParameters->Environment; env && *env; env += ntdll_wcslen( env ) + 1)
+        if (!memcmp( env, varW, sizeof(varW) )) break;
+    if (!env || !*env) return;
+    evname.Buffer = (WCHAR *)evW;
+    evname.Length = sizeof(evW) - sizeof(WCHAR);
+    evname.MaximumLength = sizeof(evW);
+    InitializeObjectAttributes( &attr, &evname, 0, 0, NULL );
+    if (NtOpenEvent( &ev, SYNCHRONIZE, &attr )) return;
+    NtQuerySystemTime( &t0 );
+    timeout.QuadPart = (LONGLONG)-10000 * 15000;
+    NtWaitForSingleObject( ev, FALSE, &timeout );
+    NtQuerySystemTime( &t1 );
+    NtClose( ev );
+    fprintf( stderr, "wine: the shell waited %u ms for the theme at \\ThemeApiPort\n",
+             (unsigned int)((t1.QuadPart - t0.QuadPart) / 10000) );
+}
+#endif
+
 /***********************************************************************
  *             NtSecureConnectPort (NTDLL.@)
  */
@@ -3180,6 +3221,9 @@ NTSTATUS WINAPI NtSecureConnectPort( HANDLE *handle, UNICODE_STRING *name, SECUR
         return STATUS_NOT_IMPLEMENTED;
     }
     if (sid) FIXME( "server sid ignored\n" );
+#ifdef __wasm32__
+    theme_port_gate( name );
+#endif
 
     InitializeObjectAttributes( &attr, name, OBJ_CASE_INSENSITIVE, 0, NULL );
     if ((ret = alloc_object_attributes( &attr, &objattr, &len ))) return ret;
