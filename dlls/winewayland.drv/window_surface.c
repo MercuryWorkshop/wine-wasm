@@ -243,9 +243,21 @@ RGNDATA *get_region_data(HRGN region)
 /**********************************************************************
  *          copy_pixel_region
  */
+/* Whether (x, y) is in one of `count` rects. */
+static BOOL in_rects(const RECT *rects, UINT count, int x, int y)
+{
+    UINT i;
+    for (i = 0; i < count; i++)
+        if (x >= rects[i].left && x < rects[i].right && y >= rects[i].top && y < rects[i].bottom) return TRUE;
+    return FALSE;
+}
+
+/* With force_opaque, every pixel is made opaque but those in `keep` (DWM's
+ * glass: there a GDI pixel's alpha byte counts, so its black is glass). */
 static void copy_pixel_region(const char *src_pixels, RECT *src_rect,
                               char *dst_pixels, RECT *dst_rect,
-                              HRGN region, BOOL force_opaque)
+                              HRGN region, BOOL force_opaque,
+                              const RECT *keep, UINT keep_count)
 {
     static const int bpp = WINEWAYLAND_BYTES_PER_PIXEL;
     RGNDATA *rgndata = get_region_data(region);
@@ -277,6 +289,21 @@ static void copy_pixel_region(const char *src_pixels, RECT *src_rect,
         dst = dst_pixels + (rc.top - dst_rect->top) * dst_stride + (rc.left - dst_rect->left) * bpp;
         width = rc.right - rc.left;
         height = rc.bottom - rc.top;
+
+        if (force_opaque && keep_count)
+        {
+            for (y = 0; y < height; y++)
+            {
+                for (x = 0; x < width; ++x)
+                {
+                    UINT32 p = ((UINT32 *)src)[x];
+                    ((UINT32 *)dst)[x] = in_rects(keep, keep_count, rc.left + x, rc.top + y) ? p : p | 0xff000000;
+                }
+                src += src_stride;
+                dst += dst_stride;
+            }
+            continue;
+        }
 
         /* Fast path for full width rectangles. */
         if (width * bpp == src_stride && src_stride == dst_stride)
@@ -319,11 +346,12 @@ static void copy_pixel_region(const char *src_pixels, RECT *src_rect,
  */
 static void wayland_shm_buffer_copy_data(struct wayland_shm_buffer *buffer,
                                          const char *bits, RECT *rect,
-                                         HRGN region, BOOL force_opaque)
+                                         HRGN region, BOOL force_opaque,
+                                         const RECT *keep, UINT keep_count)
 {
     RECT buffer_rect = {0, 0, buffer->width, buffer->height};
     TRACE("buffer=%p bits=%p rect=%s\n", buffer, bits, wine_dbgstr_rect(rect));
-    copy_pixel_region(bits, rect, buffer->map_data, &buffer_rect, region, force_opaque);
+    copy_pixel_region(bits, rect, buffer->map_data, &buffer_rect, region, force_opaque, keep, keep_count);
 }
 
 static void wayland_shm_buffer_copy(struct wayland_shm_buffer *src,
@@ -334,7 +362,7 @@ static void wayland_shm_buffer_copy(struct wayland_shm_buffer *src,
     RECT dst_rect = {0, 0, dst->width, dst->height};
     TRACE("src=%p dst=%p\n", src, dst);
     copy_pixel_region(src->map_data, &src_rect, dst->map_data, &dst_rect, region,
-                      src->format == WL_SHM_FORMAT_XRGB8888 && dst->format == WL_SHM_FORMAT_ARGB8888);
+                      src->format == WL_SHM_FORMAT_XRGB8888 && dst->format == WL_SHM_FORMAT_ARGB8888, NULL, 0);
 }
 
 /**********************************************************************
@@ -379,6 +407,8 @@ static BOOL wayland_window_surface_flush(struct window_surface *window_surface, 
     HRGN surface_damage_region = NULL;
     HRGN copy_from_window_region;
     uint32_t buffer_format;
+    RECT keep[5];
+    UINT keep_count = 0;
 
     surface_damage_region = NtGdiCreateRectRgn(rect->left + dirty->left, rect->top + dirty->top,
                                                rect->left + dirty->right, rect->top + dirty->bottom);
@@ -439,8 +469,23 @@ static BOOL wayland_window_surface_flush(struct window_surface *window_surface, 
         copy_from_window_region = shm_buffer->damage_region;
     }
 
+    /* A shaped window's buffer has alpha (outside its region), and its own
+     * pixels are made opaque: but in DWM's glass a GDI pixel's alpha byte
+     * counts (its black is glass), as the compositor does for an opaque
+     * buffer. */
+    if (shape_bits && !wws->layered)
+    {
+        struct wayland_win_data *data;
+
+        if ((data = wayland_win_data_get(window_surface->hwnd)))
+        {
+            keep_count = min(data->glass.count, ARRAY_SIZE(keep));
+            memcpy(keep, data->glass.rects, keep_count * sizeof(*keep));
+            wayland_win_data_release(data);
+        }
+    }
     wayland_shm_buffer_copy_data(shm_buffer, color_bits, &surface_rect, copy_from_window_region,
-                                 shape_bits && !wws->layered);
+                                 shape_bits && !wws->layered, keep, keep_count);
     if (shape_bits) wayland_shm_buffer_copy_shape(shm_buffer, rect, shape_info, shape_bits);
 
     NtGdiSetRectRgn(shm_buffer->damage_region, 0, 0, 0, 0);
