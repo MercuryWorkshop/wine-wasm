@@ -2916,7 +2916,17 @@ DWORD WINAPI CoGetCurrentProcess(void)
         return 0;
 
     if (!tlsdata->thread_seqid)
-        rpcss_get_next_seqid(&tlsdata->thread_seqid);
+    {
+        /* paint-fast (gex): with WINEGEX_FASTBOOT, the number is made here,
+         * the process id over a count of this process's threads that asked,
+         * not by rpcss: asking it started rpcss (a process, and the caller
+         * waiting for it to run) at Paint's start, for nothing else. */
+        static int fast = -1;
+        static LONG next;
+        if (fast < 0) fast = GetEnvironmentVariableW( L"WINEGEX_FASTBOOT", NULL, 0 ) > 0;
+        if (fast) tlsdata->thread_seqid = (GetCurrentProcessId() << 12) | (InterlockedIncrement( &next ) & 0xfff);
+        else rpcss_get_next_seqid(&tlsdata->thread_seqid);
+    }
 
     return tlsdata->thread_seqid;
 }
