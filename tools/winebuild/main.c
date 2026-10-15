@@ -577,7 +577,8 @@ static int parse_input_file( DLLSPEC *spec )
 static void check_target(void)
 {
     if (is_pe()) return;
-    if (target.cpu == CPU_i386 || target.cpu == CPU_x86_64 || target.cpu == CPU_WASM32) return;
+    if (target.cpu == CPU_i386 || target.cpu == CPU_x86_64 || target.cpu == CPU_WASM32 ||
+        target.cpu == CPU_WASM64) return;
     fatal_error( "Non-PE builds are not supported on this platform.\n" );
 }
 

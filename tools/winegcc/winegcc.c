@@ -844,6 +844,7 @@ static struct strarray get_compat_defines( int gcc_defs )
             strarray_add(&args, "-D__fastcall=__attribute__((__fastcall__))");
             break;
         case CPU_WASM32:
+        case CPU_WASM64:
             /* One calling convention; the i386 convention of an export is
              * the .spec file's, and the adapters apply it. */
             strarray_add(&args, "-D__stdcall=");

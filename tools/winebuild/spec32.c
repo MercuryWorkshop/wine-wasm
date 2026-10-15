@@ -787,7 +787,8 @@ void output_module( DLLSPEC *spec )
     case CPU_i386:
     case CPU_WASM32:  machine = IMAGE_FILE_MACHINE_I386; break;  /* it serves i386 programs */
     case CPU_ARM64EC:
-    case CPU_x86_64:  machine = IMAGE_FILE_MACHINE_AMD64; break;
+    case CPU_x86_64:
+    case CPU_WASM64:  machine = IMAGE_FILE_MACHINE_AMD64; break;  /* it serves x86-64 programs */
     case CPU_ARM:     machine = IMAGE_FILE_MACHINE_ARMNT; break;
     case CPU_ARM64:   machine = IMAGE_FILE_MACHINE_ARM64; break;
     }
@@ -1207,7 +1208,8 @@ static void output_pe_file( DLLSPEC *spec, const char signature[32] )
     case CPU_i386:
     case CPU_WASM32:  put_word( IMAGE_FILE_MACHINE_I386 ); break;  /* it serves i386 programs */
     case CPU_ARM64EC:
-    case CPU_x86_64:  put_word( IMAGE_FILE_MACHINE_AMD64 ); break;
+    case CPU_x86_64:
+    case CPU_WASM64:  put_word( IMAGE_FILE_MACHINE_AMD64 ); break;  /* it serves x86-64 programs */
     case CPU_ARM:     put_word( IMAGE_FILE_MACHINE_ARMNT ); break;
     case CPU_ARM64:   put_word( IMAGE_FILE_MACHINE_ARM64 ); break;
     }

@@ -548,6 +548,15 @@ static const char *parse_spec_flags( DLLSPEC *spec, ORDDEF *odp, const char *tok
         if (odp->flags & FLAG_CPU(CPU_i386)) odp->flags |= FLAG_CPU(CPU_WASM32);
         if (cpu_mask & FLAG_CPU(CPU_i386)) cpu_mask |= FLAG_CPU(CPU_WASM32);
     }
+    /* x86-64 implies wasm64 the same way (64-bit native Wine serves x86-64
+     * programs): -arch=x86_64,!wasm64 opts out */
+    if ((cpu_mask & FLAG_CPU(CPU_WASM64)) && (odp->flags & FLAG_CPU_MASK & ~FLAG_CPU(CPU_WASM32)))
+        cpu_mask &= ~FLAG_CPU(CPU_WASM64);
+    else
+    {
+        if (odp->flags & FLAG_CPU(CPU_x86_64)) odp->flags |= FLAG_CPU(CPU_WASM64);
+        if (cpu_mask & FLAG_CPU(CPU_x86_64)) cpu_mask |= FLAG_CPU(CPU_WASM64);
+    }
 
     if (cpu_mask) odp->flags |= FLAG_CPU_MASK & ~cpu_mask;
     return token;

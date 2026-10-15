@@ -454,6 +454,7 @@ static unsigned int get_stack_size( const var_t *var, unsigned int *stack_align,
         {
         case CPU_x86_64:
         case CPU_ARM64EC:
+        case CPU_WASM64:  /* the x86-64 stack layout: it serves x86-64 programs */
             by_val = (stack_size == 1 || stack_size == 2 || stack_size == 4 || stack_size == 8);
             break;
         case CPU_ARM64:
@@ -1613,6 +1614,7 @@ static void write_proc_func_interp( FILE *file, int indent, const type_t *iface,
     {
     case CPU_x86_64:
     case CPU_ARM64EC:
+    case CPU_WASM64:
     {
         unsigned short pos = 0, fpu_mask = 0;
 

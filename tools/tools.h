@@ -99,7 +99,7 @@ extern char **environ;
 
 struct target
 {
-    enum { CPU_i386, CPU_x86_64, CPU_ARM, CPU_ARM64, CPU_ARM64EC, CPU_WASM32 } cpu;
+    enum { CPU_i386, CPU_x86_64, CPU_ARM, CPU_ARM64, CPU_ARM64EC, CPU_WASM32, CPU_WASM64 } cpu;
 
     enum
     {
@@ -592,6 +592,7 @@ static inline unsigned int get_target_ptr_size( struct target target )
         [CPU_ARM64]     = 8,
         [CPU_ARM64EC]   = 8,
         [CPU_WASM32]    = 4,
+        [CPU_WASM64]    = 8,
     };
     return sizes[target.cpu];
 }
@@ -611,6 +612,7 @@ static inline void set_target_ptr_size( struct target *target, unsigned int size
         if (size == 8) target->cpu = CPU_ARM64;
         break;
     case CPU_WASM32:
+    case CPU_WASM64:
         break;
     case CPU_ARM64:
     case CPU_ARM64EC:
@@ -655,6 +657,10 @@ static inline int get_cpu_from_name( const char *name )
         /* Wine as native wasm32 under gex (docs/wine-native.md): ILP32
          * with MSVC alignment, so i386's data layout; no assembly. */
         { "wasm32",    CPU_WASM32 },
+        /* 64-bit native Wine under gex (docs/wine-native-x64.md): LP64 on
+         * the Unix side, LLP64 (GexLLP64) on the PE side, so x86-64's data
+         * layout; it serves x86-64 programs; no assembly. */
+        { "wasm64",    CPU_WASM64 },
     };
     unsigned int i;
 
@@ -703,6 +709,7 @@ static inline const char *get_arch_dir( struct target target )
         [CPU_ARM64]   = "aarch64",
         [CPU_ARM64EC] = "aarch64",
         [CPU_WASM32]  = "wasm32",
+        [CPU_WASM64]  = "wasm64",
     };
 
     if (!cpu_names[target.cpu]) return "";
