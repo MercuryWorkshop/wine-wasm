@@ -2485,19 +2485,27 @@ BOOL is_glass_frame( HWND hwnd )
     return window_has_glass_frame( hwnd, &glass, style );
 }
 
-/* uDWM's CTopLevelWindow::CalculateOutsideMargins: a frame thinner than a
- * thick frame is drawn out to a thick frame's size, outside the window
- * (the margins, each <= 0, as left, top, right, bottom). */
+/* uDWM's CTopLevelWindow::CalculateOutsideMargins: a frame thinner than
+ * DWM's thick frame is drawn out to that size, outside the window (the
+ * margins, each <= 0, as left, top, right, bottom). DWM measures with the
+ * padded border, which a program older than Vista's (subsystem version
+ * below 6) is not given: its frame, sizable or not, is drawn out too. */
 void get_glass_outside_margins( HWND hwnd, RECT *margins )
 {
+    NONCLIENTMETRICSW ncm = {.cbSize = sizeof(ncm)};
     DWORD style = get_window_long( hwnd, GWL_STYLE ), ex_style = get_window_long( hwnd, GWL_EXSTYLE );
     RECT cur = {0}, thick = {0};
+    int pad;
 
     SetRectEmpty( margins );
-    if (!get_system_metrics( SM_CXPADDEDBORDER ) || (style & WS_THICKFRAME)) return;
-    if (!(style & (WS_BORDER | WS_DLGFRAME)) && !(ex_style & WS_EX_DLGMODALFRAME)) return;
+    NtUserSystemParametersInfo( SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0 );
+    if (ncm.iPaddedBorderWidth <= 0) return;
+    if (!(style & (WS_BORDER | WS_DLGFRAME | WS_THICKFRAME)) && !(ex_style & WS_EX_DLGMODALFRAME)) return;
     adjust_window_rect( &cur, style, FALSE, ex_style, get_system_dpi() );
     adjust_window_rect( &thick, style | WS_THICKFRAME, FALSE, ex_style, get_system_dpi() );
+    /* this process's thick frame lacks the padded border DWM's has */
+    pad = ncm.iPaddedBorderWidth - get_system_metrics( SM_CXPADDEDBORDER );
+    InflateRect( &thick, pad, pad );
     if (cur.left > -1 || cur.right < 1 || cur.bottom < 1) return;
     margins->left = min( 0, thick.left - cur.left );
     margins->top = min( 0, thick.top - cur.top );
