@@ -6959,12 +6959,8 @@ static BOOL padded_border_app(void)
     {
         SECTION_IMAGE_INFORMATION info;
 
-        /* asked before the process's image is known (early in its start):
-         * a modern image, and ask again next time */
-        if (NtQueryInformationProcess( GetCurrentProcess(), ProcessImageInformation, &info, sizeof(info), NULL ) ||
-            !info.MajorSubsystemVersion)
-            return TRUE;
-        app = info.MajorSubsystemVersion >= 6;
+        app = !NtQueryInformationProcess( GetCurrentProcess(), ProcessImageInformation, &info, sizeof(info), NULL ) &&
+              info.MajorSubsystemVersion >= 6;
     }
     return app;
 }
