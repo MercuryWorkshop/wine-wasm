@@ -1974,18 +1974,24 @@ int __cdecl main( int argc, char *argv[] )
     ProcessWindowsFileProtection();
     ProcessRunKeys( HKEY_LOCAL_MACHINE, L"RunServicesOnce", TRUE, FALSE );
 
-    if (init || (kill && !restart))
-    {
-        ProcessRunKeys( HKEY_LOCAL_MACHINE, L"RunServices", FALSE, FALSE );
-        start_services_process();
-    }
     if (init && fastboot())
     {
+        /* the session's first process goes on now, beside services.exe's
+         * start (creating it waited for its DLLs, about 0.4 s); what that
+         * process reads at its start (the volatile environment) is written
+         * first. RunServices (winemenubuilder) is left out. winlogon waits
+         * for the service manager itself (wait_for_themes). */
         create_volatile_environment_registry_key();
         create_known_dlls();
         WINE_TRACE("fast boot done\n");
         SetEvent( event );
+        start_services_process();
         return 0;
+    }
+    if (init || (kill && !restart))
+    {
+        ProcessRunKeys( HKEY_LOCAL_MACHINE, L"RunServices", FALSE, FALSE );
+        start_services_process();
     }
     if (init || update) update_wineprefix( update );
 

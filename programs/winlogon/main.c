@@ -76,8 +76,11 @@ static void wait_for_themes(void)
     int i;
 
     if (!GetEnvironmentVariableW( L"WINEGEX_FASTBOOT", NULL, 0 )) return;
-    if (!(scm = OpenSCManagerW( NULL, NULL, SC_MANAGER_CONNECT ))) return;
-    if ((svc = OpenServiceW( scm, L"Themes", SERVICE_QUERY_STATUS )))
+    /* services.exe may not be up yet either: wineboot no longer waits for it */
+    for (i = 0; i < 1500 && !(scm = OpenSCManagerW( NULL, NULL, SC_MANAGER_CONNECT )); i++) Sleep( 10 );
+    if (!scm) return;
+    for (i = 0; i < 1500 && !(svc = OpenServiceW( scm, L"Themes", SERVICE_QUERY_STATUS )); i++) Sleep( 10 );
+    if (svc)
     {
         for (i = 0; i < 1500; i++)
         {
