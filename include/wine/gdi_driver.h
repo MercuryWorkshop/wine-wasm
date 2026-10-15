@@ -375,6 +375,8 @@ struct window_glass
     RECT buttons[3];        /* close, maximize, minimize */
     UINT button_states[3];  /* 0 none, 1 normal, 2 hot, 3 pushed, 4 disabled */
     RECT client;            /* with a frame: the client area, outside which DWM's frame covers the window */
+    BOOL has_icon;          /* with a frame: the caption's icon, DWM's to draw */
+    UINT icon[16 * 16];     /* 16 x 16 premultiplied ARGB, rows top down */
 };
 
 struct user_driver_funcs

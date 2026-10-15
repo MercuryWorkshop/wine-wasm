@@ -324,6 +324,9 @@ struct wayland_surface
     HWND placed_below;
     BOOL placed_stacked;
     struct gex_glass_v1 *gex_glass_v1;
+    /* the caption's icon last sent (gex_glass_v1.set_icon) */
+    BOOL glass_has_icon;
+    UINT glass_icon[16 * 16];
 
     struct wayland_surface_config pending, requested, processing, current;
     BOOL resizing;

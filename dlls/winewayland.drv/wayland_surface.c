@@ -1650,8 +1650,11 @@ void wayland_surface_set_glass(struct wayland_surface *surface, const struct win
         return;
     }
     if (!surface->gex_glass_v1)
+    {
         surface->gex_glass_v1 = gex_glass_manager_v1_get_glass(process_wayland.gex_glass_manager_v1,
                                                                surface->wl_surface);
+        surface->glass_has_icon = FALSE;
+    }
     if (!surface->gex_glass_v1) return;
 
     region = wl_compositor_create_region(process_wayland.wl_compositor);
@@ -1668,4 +1671,17 @@ void wayland_surface_set_glass(struct wayland_surface *surface, const struct win
             b[2].left, b[2].top, b[2].right - b[2].left, b[2].bottom - b[2].top, st[2],
             glass->client.left, glass->client.top, glass->client.right - glass->client.left,
             glass->client.bottom - glass->client.top);
+    if (glass->has_icon != surface->glass_has_icon ||
+        (glass->has_icon && memcmp(glass->icon, surface->glass_icon, sizeof(glass->icon))))
+    {
+        struct wl_array pixels;
+
+        wl_array_init(&pixels);
+        if (glass->has_icon && wl_array_add(&pixels, sizeof(glass->icon)))
+            memcpy(pixels.data, glass->icon, sizeof(glass->icon));
+        gex_glass_v1_set_icon(surface->gex_glass_v1, &pixels);
+        wl_array_release(&pixels);
+        surface->glass_has_icon = glass->has_icon;
+        memcpy(surface->glass_icon, glass->icon, sizeof(glass->icon));
+    }
 }

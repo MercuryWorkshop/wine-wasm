@@ -2592,6 +2592,56 @@ static UINT get_window_glass_rects( HWND hwnd, const struct set_window_glass_par
     return count;
 }
 
+/* The window's small icon (the window's, else its class's), as DWM's frame
+ * draws it in the caption: 16 x 16 premultiplied ARGB. It is drawn on black
+ * and on white, which gives each pixel's colour and alpha whatever GDI does
+ * with the destination's alpha. */
+static BOOL get_glass_icon( HWND hwnd, UINT *out )
+{
+    BITMAPINFO bmi = {.bmiHeader = {sizeof(BITMAPINFOHEADER), 16, -16, 1, 32, BI_RGB}};
+    UINT black[16 * 16];
+    HBITMAP bmp, old;
+    HICON icon;
+    UINT *bits;
+    HDC hdc;
+    WND *win;
+    int i;
+
+    if (!(win = get_win_ptr( hwnd )) || win == WND_OTHER_PROCESS || win == WND_DESKTOP) return FALSE;
+    icon = win->hIconSmall ? win->hIconSmall : win->hIconSmall2;
+    if (!icon) icon = win->hIcon;
+    release_win_ptr( win );
+    if (!icon) icon = (HICON)get_class_long_ptr( hwnd, GCLP_HICONSM, FALSE );
+    if (!icon) icon = (HICON)get_class_long_ptr( hwnd, GCLP_HICON, FALSE );
+    if (!icon) return FALSE;
+
+    if (!(hdc = NtGdiCreateCompatibleDC( 0 ))) return FALSE;
+    if (!(bmp = NtGdiCreateDIBSection( hdc, NULL, 0, &bmi, DIB_RGB_COLORS, 0, 0, 0, (void **)&bits )))
+    {
+        NtGdiDeleteObjectApp( hdc );
+        return FALSE;
+    }
+    old = NtGdiSelectBitmap( hdc, bmp );
+    memset( bits, 0, sizeof(black) );
+    NtUserDrawIconEx( hdc, 0, 0, icon, 16, 16, 0, 0, DI_NORMAL );
+    memcpy( black, bits, sizeof(black) );
+    memset( bits, 0xff, sizeof(black) );
+    NtUserDrawIconEx( hdc, 0, 0, icon, 16, 16, 0, 0, DI_NORMAL );
+    for (i = 0; i < 16 * 16; i++)
+    {
+        UINT b = black[i], w = bits[i], a = 0, c;
+        /* over black a pixel is its premultiplied colour; over white that
+         * plus 1 - alpha */
+        for (c = 0; c < 24; c += 8) a += 255 - (((w >> c) & 0xff) - ((b >> c) & 0xff));
+        a = (a + 1) / 3;
+        out[i] = (b & 0xffffff) | min( a, 255 ) << 24;
+    }
+    NtGdiSelectBitmap( hdc, old );
+    NtGdiDeleteObjectApp( bmp );
+    NtGdiDeleteObjectApp( hdc );
+    return TRUE;
+}
+
 BOOL update_window_glass( HWND hwnd )
 {
     struct set_window_glass_params glass;
@@ -2644,6 +2694,10 @@ BOOL update_window_glass( HWND hwnd )
          * caption (a menu bar is the window's own). */
         get_glass_frame_inner( hwnd, &draw.client );
         OffsetRect( &draw.client, rects.window.left - rects.visible.left, rects.window.top - rects.visible.top );
+        /* the caption's icon, as a system menu has it; not a tool window's
+         * nor a modal frame's */
+        if ((style & WS_SYSMENU) && !(ex_style & (WS_EX_TOOLWINDOW | WS_EX_DLGMODALFRAME)))
+            draw.has_icon = get_glass_icon( hwnd, draw.icon );
     }
     return user_driver->pSetWindowGlass( hwnd, &draw );
 }
