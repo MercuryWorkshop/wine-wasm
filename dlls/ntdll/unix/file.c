@@ -1364,6 +1364,12 @@ static BOOL is_hidden_file( const char *name )
     p = name + strlen( name );
     while (p > name && p[-1] == '/') p--;
     while (p > name && p[-1] != '/') p--;
+#ifdef __wasm32__
+    /* gex's file systems keep no extended attributes, so no DOS attributes:
+     * a folder's desktop.ini, hidden and system on Windows (the shell never
+     * lists it as an item), is hidden by its name */
+    if (!strncasecmp( p, "desktop.ini", 11 ) && (!p[11] || p[11] == '/')) return TRUE;
+#endif
     if (*p++ != '.') return FALSE;
     if (!*p || *p == '/') return FALSE;  /* "." directory */
     if (*p++ != '.') return TRUE;
