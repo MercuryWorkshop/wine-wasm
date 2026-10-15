@@ -2671,6 +2671,74 @@ static void test_attribute_by_name(void)
     IXmlReader_Release(reader);
 }
 
+/* Documents larger than the reader's first raw read (8 KB): names and values
+ * that straddle a refill of the raw buffer must come through whole, in UTF-16
+ * and in UTF-8 with multibyte characters at the boundary. */
+static void test_read_across_refill(void)
+{
+    static const WCHAR elemW[] = L"<e background=\"v\xe9\"/>";
+    static const char elemA[] = "<e background=\"v\xc3\xa9\xe2\x82\xac\"/>";
+    unsigned int i, count, n = 1500, size;
+    const WCHAR *str;
+    IXmlReader *reader;
+    XmlNodeType type;
+    IStream *stream;
+    char *data, *p;
+    HRESULT hr;
+
+    for (i = 0; i < 2; i++)
+    {
+        BOOL utf16 = !i;
+
+        winetest_push_context(utf16 ? "UTF-16" : "UTF-8");
+        size = utf16 ? sizeof(WCHAR) * (1 + 3 + n * wcslen(elemW) + 4) : 3 + n * strlen(elemA) + 4;
+        p = data = malloc(size);
+        if (utf16)
+        {
+            memcpy(p, L"\xfeff<a>", 4 * sizeof(WCHAR)); p += 4 * sizeof(WCHAR);
+            for (count = 0; count < n; count++) { memcpy(p, elemW, wcslen(elemW) * sizeof(WCHAR)); p += wcslen(elemW) * sizeof(WCHAR); }
+            memcpy(p, L"</a>", 4 * sizeof(WCHAR)); p += 4 * sizeof(WCHAR);
+        }
+        else
+        {
+            memcpy(p, "<a>", 3); p += 3;
+            for (count = 0; count < n; count++) { memcpy(p, elemA, strlen(elemA)); p += strlen(elemA); }
+            memcpy(p, "</a>", 4); p += 4;
+        }
+        ok(p - data == size, "Unexpected size %Iu, expected %u.\n", p - data, size);
+
+        hr = CreateXmlReader(&IID_IXmlReader, (void **)&reader, NULL);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        stream = create_stream_on_data(data, size);
+        hr = IXmlReader_SetInput(reader, (IUnknown *)stream);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+        count = 0;
+        while ((hr = IXmlReader_Read(reader, &type)) == S_OK)
+        {
+            if (type != XmlNodeType_Element) continue;
+            hr = IXmlReader_GetLocalName(reader, &str, NULL);
+            ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+            if (!wcscmp(str, L"a")) continue;
+            ok(!wcscmp(str, L"e"), "element %u: unexpected name %s.\n", count, wine_dbgstr_w(str));
+            hr = IXmlReader_MoveToFirstAttribute(reader);
+            ok(hr == S_OK, "element %u: unexpected hr %#lx.\n", count, hr);
+            hr = IXmlReader_GetLocalName(reader, &str, NULL);
+            ok(hr == S_OK && !wcscmp(str, L"background"), "element %u: unexpected attribute %s.\n", count, wine_dbgstr_w(str));
+            hr = IXmlReader_GetValue(reader, &str, NULL);
+            ok(hr == S_OK && !wcscmp(str, utf16 ? L"v\xe9" : L"v\xe9\x20ac"), "element %u: unexpected value %s.\n", count, wine_dbgstr_w(str));
+            count++;
+        }
+        ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+        ok(count == n, "Read %u elements, expected %u.\n", count, n);
+
+        IXmlReader_Release(reader);
+        IStream_Release(stream);
+        free(data);
+        winetest_pop_context();
+    }
+}
+
 START_TEST(reader)
 {
     test_reader_create();
@@ -2699,4 +2767,5 @@ START_TEST(reader)
     test_reader_position();
     test_string_pointers();
     test_attribute_by_name();
+    test_read_across_refill();
 }

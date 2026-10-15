@@ -2482,6 +2482,7 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, 
         }
 
     case WM_NCCALCSIZE:
+        if (popup_menu_nc_message( hwnd, msg, wparam, lparam, &result )) break;
         handle_nc_calc_size( hwnd, wparam, (RECT *)lparam );
         break;
 
@@ -2494,6 +2495,7 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, 
         }
 
     case WM_NCPAINT:
+        if (popup_menu_nc_message( hwnd, msg, wparam, lparam, &result )) break;
         return handle_nc_paint( hwnd, (HRGN)wparam );
 
     case WM_NCACTIVATE:

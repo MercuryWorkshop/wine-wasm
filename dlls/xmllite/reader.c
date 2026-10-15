@@ -820,16 +820,18 @@ static inline HRESULT readerinput_query_for_stream(xmlreaderinput *readerinput)
 static HRESULT readerinput_growraw(xmlreaderinput *readerinput)
 {
     encoded_buffer *buffer = &readerinput->buffer->encoded;
-    /* to make sure aligned length won't exceed allocated length */
-    ULONG len = buffer->allocated - buffer->written - 4;
+    ULONG len = 0;
     ULONG read;
     HRESULT hr;
 
+    /* to make sure aligned length won't exceed allocated length */
+    if (buffer->allocated - buffer->written > 4)
+        len = buffer->allocated - buffer->written - 4;
     /* always try to get aligned to 4 bytes, so the only case we can get partially read characters is
        variable width encodings like UTF-8 */
     len = (len + 3) & ~3;
     /* try to use allocated space or grow */
-    if (buffer->allocated - buffer->written < len)
+    if (!len || buffer->allocated - buffer->written < len)
     {
         buffer->allocated *= 2;
         buffer->data = readerinput_realloc(readerinput, buffer->data, buffer->allocated);
@@ -951,6 +953,8 @@ static int readerinput_get_convlen(xmlreaderinput *readerinput)
 
     if (readerinput->buffer->code_page == CP_UTF8)
         len = readerinput_get_utf8_convlen(readerinput);
+    else if (readerinput->buffer->code_page == 1200)
+        len = buffer->cur + ((buffer->written - buffer->cur) & ~1);
     else
         len = buffer->written;
 
@@ -969,7 +973,8 @@ static void readerinput_shrinkraw(xmlreaderinput *readerinput, int len)
         len = readerinput_get_convlen(readerinput);
 
     assert(len >= 0);
-    memmove(buffer->data, buffer->data + buffer->cur + (buffer->written - len), len);
+    /* the bytes not converted yet (a partial character) move to the start */
+    memmove(buffer->data, buffer->data + buffer->cur + len, buffer->written - buffer->cur - len);
     /* everything below cur is lost too */
     buffer->written -= len + buffer->cur;
     /* after this point we don't need cur offset really,
@@ -1092,9 +1097,9 @@ static HRESULT reader_more(xmlreader *reader)
         MultiByteToWideChar(cp, 0, src->data + src->cur, len, ptr, dest_len);
         ptr[dest_len] = 0;
         dest->written += dest_len*sizeof(WCHAR);
-        /* get rid of processed data */
-        readerinput_shrinkraw(readerinput, len);
     }
+    /* get rid of processed data: for UTF-16 too, or the next call copies it again */
+    readerinput_shrinkraw(readerinput, len);
 
     fixup_buffer_cr(dest, prev_len);
     return hr;

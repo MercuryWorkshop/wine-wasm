@@ -133,6 +133,7 @@ extern HMENU get_window_sys_sub_menu( HWND hwnd );
 extern BOOL is_menu( HMENU handle );
 extern HWND is_menu_active(void);
 extern LRESULT popup_menu_window_proc( HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, BOOL ansi );
+extern BOOL popup_menu_nc_message( HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, LRESULT *result );
 extern BOOL set_window_menu( HWND hwnd, HMENU handle );
 extern void track_keyboard_menu_bar( HWND hwnd, UINT wparam, WCHAR ch );
 extern void track_mouse_menu_bar( HWND hwnd, INT ht, int x, int y );

@@ -262,7 +262,7 @@ typedef BOOL (WINAPI *SerializeElementFunc)(const void *context, DWORD dwFlags,
 typedef BOOL (WINAPI *DeleteContextFromStoreFunc)(const void *contex);
 typedef const void * (*FindContextByContextFunc)(HCERTSTORE store, const void *context);
 typedef const void * (WINAPI *DuplicateContextFunc)(const void *context);
-typedef void (WINAPI *FreeContextFunc)(const void *context);
+typedef BOOL (WINAPI *FreeContextFunc)(const void *context);
 
 /* An abstract context (certificate, CRL, or CTL) interface */
 typedef struct _WINE_CONTEXT_INTERFACE
