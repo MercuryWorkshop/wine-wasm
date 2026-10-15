@@ -66,6 +66,31 @@ static void trace( const char *fmt, ... )
     va_end( args );
 }
 
+/* paint-fast (gex): with WINEGEX_FASTBOOT, wineboot no longer waits for
+ * services.exe's autostart, so wait here for the Themes service to run
+ * before the theme client asks it for the theme (up to 15 s) */
+static void wait_for_themes(void)
+{
+    SC_HANDLE scm, svc;
+    SERVICE_STATUS st;
+    int i;
+
+    if (!GetEnvironmentVariableW( L"WINEGEX_FASTBOOT", NULL, 0 )) return;
+    if (!(scm = OpenSCManagerW( NULL, NULL, SC_MANAGER_CONNECT ))) return;
+    if ((svc = OpenServiceW( scm, L"Themes", SERVICE_QUERY_STATUS )))
+    {
+        for (i = 0; i < 1500; i++)
+        {
+            if (!QueryServiceStatus( svc, &st ) || st.dwCurrentState == SERVICE_RUNNING ||
+                (st.dwCurrentState == SERVICE_STOPPED && i > 100)) break;
+            Sleep( 10 );
+        }
+        trace( "Themes: state %lu after %d ms\n", st.dwCurrentState, i * 10 );
+        CloseServiceHandle( svc );
+    }
+    CloseServiceHandle( scm );
+}
+
 static void enable_privilege( HANDLE token, const WCHAR *name )
 {
     TOKEN_PRIVILEGES privs;
@@ -147,6 +172,7 @@ int main( void )
     if (set_info && (status = set_info( GetCurrentProcess(), ProcessWineMakeProcessSystem, &shutdown, sizeof(HANDLE *) )))
         fprintf( stderr, "winlogon: could not become a system process (%#lx)\n", status );
 
+    wait_for_themes();
     if ((uxinit = LoadLibraryW( L"UXInit.dll" )))
     {
         void_fn setup = (void_fn)GetProcAddress( uxinit, MAKEINTRESOURCEA(UXINIT_THEMES_ON_WINLOGON_SETUP) );

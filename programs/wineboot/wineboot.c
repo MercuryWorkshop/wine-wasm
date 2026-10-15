@@ -1443,6 +1443,18 @@ static int ProcessWindowsFileProtection(void)
     return 1;
 }
 
+/* paint-fast (gex): WINEGEX_FASTBOOT=1, a session on a prefix that is current
+ * (a site's): wineboot --init starts services.exe without waiting for its
+ * autostart, signals the boot event at once, and skips the rest of its work
+ * (the prefix update check, internet settings, the SQM key, RunOnce), so the
+ * session's first process goes on at once. */
+static BOOL fastboot(void)
+{
+    static int ret = -1;
+    if (ret < 0) ret = GetEnvironmentVariableW( L"WINEGEX_FASTBOOT", NULL, 0 ) > 0;
+    return ret;
+}
+
 static BOOL start_services_process(void)
 {
     static const WCHAR svcctl_started_event[] = SVCCTL_STARTED_EVENT;
@@ -1457,6 +1469,11 @@ static BOOL start_services_process(void)
         return FALSE;
     }
     CloseHandle(pi.hThread);
+    if (fastboot())
+    {
+        CloseHandle(pi.hProcess);
+        return TRUE;
+    }
 
     wait_handles[0] = CreateEventW(NULL, TRUE, FALSE, svcctl_started_event);
     wait_handles[1] = pi.hProcess;
@@ -1918,6 +1935,14 @@ int __cdecl main( int argc, char *argv[] )
     {
         ProcessRunKeys( HKEY_LOCAL_MACHINE, L"RunServices", FALSE, FALSE );
         start_services_process();
+    }
+    if (init && fastboot())
+    {
+        create_volatile_environment_registry_key();
+        create_known_dlls();
+        WINE_TRACE("fast boot done\n");
+        SetEvent( event );
+        return 0;
     }
     if (init || update) update_wineprefix( update );
 
