@@ -761,6 +761,10 @@ static NTSTATUS call_table( UINT table, UINT id, const ULONG64 *args )
     return __wine_wasm64_syscalls[id]( args );
 }
 
+/* The program's registers are read from gex's context before anything
+ * else: the Unix side's own Linux system calls go through that same
+ * context (musl's gex arch puts the call's number and arguments in its
+ * registers), so the first one clobbers them. frame_to_ctx puts them back. */
 static void syscall_body( int ctx )
 {
     struct thread_data *data = get_thread_data();
