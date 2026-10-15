@@ -1980,9 +1980,11 @@ int __cdecl main( int argc, char *argv[] )
          * start (creating it waited for its DLLs, about 0.4 s); what that
          * process reads at its start (the volatile environment) is written
          * first. RunServices (winemenubuilder) is left out. winlogon waits
-         * for the service manager itself (wait_for_themes). */
+         * for the service manager itself (wait_for_themes). \KnownDlls is
+         * left out: without it the loader finds those DLLs the usual way,
+         * and making it mapped every one of them here (17 images, 4 MB read
+         * before services.exe started). */
         create_volatile_environment_registry_key();
-        create_known_dlls();
         WINE_TRACE("fast boot done\n");
         SetEvent( event );
         start_services_process();
