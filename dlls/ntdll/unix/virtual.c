@@ -200,11 +200,14 @@ static void *working_set_limit   = (void *)0x7fff0000;
 static void *host_addr_space_limit;  /* top of the host virtual address space */
 #if defined(__wasm64__) && !defined(GEX_MEMORY64)
 /* W64 lowered to wasm32 (gex docs/wine-native-x64.md): the top of the
- * space gex runs x86-64 code in (its dispatch directory's reach, gex_abi
+ * space gex runs x86-64 code in, its dispatch directory's reach (gex_abi
  * DISPATCH_MAX_PAGES * DISPATCH_PAGE: 2 GiB; raising that reach is what
- * lets this rise), and so of the address space, until code and
- * data are placed apart. A setting of the flavour, not of Windows. */
+ * lets this rise). A setting of the flavour, not of Windows. Code stays
+ * below it (images, executable allocations and mappings); data may use the
+ * whole address space, as in gex's memory64 flavour (docs/mem64.md §3). */
 static void *w64_code_space_limit = (void *)0x7fff0000;
+#define W64_CODE_SPLIT 1
+
 #endif
 
 static struct file_view *arm64ec_view;
@@ -263,6 +266,14 @@ static inline BOOL is_beyond_limit( const void *addr, size_t size, const void *l
 {
     return (addr >= limit || (const char *)addr + size > (const char *)limit);
 }
+
+#ifdef W64_CODE_SPLIT
+/* executable pages above the code space: gex could never run them */
+static inline BOOL w64_beyond_code_space( const void *base, size_t size )
+{
+    return is_beyond_limit( base, size, w64_code_space_limit );
+}
+#endif
 
 static inline BOOL is_vprot_exec_write( BYTE vprot )
 {
@@ -2082,6 +2093,16 @@ static NTSTATUS set_protection( struct file_view *view, void *base, SIZE_T size,
     NTSTATUS status;
 
     if ((status = get_vprot_flags( protect, &vprot, view->protect & SEC_IMAGE ))) return status;
+#ifdef W64_CODE_SPLIT
+    if ((vprot & VPROT_EXEC) && w64_beyond_code_space( base, size ))
+    {
+        /* data turned to code (a JIT's usual way) where gex cannot run it:
+         * refused, not moved (docs/wine-native-x64.md §2) */
+        ERR( "%p-%p made executable above gex's code space (%p): refused\n",
+             base, (char *)base + size, w64_code_space_limit );
+        return STATUS_INVALID_PAGE_PROTECTION;
+    }
+#endif
     if (is_view_valloc( view ))
     {
         if (vprot & VPROT_WRITECOPY) return STATUS_INVALID_PAGE_PROTECTION;
@@ -2325,6 +2346,25 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
     if (!align_mask) align_mask = granularity_mask;
     assert( align_mask >= host_page_mask );
 
+#ifdef W64_CODE_SPLIT
+    if (vprot & VPROT_EXEC)
+    {
+        if (base && w64_beyond_code_space( base, size ))
+        {
+            /* an image is relocated, as any image whose base is taken (an
+             * image view's vprot carries SEC_IMAGE beside the VPROT_ bits:
+             * map_image_view) */
+            if (!(vprot & SEC_IMAGE))
+                ERR( "executable view %p-%p above gex's code space (%p) refused\n",
+                     base, (char *)base + size, w64_code_space_limit );
+            return STATUS_CONFLICTING_ADDRESSES;
+        }
+        if (!limit_high || limit_high >= (ULONG_PTR)w64_code_space_limit)
+            limit_high = (ULONG_PTR)w64_code_space_limit - 1;
+        if (limit_low >= limit_high) return STATUS_NO_MEMORY;
+    }
+#endif
+
     if (alloc_type & MEM_REPLACE_PLACEHOLDER)
     {
         struct file_view *view;
@@ -2379,7 +2419,14 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
             goto done;
         }
 
+#ifdef W64_CODE_SPLIT
+        /* gex places a mapping without an address below the code space
+         * only (its own heaps live there): data above it is found by
+         * address */
+        if (TRUE)
+#else
         if (start > address_space_start || end < host_addr_space_limit || top_down)
+#endif
         {
             if (!(ptr = map_free_area( start, end, host_size, top_down, unix_prot, align_mask )))
                 return STATUS_NO_MEMORY;
@@ -3766,13 +3813,6 @@ void virtual_init(void)
     if (address_space_limit > host_addr_space_limit) address_space_limit = host_addr_space_limit;
     if (user_space_limit > host_addr_space_limit) user_space_limit = host_addr_space_limit;
     if (working_set_limit > host_addr_space_limit) working_set_limit = host_addr_space_limit;
-#ifndef GEX_MEMORY64
-    /* the whole address space, since virtual_set_large_address_space
-     * raises the user limit to it */
-    if (address_space_limit > w64_code_space_limit) address_space_limit = w64_code_space_limit;
-    if (user_space_limit > w64_code_space_limit) user_space_limit = w64_code_space_limit;
-    if (working_set_limit > w64_code_space_limit) working_set_limit = w64_code_space_limit;
-#endif
 #endif
 #else
     host_addr_space_limit = address_space_limit;
