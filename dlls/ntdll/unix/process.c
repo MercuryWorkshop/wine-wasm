@@ -407,30 +407,34 @@ static BOOL is_unix_console_handle( HANDLE handle )
 #ifdef __wasm32__
 /* wasm32 (gex): fork() unwinds the whole wasm stack and rewinds it in both
  * processes (asyncify), which cannot cross gex's frames and Wine's PE
- * module under a system call. A child process here is a clone
- * (CLONE_VFORK: a copy of the address space) running a function on a stack
- * of its own, which ends in exec or _exit. */
+ * module under a system call. A child process here is a clone running a
+ * function on a stack of its own, which ends in exec or _exit. */
 extern int clone( int (*func)(void *), void *stack, int flags, void *arg, ... );
 
 /* The child keeps the vfork contract: between the clone and its exec or
  * _exit it neither allocates nor takes a lock, only system calls on memory
- * the parent prepared (arguments, environment, paths). The address space
- * is copied while the parent's other threads run, so the copy can hold
- * malloc's lock or a heap halfway through an update: the child's first
+ * the parent prepared (arguments, environment, paths), and it maps nothing.
+ * That lets it share the parent's memory (`vm`: CLONE_VM, a real vfork):
+ * gex runs it in the cloning thread's Worker, in place, until its exec
+ * starts the program in a Worker of its own, with nothing copied. (Its
+ * failing calls set the cloning thread's errno, which no caller reads after
+ * a clone that succeeded.) A child that clones a grandchild in turn maps
+ * that one's stack, so it is a copy (`vm` 0). A copy is made while the parent's other threads run, so it can
+ * hold malloc's lock or a heap halfway through an update: the child's first
  * allocation (putenv, build_argv) crashed in mallocng's consistency check
  * in about half of all session boots ("could not start ... (731)"). Holding
  * the lock across the clone instead, as fork() does, hung multi-process
  * boots: the parent stays suspended until the child execs, and its other
  * threads (the in-process wineserver among them), which the child's
  * start-up waits on, blocked in malloc. */
-static pid_t fork_call( int (*func)(void *), void *arg )
+static pid_t fork_call( int (*func)(void *), void *arg, int vm )
 {
     const size_t size = 256 * 1024;
     char *stack = mmap( NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0 );
     pid_t pid;
 
     if (stack == MAP_FAILED) return -1;
-    pid = clone( func, stack + size, CLONE_VFORK | SIGCHLD, arg );
+    pid = clone( func, stack + size, (vm ? CLONE_VM : 0) | CLONE_VFORK | SIGCHLD, arg );
     munmap( stack, size );
     return pid;
 }
@@ -520,7 +524,7 @@ static int exec_grandchild( void *arg )
 
 static int exec_child( void *arg )
 {
-    _exit( fork_call( exec_grandchild, arg ) == -1 );
+    _exit( fork_call( exec_grandchild, arg, 1 ) == -1 );
 }
 
 static int spawnvp_grandchild( void *arg )
@@ -540,7 +544,7 @@ static int spawnvp_child( void *arg )
 
     close( a->rdfd );
     signal( SIGPIPE, SIG_DFL );
-    if (!a->wait) _exit( fork_call( spawnvp_grandchild, arg ) == -1 );
+    if (!a->wait) _exit( fork_call( spawnvp_grandchild, arg, 1 ) == -1 );
     spawnvp_grandchild( arg );
     return 1;
 }
@@ -583,7 +587,7 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
         }
         a.plan = &plan;
         gex_stage( "spawn clone" );
-        pid = fork_call( spawn_grandchild, &a );
+        pid = fork_call( spawn_grandchild, &a, 1 );
         gex_stage( "spawn clone returned" );
         free_wineloader_exec( &plan );
         free( argv );
@@ -663,7 +667,8 @@ NTSTATUS WINAPI __wine_unix_spawnvp( char * const argv[], int wait )
 #ifdef __wasm32__
     {
         struct spawn_args a = { .errfd = fd[1], .rdfd = fd[0], .argv = argv, .wait = wait };
-        pid = fork_call( spawnvp_child, &a );
+        /* spawnvp_child clones the grandchild itself when it does not wait */
+        pid = fork_call( spawnvp_child, &a, wait );
     }
     if (0)
 #else
@@ -776,7 +781,7 @@ static NTSTATUS fork_and_exec( OBJECT_ATTRIBUTES *attr, const char *unix_name, i
     {
         struct spawn_args a = { params, -1, unixdir, stdin_fd, stdout_fd, fd[1], fd[0], NULL, NULL, unix_name };
         a.exec_argv = build_argv( &params->CommandLine, 0 );
-        pid = fork_call( exec_child, &a );
+        pid = fork_call( exec_child, &a, 0 );  /* which clones the grandchild */
         free( a.exec_argv );
     }
     if (0)
