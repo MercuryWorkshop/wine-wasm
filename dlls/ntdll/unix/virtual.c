@@ -1850,6 +1850,33 @@ static void unregister_view( struct file_view *view )
 }
 
 
+#ifdef __wasm__
+/* a section's view mapped again at its address (gex_section_alias, below) */
+struct gex_section_ref
+{
+    struct list       entry;
+    void             *addr;
+    struct file_view *view;   /* the view that holds the pages */
+    unsigned int      count;
+};
+static struct list gex_section_refs = LIST_INIT( gex_section_refs );
+
+/* VIEW is going (deleted or made a placeholder): its references go with it,
+ * so an alias left is an address no longer mapped, as on Windows once the
+ * view it was is unmapped. */
+static void gex_section_refs_forget( struct file_view *view )
+{
+    struct gex_section_ref *ref, *next;
+
+    LIST_FOR_EACH_ENTRY_SAFE( ref, next, &gex_section_refs, struct gex_section_ref, entry )
+    {
+        if (ref->view != view) continue;
+        list_remove( &ref->entry );
+        free( ref );
+    }
+}
+#endif
+
 /***********************************************************************
  *           delete_view
  *
@@ -1857,6 +1884,9 @@ static void unregister_view( struct file_view *view )
  */
 static void delete_view( struct file_view *view ) /* [in] View */
 {
+#ifdef __wasm__
+    gex_section_refs_forget( view );
+#endif
     if (!(view->protect & VPROT_SYSTEM)) unmap_area( view->base, view->size );
     set_page_vprot( view->base, view->size, 0 );
     if (view->protect & VPROT_ARM64EC) clear_arm64ec_range( view->base, view->size );
@@ -3552,6 +3582,86 @@ done:
  *
  * Map a file section into memory.
  */
+#ifdef __wasm__
+/* gex: a section mapped again in the same process. A wasm linear memory
+ * cannot show one set of pages at two addresses, so gex's mmap hands a
+ * second MAP_SHARED of the same open file the first one's address (or the
+ * part of it the range covers), whatever was asked. The second view is
+ * that address: a reference on the first view, which is unmapped (from the
+ * server and gex, which does not count references) only when the last one
+ * goes. One record per distinct address, with its count; the first view's
+ * own base counts once. The alias has the first view's protection (a
+ * read-only view of a writable one can be written, and VirtualQuery
+ * reports the first's, and the first's base as AllocationBase). A
+ * write-copy view never is one, nor has one: its pages are its own. */
+static struct gex_section_ref *gex_section_ref_at( const void *addr )
+{
+    struct gex_section_ref *ref;
+    LIST_FOR_EACH_ENTRY( ref, &gex_section_refs, struct gex_section_ref, entry )
+        if (ref->addr == addr) return ref;
+    return NULL;
+}
+
+static BOOL gex_section_ref_add( void *addr, struct file_view *view, unsigned int count )
+{
+    struct gex_section_ref *ref = gex_section_ref_at( addr );
+
+    if (ref)
+    {
+        ref->count += count;
+        return TRUE;
+    }
+    if (!(ref = malloc( sizeof(*ref) ))) return FALSE;
+    ref->addr = addr;
+    ref->view = view;
+    ref->count = count;
+    list_add_tail( &gex_section_refs, &ref->entry );
+    return TRUE;
+}
+
+/* whether VIEW has references left besides the one REF held (dropped) */
+static BOOL gex_section_ref_drop( struct gex_section_ref *ref )
+{
+    struct file_view *view = ref->view;
+    struct gex_section_ref *other;
+
+    if (--ref->count) return TRUE;
+    list_remove( &ref->entry );
+    free( ref );
+    LIST_FOR_EACH_ENTRY( other, &gex_section_refs, struct gex_section_ref, entry )
+        if (other->view == view) return TRUE;
+    return FALSE;
+}
+
+/* The view a mapping of FD at OFFSET for SIZE bytes already is, if gex
+ * gives it an existing view's address: a one-page shared mapping asked
+ * anywhere comes back inside that view if the file is mapped shared there.
+ * Otherwise the page is a new mapping of its own, and unmapped. virtual_mutex
+ * held. */
+static void *gex_section_alias( int fd, off_t offset, SIZE_T size, struct file_view **view_ret )
+{
+    struct file_view *view;
+    char *addr = mmap( NULL, page_size, PROT_READ, MAP_SHARED, fd, offset );
+
+    if (addr == MAP_FAILED) return NULL;
+    if (!(view = find_view( addr, 0 )))
+    {
+        munmap( addr, page_size );
+        return NULL;
+    }
+    /* never munmap an alias: gex would unmap the view it is part of */
+    if (is_view_valloc( view ) || (view->protect & (SEC_IMAGE | VPROT_WRITECOPY)) ||
+        addr + size > (char *)view->base + view->size)
+    {
+        WARN( "section at offset %s, %lx bytes, is partly mapped at %p (view %p-%p): a separate copy\n",
+              wine_dbgstr_longlong(offset), (unsigned long)size, addr, view->base, (char *)view->base + view->size );
+        return NULL;
+    }
+    *view_ret = view;
+    return addr;
+}
+#endif
+
 static unsigned int virtual_map_section( HANDLE handle, PVOID *addr_ptr, ULONG_PTR limit_low,
                                          ULONG_PTR limit_high, SIZE_T commit_size,
                                          const LARGE_INTEGER *offset_ptr, SIZE_T *size_ptr,
@@ -3646,6 +3756,29 @@ static unsigned int virtual_map_section( HANDLE handle, PVOID *addr_ptr, ULONG_P
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
 
+#ifdef __wasm__
+    if (!base && !(alloc_type & (MEM_RESERVE | MEM_REPLACE_PLACEHOLDER)) && !(vprot & VPROT_WRITECOPY))
+    {
+        void *alias = gex_section_alias( unix_handle, offset.QuadPart, size, &view );
+
+        if (alias)
+        {
+            if (!gex_section_ref_at( view->base ) && !gex_section_ref_add( view->base, view, 1 ))
+                res = STATUS_NO_MEMORY;
+            else if (!gex_section_ref_add( alias, view, 1 ))
+                res = STATUS_NO_MEMORY;
+            else
+            {
+                TRACE( "handle=%p size=%lx offset=%s: %p, in view %p\n", handle, size,
+                       wine_dbgstr_longlong(offset.QuadPart), alias, view->base );
+                *addr_ptr = alias;
+                *size_ptr = size;
+                res = STATUS_SUCCESS;
+            }
+            goto done;
+        }
+    }
+#endif
     res = map_view( &view, base, size, alloc_type, vprot, limit_low, limit_high, 0 );
     if (res) goto done;
 
@@ -6711,6 +6844,20 @@ static NTSTATUS unmap_view_of_section( HANDLE process, PVOID addr, ULONG flags )
     }
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+#ifdef __wasm__
+    {
+        /* a section mapped more than once (gex_section_ref) */
+        struct gex_section_ref *ref = gex_section_ref_at( addr );
+
+        if (ref && !(flags & MEM_PRESERVE_PLACEHOLDER))
+        {
+            view = ref->view;
+            status = STATUS_SUCCESS;
+            if (gex_section_ref_drop( ref )) goto done;
+            addr = view->base;
+        }
+    }
+#endif
     if (!(view = find_view( addr, 0 )) || is_view_valloc( view )) goto done;
 
     if (flags & MEM_PRESERVE_PLACEHOLDER && !(view->protect & VPROT_PLACEHOLDER))
@@ -6740,7 +6887,13 @@ static NTSTATUS unmap_view_of_section( HANDLE process, PVOID addr, ULONG flags )
     if (!status)
     {
         if (view->protect & SEC_IMAGE) release_builtin_module( view->base );
-        if (flags & MEM_PRESERVE_PLACEHOLDER) free_pages_preserve_placeholder( view, view->base, view->size );
+        if (flags & MEM_PRESERVE_PLACEHOLDER)
+        {
+#ifdef __wasm__
+            gex_section_refs_forget( view );
+#endif
+            free_pages_preserve_placeholder( view, view->base, view->size );
+        }
         else delete_view( view );
     }
     else FIXME( "failed to unmap %p %x\n", view->base, status );
