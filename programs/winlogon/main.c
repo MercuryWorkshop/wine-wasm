@@ -137,13 +137,22 @@ static void wait_for_themes(void)
     for (i = 0; i < 1500 && !(svc = OpenServiceW( scm, L"Themes", SERVICE_QUERY_STATUS )); i++) Sleep( 10 );
     if (svc)
     {
+        /* services.exe sets __wine_SvcctlStarted once its autostart has run:
+         * until then a stopped Themes service is one not started yet, which
+         * the old 1 s cut-off took for one that will not start (the shell's
+         * fast boot then came up unthemed, Windows Classic). With no event
+         * to ask, the whole 15 s. */
+        HANDLE started = OpenEventW( SYNCHRONIZE, FALSE, L"__wine_SvcctlStarted" );
+
         for (i = 0; i < 1500; i++)
         {
-            if (!QueryServiceStatus( svc, &st ) || st.dwCurrentState == SERVICE_RUNNING ||
-                (st.dwCurrentState == SERVICE_STOPPED && i > 100)) break;
+            if (!QueryServiceStatus( svc, &st ) || st.dwCurrentState == SERVICE_RUNNING) break;
+            if (st.dwCurrentState == SERVICE_STOPPED && i > 100 &&
+                started && !WaitForSingleObject( started, 0 )) break;
             Sleep( 10 );
         }
         trace( "Themes: state %lu after %d ms\n", st.dwCurrentState, i * 10 );
+        if (started) CloseHandle( started );
         CloseServiceHandle( svc );
     }
     CloseServiceHandle( scm );
