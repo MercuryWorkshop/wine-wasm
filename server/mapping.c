@@ -226,11 +226,13 @@ void init_memory(void)
     host_page_mask = sysconf( _SC_PAGESIZE ) - 1;
 #ifdef __wasm32__
     /* W3's i386 builtins have fixed bases (gex tools/wine-wasm/rebase.py,
-     * w3-bases.txt: 0x20000000-0x7b000000 less 0x60000000-0x70000000), so
-     * the pool for a program's own DYNAMIC_BASE DLLs keeps out of their
-     * slots: the 16 MiB above them and the band the table skips. */
-    free_map_addr( 0x60000000, 0x10000000 );
-    free_map_addr( 0x7b000000, 0x01000000 );
+     * w3-bases.txt: 0x20000000-0x7b000000), so the pool keeps out of them.
+     * gex's compact W3 space (V's pack) keeps [0x10000000, 0x20000000) as
+     * one island: the exe slot below 0x11000000 and the band above it, where
+     * dll-bases pins the recorded DLLs (bottom up) and the pool hands out
+     * the rest (top down), so no image lands past 0x20000000 and a process's
+     * wasm memory stays small. */
+    free_map_addr( 0x11000000, 0x0f000000 );
 #else
     free_map_addr( 0x60000000, 0x1c000000 );
 #endif
