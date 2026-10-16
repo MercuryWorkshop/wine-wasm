@@ -30,3 +30,12 @@ coclass RealTimeStylus
 {
     [default] interface IRealTimeStylus;
 }
+
+[
+    uuid(ecd32aea-746f-4dcb-bf68-082757faff18),
+    threading(both)
+]
+coclass DynamicRenderer
+{
+    [default] interface IDynamicRenderer;
+}

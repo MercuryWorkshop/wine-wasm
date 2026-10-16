@@ -187,6 +187,63 @@ interface IRealTimeStylus : IUnknown
 };
 
 [
+    object,
+    uuid(a079468e-7165-46f9-b7af-98ad01a93009)
+]
+interface IDynamicRenderer : IUnknown
+{
+    [propget]
+    HRESULT Enabled( [retval, out] BOOL *bEnabled );
+
+    [propput]
+    HRESULT Enabled( [in] BOOL bEnabled );
+
+    [propget]
+    HRESULT HWND( [retval, out] HANDLE_PTR *hwnd );
+
+    [propput]
+    HRESULT HWND( [in] HANDLE_PTR hwnd );
+
+    [propget]
+    HRESULT ClipRectangle( [retval, out] RECT *prcClipRect );
+
+    [propput]
+    HRESULT ClipRectangle( [in] const RECT *prcClipRect );
+
+    [propget]
+    HRESULT ClipRegion( [retval, out] HANDLE_PTR *phClipRgn );
+
+    [propput]
+    HRESULT ClipRegion( [in] HANDLE_PTR hClipRgn );
+
+    [propget]
+    HRESULT DrawingAttributes( [retval, out] IInkDrawingAttributes **ppiDA );
+
+    [propputref]
+    HRESULT DrawingAttributes( [in] IInkDrawingAttributes *piDA );
+
+    [propget]
+    HRESULT DataCacheEnabled( [retval, out] BOOL *pfCacheData );
+
+    [propput]
+    HRESULT DataCacheEnabled( [in] BOOL fCacheData );
+
+    HRESULT ReleaseCachedData( [in] DWORD strokeId );
+    HRESULT Refresh( void );
+    HRESULT Draw( [in] HANDLE_PTR hDC );
+};
+
+[
+    uuid(ecd32aea-746f-4dcb-bf68-082757faff18),
+    threading(both)
+]
+coclass DynamicRenderer
+{
+    [default] interface IDynamicRenderer;
+    interface IStylusSyncPlugin;
+};
+
+[
     uuid(e26b366d-f998-43ce-836f-cb6d904432b0),
     threading(both)
 ]

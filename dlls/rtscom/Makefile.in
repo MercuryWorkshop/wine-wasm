@@ -1,4 +1,5 @@
 MODULE    = rtscom.dll
+IMPORTS   = ole32
 
 SOURCES = \
 	rtscom_main.c \
