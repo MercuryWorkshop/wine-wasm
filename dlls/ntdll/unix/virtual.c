@@ -757,6 +757,24 @@ static void reserve_gaps( void *addr, void *end )
 
 static void mmap_init( const struct preload_info *preload_info )
 {
+#ifdef __wasm32__
+    /* gex: no reservations. A WebAssembly memory is allocated up to the
+     * highest address in use, and every byte of it counts towards the
+     * browser tab's data segment (Chrome's renderer RLIMIT_DATA, 8-16 GiB),
+     * touched or not: a reservation of the space below 1 GiB, with views
+     * placed top-down inside it, made every process's memory 1-2 GiB. The
+     * views come from gex's kernel instead, bottom-up from the arena it
+     * shares with its own heap (map_view), so the memory reaches only as
+     * high as the process uses.
+     *
+     * Except the space below the kernel's stack (0x05000000): it is inside
+     * the memory already, so reserving it costs nothing, and it is where
+     * executables sit (0x00400000 and up, relocations often stripped). The
+     * kernel's bottom-up search tries it first, so unreserved it fills with
+     * views before the main image is mapped. */
+    reserve_area( (void *)0x00010000, (void *)0x05000000 );
+    return;
+#endif
 #ifndef _WIN64
 #ifndef __APPLE__
     char stack;
@@ -2334,7 +2352,13 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
                           unsigned int alloc_type, unsigned int vprot,
                           ULONG_PTR limit_low, ULONG_PTR limit_high, size_t align_mask )
 {
+#ifdef __wasm32__
+    /* gex: bottom-up whatever the caller asked (see mmap_init): a top-down
+     * view sets the memory's size. */
+    int top_down = 0;
+#else
     int top_down = alloc_type & MEM_TOP_DOWN;
+#endif
     void *ptr;
     int unix_prot = get_unix_prot( vprot );
     NTSTATUS status;
@@ -2390,6 +2414,21 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
         if (limit_low && (void *)limit_low > start) start = (void *)limit_low;
         if (limit_high && (void *)limit_high < end) end = (char *)limit_high + 1;
 
+#ifdef __wasm32__
+        /* gex: the kernel hands out the lowest free range of its arena; a
+         * limit the range misses (rare: a zero_bits or address requirement)
+         * falls back to searching between the views. */
+        if ((ptr = anon_mmap_alloc( view_size, unix_prot )) != MAP_FAILED)
+        {
+            if ((char *)ptr >= (char *)start && (char *)ptr + view_size <= (char *)end)
+            {
+                ptr = unmap_extra_space( ptr, view_size, host_size, align_mask );
+                TRACE( "got mem with anon mmap %p-%p\n", ptr, (char *)ptr + size );
+                goto done;
+            }
+            munmap( ptr, view_size );
+        }
+#endif
         if ((ptr = map_reserved_area( start, end, host_size, top_down, unix_prot, align_mask )))
         {
             TRACE( "got mem in reserved area %p-%p\n", ptr, (char *)ptr + size );
@@ -3446,6 +3485,19 @@ static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_inf
         base = wine_server_get_ptr( image_info->map_addr );
         if ((ULONG_PTR)base != image_info->map_addr) base = NULL;
     }
+#ifdef __wasm32__
+    /* gex: a DYNAMIC_BASE DLL no one pinned (the prefix's dll-bases,
+     * through the server's map address) goes where the kernel's arena is,
+     * bottom-up, not to its preferred base: the memory reaches as high as
+     * the highest image. Fixed-base images keep their base: Wine's builtins
+     * are rebased to w3-bases.txt slots with DYNAMIC_BASE cleared, and their
+     * units are keyed by that base (gex docs/wine-overhead.md §8). So does
+     * one that cannot move (no relocations). */
+    else if ((image_info->image_charact & IMAGE_FILE_DLL) &&
+             !(image_info->image_charact & IMAGE_FILE_RELOCS_STRIPPED) &&
+             (image_info->dll_charact & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE))
+        base = NULL;
+#endif
     else
     {
         base = wine_server_get_ptr( image_info->base );
