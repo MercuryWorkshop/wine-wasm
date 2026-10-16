@@ -623,20 +623,35 @@ enum stringanalysis_flags
     SCRIPT_STRING_ANALYSIS_FLAGS_INVALID = 0x2,
 };
 
+/* Windows 7's lpk.dll (the language pack, which comctl32 v6's edit control
+ * calls) reads three fields of a SCRIPT_STRING_ANALYSIS directly, at
+ * Windows' offsets: ScriptString_pLogAttr's pointer at 0x60,
+ * ScriptString_pcOutChars' count at 0x108 and ScriptString_pSize's size at
+ * 0x118 (usp10's own accessors, inlined). On 32-bit they are where Windows
+ * keeps them. */
 typedef struct {
     HDC hdc;
     DWORD ssa_flags;
     DWORD flags;
-    int clip_len;
     int cItems;
     int cMaxGlyphs;
     SCRIPT_ITEM* pItem;
     int numItems;
     StringGlyphs* glyphs;
-    SCRIPT_LOGATTR* logattrs;
-    SIZE sz;
     int* logical2visual;
+    BYTE reserved1[0x60 - 9 * sizeof(DWORD)];
+    SCRIPT_LOGATTR* logattrs;
+    BYTE reserved2[0x108 - 0x60 - sizeof(void *)];
+    int clip_len;
+    BYTE reserved3[0x118 - 0x108 - sizeof(int)];
+    SIZE sz;
 } StringAnalysis;
+
+#ifndef _WIN64
+C_ASSERT( FIELD_OFFSET(StringAnalysis, logattrs) == 0x60 );
+C_ASSERT( FIELD_OFFSET(StringAnalysis, clip_len) == 0x108 );
+C_ASSERT( FIELD_OFFSET(StringAnalysis, sz) == 0x118 );
+#endif
 
 typedef struct {
     BOOL ascending;
@@ -2118,6 +2133,26 @@ HRESULT WINAPI ScriptStringAnalyse(HDC hdc, const void *pString, int cString,
 
     ScriptLayout(analysis->numItems, BidiLevel, NULL, analysis->logical2visual);
     free(BidiLevel);
+
+    if (dwFlags & SSA_GLYPHS)
+    {
+        /* the size now: lpk.dll reads it without asking (ScriptString_pSize) */
+        ScriptString_pSize(analysis);
+        /* SSA_CLIP: as many characters as fit in iReqWidth, in logical order
+         * (lpk.dll's edit callout breaks a line where this says) */
+        if ((dwFlags & SSA_CLIP) && iReqWidth > 0)
+        {
+            int *dx = malloc(cString * sizeof(*dx)), sum = 0, n = cString;
+
+            if (dx && ScriptStringGetLogicalWidths(analysis, dx) == S_OK)
+            {
+                for (n = 0; n < cString && sum + dx[n] <= iReqWidth; n++) sum += dx[n];
+                analysis->clip_len = n;
+                analysis->sz.cx = sum;
+            }
+            free(dx);
+        }
+    }
 
     *pssa = analysis;
     free(iString);
