@@ -2359,6 +2359,14 @@ BOOL set_foreground_window( HWND hwnd, BOOL mouse, BOOL internal )
         else  /* new window belongs to us */
             ret = set_active_window( hwnd, NULL, mouse, TRUE, 0 );
     }
+    else if (ret && hwnd && !internal && new_thread_id == GetCurrentThreadId())
+    {
+        /* Already the foreground window, as a minimised window stays when
+         * nothing else can take over, but the compositor may have given the
+         * keyboard elsewhere since (a click on the taskbar, which does not
+         * take the foreground): asked again, the driver says so again. */
+        user_driver->pActivateWindow( hwnd, previous );
+    }
     return ret;
 }
 
