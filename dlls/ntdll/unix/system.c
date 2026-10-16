@@ -397,6 +397,15 @@ void copy_xstate( XSAVE_AREA_HEADER *dst, XSAVE_AREA_HEADER *src, UINT64 mask )
  * restored around it). gex has no XSAVE: XGETBV is not reached (OSXSAVE is
  * clear), and its SSE has DAZ. */
 #include "wine/gex/gex_abi.h"
+#include "wine/kuser.h"
+/* gex folds i386 code's constant reads of 0x7ffe0xxx to this page */
+C_ASSERT( WINE_USER_SHARED_DATA == GEX_W3_KUSER );
+/* ... and does so only for a loader that says where its page is: this
+ * custom section (gex's tools/wine-wasm/wasm-elf.py turns it into the
+ * container header's FLAG_KUSER_W3, and checks it against GEX_W3_KUSER). */
+#define KUSER_STR2(x) #x
+#define KUSER_STR(x) KUSER_STR2(x)
+__asm__( ".section .custom_section.gex_kuser,\"\",@\n\t.int32 " KUSER_STR(WINE_USER_SHARED_DATA) "\n\t.text" );
 unsigned long __gex_get_ctx(void);
 
 static inline void do_cpuid( unsigned int ax, unsigned int cx, unsigned int *p )

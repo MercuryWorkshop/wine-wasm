@@ -1134,6 +1134,7 @@ SOURCES = \
 	wine/irot.idl \
 	wine/irpcss.idl \
 	wine/itss.idl \
+	wine/kuser.h \
 	wine/list.h \
 	wine/mfinternal.idl \
 	wine/mmsystem16.h \

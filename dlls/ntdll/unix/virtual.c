@@ -90,6 +90,7 @@
 #include "wine/rbtree.h"
 #include "unix_private.h"
 #include "wine/debug.h"
+#include "wine/kuser.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(virtual);
 WINE_DECLARE_DEBUG_CHANNEL(module);
@@ -202,7 +203,7 @@ static void *host_addr_space_limit;  /* top of the host virtual address space */
 static struct file_view *arm64ec_view;
 
 ULONG_PTR user_space_wow_limit = 0;
-struct _KUSER_SHARED_DATA *user_shared_data = (void *)0x7ffe0000;
+struct _KUSER_SHARED_DATA *user_shared_data = (void *)WINE_USER_SHARED_DATA;
 
 /* TEB allocation blocks */
 static void *teb_block;
@@ -755,9 +756,26 @@ static void reserve_gaps( void *addr, void *end )
 #define reserve_area reserve_gaps
 #endif
 
+#ifdef __wasm32__
+__attribute__((import_module("gex"), import_name("kuser_address")))
+extern unsigned int gex_kuser_address(void);
+#endif
+
 static void mmap_init( const struct preload_info *preload_info )
 {
 #ifdef __wasm32__
+    /* gex must fold i386 code's reads of Windows' 0x7ffe0000 to where this
+     * Wine maps the page (wine/kuser.h): a gex or a loader header without
+     * the fold would have them read nothing, silently. An older gex lacks
+     * the import and refuses to instantiate this module at all. */
+    if (gex_kuser_address() != WINE_USER_SHARED_DATA)
+    {
+        fprintf( stderr, "wine: gex reads KUSER_SHARED_DATA at %#x, this Wine maps it at %#x: "
+                 "gex and Wine must both have W3's KUSER fold (gex docs/wine-native.md 3.19; "
+                 "the loader's header needs FLAG_KUSER_W3, set by gex's wasm-elf.py)\n",
+                 gex_kuser_address(), WINE_USER_SHARED_DATA );
+        exit( 1 );
+    }
     /* gex: no reservations. A WebAssembly memory is allocated up to the
      * highest address in use, and every byte of it counts towards the
      * browser tab's data segment (Chrome's renderer RLIMIT_DATA, 8-16 GiB),
@@ -771,8 +789,13 @@ static void mmap_init( const struct preload_info *preload_info )
      * the memory already, so reserving it costs nothing, and it is where
      * executables sit (0x00400000 and up, relocations often stripped). The
      * kernel's bottom-up search tries it first, so unreserved it fills with
-     * views before the main image is mapped. */
-    reserve_area( (void *)0x00010000, (void *)0x05000000 );
+     * views before the main image is mapped. KUSER_SHARED_DATA is just
+     * above it (wine/kuser.h: 0x04ff0000, the last 64 KiB below the
+     * stack), not at Windows' 0x7ffe0000, which alone would make every
+     * memory 2 GiB; gex folds i386 code's constant accesses to Windows'
+     * address there. It stays out of the reservation, whose top the view
+     * heap takes (virtual_init). */
+    reserve_area( (void *)0x00010000, (void *)WINE_USER_SHARED_DATA );
     return;
 #endif
 #ifndef _WIN64
