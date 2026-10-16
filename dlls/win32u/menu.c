@@ -213,6 +213,8 @@ typedef struct
 /* Use global popup window because there's no way 2 menus can
  * be tracked at the same time.  */
 static HWND top_popup;
+/* the menu loop was entered from the keyboard (Alt, F10, Alt+key): its items show their access keys */
+static BOOL menu_keyboard_cues;
 static HMENU top_popup_hmenu;
 
 /* Flag set by NtUserEndMenu() to force an exit from menu tracking */
@@ -2072,7 +2074,7 @@ static void uah_fill_menu( struct uah_menu *um, const struct menu *menu, HDC hdc
 {
     um->hmenu = menu->handle;
     um->hdc   = hdc;
-    um->flags = UAH_MENU_POPUP | (menu->themed ? UAH_MENU_THEMED : 0);
+    um->flags = ((menu->wFlags & MF_POPUP) ? UAH_MENU_POPUP : 0) | (menu->themed ? UAH_MENU_THEMED : 0);
 }
 
 static void uah_fill_item( struct uah_menu_item *umi, const struct menu *menu, const struct menu_item *item )
@@ -2109,6 +2111,19 @@ static void uah_init_popup( struct menu *menu )
     TRACE( "menu %p themed %d\n", menu->handle, menu->themed );
 }
 
+/* As uah_init_popup, for a window's menu bar: win32k asks the window when it
+ * lays the bar out and again when it draws it, with the DC it uses. */
+static void uah_init_bar( struct menu *menu, HWND hwnd, HDC hdc )
+{
+    struct uah_menu um;
+
+    menu->themed = FALSE;
+    if (!user_api_hooked || NtCurrentTeb()->WowTebOffset || !hwnd) return;
+    uah_fill_menu( &um, menu, hdc );
+    menu->themed = !!send_message( hwnd, WM_UAHINITMENU, 0, (LPARAM)&um );
+    TRACE( "menu bar %p of %p themed %d\n", menu->handle, hwnd, menu->themed );
+}
+
 /* The hook's measure of a themed popup menu item (WM_UAHMEASUREMENUITEM),
  * after WM_MEASUREITEM for an owner-drawn one. As in win32k, the item is the
  * hook's width plus the widest item so far in each column, and its height. */
@@ -2129,10 +2144,14 @@ static void uah_measure_item( HDC hdc, struct menu *menu, struct menu_item *item
     send_message( owner, WM_UAHMEASUREMENUITEM, 0, (LPARAM)&umm );
     item->uah_metrics = umm.item.item;
 
-    for (i = 0; i < ARRAY_SIZE(menu->uah_popup.cx); i++)
+    /* a menu bar's item is the hook's width alone */
+    if (menu->wFlags & MF_POPUP)
     {
-        menu->uah_popup.cx[i] = max( menu->uah_popup.cx[i], item->uah_metrics.size[i].cx );
-        width += menu->uah_popup.cx[i];
+        for (i = 0; i < ARRAY_SIZE(menu->uah_popup.cx); i++)
+        {
+            menu->uah_popup.cx[i] = max( menu->uah_popup.cx[i], item->uah_metrics.size[i].cx );
+            width += menu->uah_popup.cx[i];
+        }
     }
     SetRect( &item->rect, org_x, org_y, org_x + umm.mis.itemWidth + width, org_y + umm.mis.itemHeight );
     item->xTab = 0;
@@ -2163,7 +2182,7 @@ static void calc_menu_item_size( HDC hdc, struct menu_item *item, HWND owner, IN
         od_item_height = HIWORD( get_dialog_base_units() );
     }
 
-    if (!menu_bar && menu->themed)
+    if (menu->themed && !(item->fType & MF_SYSMENU))
     {
         uah_measure_item( hdc, menu, item, owner, org_x, org_y );
         return;
@@ -2307,6 +2326,7 @@ static void calc_menu_bar_size( HDC hdc, RECT *rect, struct menu *menu, HWND own
     /* Start with a 1 pixel top border.
        This corresponds to the difference between SM_CYMENU and SM_CYMENUSIZE. */
     SetRect( &menu->items_rect, 0, 0, rect->right - rect->left, 1 );
+    uah_init_bar( menu, owner, hdc );
     start = 0;
     help_pos = ~0u;
     menu->textOffset = 0;
@@ -2533,7 +2553,7 @@ static void draw_menu_item( HWND hwnd, struct menu *menu, HWND owner, HDC hdc,
 {
     UINT arrow_width = 0, arrow_height = 0;
     HRGN old_clip = NULL, clip;
-    BOOL flat_menu = FALSE;
+    BOOL flat_menu = FALSE, hide_accel;
     RECT rect, bmprc;
     int bkgnd;
 
@@ -2553,6 +2573,10 @@ static void draw_menu_item( HWND hwnd, struct menu *menu, HWND owner, HDC hdc,
             draw_nc_sys_button( hwnd, hdc, item->fState & (MF_HILITE | MF_MOUSESELECT) );
         return;
     }
+
+    /* access keys are underlined when the menu was entered from the keyboard, or the
+     * owner shows its keyboard cues (WM_QUERYUISTATE) */
+    hide_accel = !menu_keyboard_cues && (win_get_ui_state( owner ) & UISF_HIDEACCEL);
 
     TRACE( "rect=%s\n", wine_dbgstr_rect( &item->rect ));
     rect = item->rect;
@@ -2600,7 +2624,7 @@ static void draw_menu_item( HWND hwnd, struct menu *menu, HWND owner, HDC hdc,
     NtGdiExtSelectClipRgn( hdc, clip, RGN_AND );
     NtGdiDeleteObjectApp( clip );
 
-    if (!menu_bar && menu->themed)
+    if (menu->themed)
     {
         struct uah_draw_menu_item udi;
 
@@ -2612,6 +2636,9 @@ static void draw_menu_item( HWND hwnd, struct menu *menu, HWND owner, HDC hdc,
         if (item->fState & MF_GRAYED)  udi.dis.itemState |= ODS_GRAYED | ODS_DISABLED;
         if (item->fState & MF_HILITE)  udi.dis.itemState |= ODS_SELECTED;
         if (item->fState & MFS_DEFAULT) udi.dis.itemState |= ODS_DEFAULT;
+        /* a bar's items are dimmed in an inactive window, as on Windows */
+        if (menu_bar && !(win_get_flags( hwnd ) & WIN_NCACTIVATED)) udi.dis.itemState |= ODS_INACTIVE;
+        if (hide_accel) udi.dis.itemState |= ODS_NOACCEL;
         udi.dis.itemAction = odaction;
         udi.dis.hwndItem   = (HWND)menu->handle;
         udi.dis.hDC        = hdc;
@@ -2829,6 +2856,8 @@ static void draw_menu_item( HWND hwnd, struct menu *menu, HWND owner, HDC hdc,
             DT_CENTER | DT_VCENTER | DT_SINGLELINE :
             DT_LEFT | DT_VCENTER | DT_SINGLELINE;
 
+        if (hide_accel) format |= DT_HIDEPREFIX;
+
         if (!(menu->dwStyle & MNS_CHECKORBMP))
             rect.left += menu->textOffset;
 
@@ -2926,11 +2955,22 @@ DWORD WINAPI NtUserDrawMenuBarTemp( HWND hwnd, HDC hdc, RECT *rect, HMENU handle
 
     rect->bottom = rect->top + menu->Height;
 
-    fill_rect( hdc, rect, get_sys_color_brush( flat_menu ? COLOR_MENUBAR : COLOR_MENU ));
+    /* as win32k: a themed bar's background is the hook's (WM_UAHDRAWMENU) */
+    uah_init_bar( menu, hwnd, hdc );
+    if (menu->themed)
+    {
+        struct uah_menu um;
+        uah_fill_menu( &um, menu, hdc );
+        send_message( hwnd, WM_UAHDRAWMENU, 0, (LPARAM)&um );
+    }
+    else
+    {
+        fill_rect( hdc, rect, get_sys_color_brush( flat_menu ? COLOR_MENUBAR : COLOR_MENU ));
 
-    NtGdiSelectPen( hdc, get_sys_color_pen( COLOR_3DFACE ));
-    NtGdiMoveTo( hdc, rect->left, rect->bottom, NULL );
-    NtGdiLineTo( hdc, rect->right, rect->bottom );
+        NtGdiSelectPen( hdc, get_sys_color_pen( COLOR_3DFACE ));
+        NtGdiMoveTo( hdc, rect->left, rect->bottom, NULL );
+        NtGdiLineTo( hdc, rect->right, rect->bottom );
+    }
 
     if (menu->nItems)
     {
@@ -4653,6 +4693,7 @@ static BOOL exit_tracking( HWND hwnd, BOOL is_popup )
 
     send_message( hwnd, WM_EXITMENULOOP, is_popup, 0 );
     NtUserShowCaret( 0 );
+    menu_keyboard_cues = FALSE;
     top_popup = 0;
     top_popup_hmenu = NULL;
     return TRUE;
@@ -4702,6 +4743,7 @@ void track_keyboard_menu_bar( HWND hwnd, UINT wparam, WCHAR ch )
 
     if (!is_menu( menu )) return;
 
+    menu_keyboard_cues = TRUE;
     init_tracking( hwnd, menu, FALSE, flags );
 
     /* fetch the window menu again, it may have changed */
