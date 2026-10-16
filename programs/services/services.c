@@ -1207,6 +1207,27 @@ void process_terminate(struct process_entry *process)
     scmdatabase_unlock(db);
 }
 
+/* Global\ScmCreatedEvent, which Windows' SCM names at its start and sets once
+ * its database is up; Windows 7's explorer waits up to 60 s for it before it
+ * starts the desktop. Made here first, open to everyone: a shell started
+ * before this process (WINEGEX_FASTBOOT) made the event itself, with its own
+ * token's default DACL, and the CreateEventW here then failed, so the event
+ * was never set and the shell waited the whole 60 s. Kept open (and so
+ * alive) for the session. */
+static HANDLE create_scm_created_event(void)
+{
+    SECURITY_DESCRIPTOR sd;
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), &sd, FALSE };
+    HANDLE event;
+
+    InitializeSecurityDescriptor( &sd, SECURITY_DESCRIPTOR_REVISION );
+    SetSecurityDescriptorDacl( &sd, TRUE, NULL, FALSE );
+    if (!(event = CreateEventW( &sa, TRUE, FALSE, L"Global\\ScmCreatedEvent" )) &&
+        !(event = OpenEventW( EVENT_MODIFY_STATE, FALSE, L"Global\\ScmCreatedEvent" )))
+        WINE_ERR( "no Global\\ScmCreatedEvent (%lu)\n", GetLastError() );
+    return event;
+}
+
 static void load_registry_parameters(void)
 {
     HKEY key;
@@ -1302,6 +1323,7 @@ int __cdecl main(int argc, char *argv[])
     }
 
     started_event = CreateEventW(NULL, TRUE, FALSE, svcctl_started_event);
+    scm_created_event = create_scm_created_event();
 
     err = RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\ServiceCurrent", 0,
         NULL, REG_OPTION_VOLATILE, KEY_SET_VALUE | KEY_QUERY_VALUE, NULL,
@@ -1320,11 +1342,9 @@ int __cdecl main(int argc, char *argv[])
         scmdatabase_autostart_services(active_database);
         process_monitor_thread = CreateThread(NULL, 0, process_monitor_thread_proc, NULL, 0, NULL);
         SetEvent(started_event);
-        /* Windows' SCM names this event once its database is up; Windows 7's
-         * explorer waits up to 60 s for it before it starts the desktop.
-         * Kept open (and so alive) for the session. */
-        if ((scm_created_event = CreateEventW(NULL, TRUE, TRUE, L"Global\\ScmCreatedEvent")))
-            SetEvent(scm_created_event);
+        /* the database is up: Windows 7's explorer, waiting up to 60 s for
+         * this event before it starts the desktop, goes on */
+        if (scm_created_event) SetEvent(scm_created_event);
         WaitForSingleObject(exit_event, INFINITE);
         PostQueuedCompletionStatus(job_completion_port, 0, 0, NULL);
         WaitForSingleObject(process_monitor_thread, INFINITE);
