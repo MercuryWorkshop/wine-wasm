@@ -2444,9 +2444,12 @@ static NTSTATUS scroll_output( struct screen_buffer *screen_buffer, const struct
     if (clip.Left > clip.Right || clip.Top > clip.Bottom || params->scroll.Left < 0 || params->scroll.Top < 0 ||
         params->scroll.Right >= screen_buffer->width || params->scroll.Bottom >= screen_buffer->height ||
         params->scroll.Right < params->scroll.Left || params->scroll.Top > params->scroll.Bottom ||
-        params->origin.X < 0 || params->origin.X >= screen_buffer->width || params->origin.Y < 0 ||
-        params->origin.Y >= screen_buffer->height)
+        params->origin.X < -screen_buffer->width || params->origin.X >= screen_buffer->width ||
+        params->origin.Y < -screen_buffer->height || params->origin.Y >= screen_buffer->height)
         return STATUS_INVALID_PARAMETER;
+    /* The destination may start above or left of the buffer: what lands outside
+     * is clipped away and the source filled, which is how Windows 7's cmd.exe
+     * clears the screen ("cls": the whole buffer to (0, -height)). */
 
     src.Left   = max( xsrc, clip.Left );
     src.Top    = max( ysrc, clip.Top );
