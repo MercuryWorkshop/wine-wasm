@@ -1928,6 +1928,28 @@ struct unicode_str get_nt_name( struct fd *fd )
     return name;
 }
 
+/* The real name of a file the server just opened by path. Under gex (wasm32)
+ * one readlink of /proc/self/fd/N, which names the file with the symlinks
+ * on its path followed, as Linux does: realpath() walks the path a readlink
+ * per directory, and in a door call each is a system call proxied to the
+ * server's pump (paint-fast: seven per DLL a process opens). Elsewhere, and
+ * if that fails, realpath() as before. */
+static char *fd_realpath( int unix_fd, const char *path )
+{
+#ifdef __wasm32__
+    char link[32], buf[PATH_MAX];
+    ssize_t n;
+
+    snprintf( link, sizeof(link), "/proc/self/fd/%d", unix_fd );
+    if ((n = readlink( link, buf, sizeof(buf) - 1 )) > 0 && buf[0] == '/')
+    {
+        buf[n] = 0;
+        return strdup( buf );
+    }
+#endif
+    return realpath( path, NULL );
+}
+
 /* open() wrapper that returns a struct fd with no fd user set */
 struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_name,
                     int flags, mode_t *mode, unsigned int access,
@@ -2029,7 +2051,7 @@ struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_nam
 
         if ((path = dup_fd_name( root, name )))
         {
-            fd->unix_name = realpath( path, NULL );
+            fd->unix_name = fd_realpath( fd->unix_fd, path );
             free( path );
         }
 
