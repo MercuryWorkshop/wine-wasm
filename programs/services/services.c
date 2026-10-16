@@ -1339,12 +1339,15 @@ int __cdecl main(int argc, char *argv[])
         return err;
     if ((err = RPC_Init()) == ERROR_SUCCESS)
     {
+        /* the database is up and the RPC interface listens: Windows 7's
+         * explorer, waiting up to 60 s for this event before it starts the
+         * desktop, goes on. Before the autostart, as Windows sets it: set
+         * after it, one slow service start (a service host connecting late)
+         * held a shell that starts beside this process for the whole 60 s. */
+        if (scm_created_event) SetEvent(scm_created_event);
         scmdatabase_autostart_services(active_database);
         process_monitor_thread = CreateThread(NULL, 0, process_monitor_thread_proc, NULL, 0, NULL);
         SetEvent(started_event);
-        /* the database is up: Windows 7's explorer, waiting up to 60 s for
-         * this event before it starts the desktop, goes on */
-        if (scm_created_event) SetEvent(scm_created_event);
         WaitForSingleObject(exit_event, INFINITE);
         PostQueuedCompletionStatus(job_completion_port, 0, 0, NULL);
         WaitForSingleObject(process_monitor_thread, INFINITE);
