@@ -1155,7 +1155,7 @@ static BOOL urlcache_clean_leaked_entries(cache_container *container, urlcache_h
 static DWORD cache_container_clean_index(cache_container *container, urlcache_header **file_view)
 {
     urlcache_header *header = *file_view;
-    DWORD ret;
+    DWORD ret, blocks_no;
 
     TRACE("(%s %s)\n", debugstr_a(container->cache_prefix), debugstr_w(container->path));
 
@@ -1167,15 +1167,22 @@ static DWORD cache_container_clean_index(cache_container *container, urlcache_he
         return ERROR_NOT_ENOUGH_MEMORY;
     }
 
+    /* The old view goes before the index is reopened, not after: where a
+     * file mapping is a copy of the file written back when it is unmapped
+     * (gex), unmapping it last wrote its old header (the old size) over the
+     * grown index, which the next open then took for an old or broken
+     * index.dat and deleted the whole cache (IE's start, its TLD list). */
+    blocks_no = header->capacity_in_blocks*2;
+    UnmapViewOfFile(*file_view);
+    *file_view = NULL;
     cache_container_close_index(container);
-    ret = cache_container_open_index(container, header->capacity_in_blocks*2);
+    ret = cache_container_open_index(container, blocks_no);
     if(ret != ERROR_SUCCESS)
         return ret;
     header = MapViewOfFile(container->mapping, FILE_MAP_WRITE, 0, 0, 0);
     if(!header)
         return GetLastError();
 
-    UnmapViewOfFile(*file_view);
     *file_view = header;
     return ERROR_SUCCESS;
 }
@@ -1713,7 +1720,9 @@ static BOOL cache_container_delete_dir(LPCWSTR lpszPath)
     shfos.wFunc = FO_DELETE;
     shfos.pFrom = path;
     shfos.pTo = NULL;
-    shfos.fFlags = FOF_NOCONFIRMATION;
+    /* no UI: with Windows' shell32, which honours the flags, a cache
+     * cleanup opened a "Deleting ... from INetCache" progress window */
+    shfos.fFlags = FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
     shfos.fAnyOperationsAborted = FALSE;
     ret = SHFileOperationW(&shfos);
     if (ret)
@@ -3006,7 +3015,9 @@ static BOOL urlcache_entry_commit(const char *url, const WCHAR *file_name,
         }
     }
     if(error != ERROR_SUCCESS) {
-        urlcache_entry_free(header, &url_entry->header);
+        /* (no view left when the index could not be reopened) */
+        if(header)
+            urlcache_entry_free(header, &url_entry->header);
         cache_container_unlock_index(container, header);
         SetLastError(error);
         return FALSE;
