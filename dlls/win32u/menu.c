@@ -213,6 +213,8 @@ typedef struct
 /* Use global popup window because there's no way 2 menus can
  * be tracked at the same time.  */
 static HWND top_popup;
+/* the menu loop was entered from the keyboard (Alt, F10, Alt+key): its items show their access keys */
+static BOOL menu_keyboard_cues;
 static HMENU top_popup_hmenu;
 
 /* Flag set by NtUserEndMenu() to force an exit from menu tracking */
@@ -2551,7 +2553,7 @@ static void draw_menu_item( HWND hwnd, struct menu *menu, HWND owner, HDC hdc,
 {
     UINT arrow_width = 0, arrow_height = 0;
     HRGN old_clip = NULL, clip;
-    BOOL flat_menu = FALSE;
+    BOOL flat_menu = FALSE, hide_accel;
     RECT rect, bmprc;
     int bkgnd;
 
@@ -2571,6 +2573,10 @@ static void draw_menu_item( HWND hwnd, struct menu *menu, HWND owner, HDC hdc,
             draw_nc_sys_button( hwnd, hdc, item->fState & (MF_HILITE | MF_MOUSESELECT) );
         return;
     }
+
+    /* access keys are underlined when the menu was entered from the keyboard, or the
+     * owner shows its keyboard cues (WM_QUERYUISTATE) */
+    hide_accel = !menu_keyboard_cues && (win_get_ui_state( owner ) & UISF_HIDEACCEL);
 
     TRACE( "rect=%s\n", wine_dbgstr_rect( &item->rect ));
     rect = item->rect;
@@ -2632,6 +2638,7 @@ static void draw_menu_item( HWND hwnd, struct menu *menu, HWND owner, HDC hdc,
         if (item->fState & MFS_DEFAULT) udi.dis.itemState |= ODS_DEFAULT;
         /* a bar's items are dimmed in an inactive window, as on Windows */
         if (menu_bar && !(win_get_flags( hwnd ) & WIN_NCACTIVATED)) udi.dis.itemState |= ODS_INACTIVE;
+        if (hide_accel) udi.dis.itemState |= ODS_NOACCEL;
         udi.dis.itemAction = odaction;
         udi.dis.hwndItem   = (HWND)menu->handle;
         udi.dis.hDC        = hdc;
@@ -2848,6 +2855,8 @@ static void draw_menu_item( HWND hwnd, struct menu *menu, HWND owner, HDC hdc,
         UINT format = menu_bar ?
             DT_CENTER | DT_VCENTER | DT_SINGLELINE :
             DT_LEFT | DT_VCENTER | DT_SINGLELINE;
+
+        if (hide_accel) format |= DT_HIDEPREFIX;
 
         if (!(menu->dwStyle & MNS_CHECKORBMP))
             rect.left += menu->textOffset;
@@ -4684,6 +4693,7 @@ static BOOL exit_tracking( HWND hwnd, BOOL is_popup )
 
     send_message( hwnd, WM_EXITMENULOOP, is_popup, 0 );
     NtUserShowCaret( 0 );
+    menu_keyboard_cues = FALSE;
     top_popup = 0;
     top_popup_hmenu = NULL;
     return TRUE;
@@ -4733,6 +4743,7 @@ void track_keyboard_menu_bar( HWND hwnd, UINT wparam, WCHAR ch )
 
     if (!is_menu( menu )) return;
 
+    menu_keyboard_cues = TRUE;
     init_tracking( hwnd, menu, FALSE, flags );
 
     /* fetch the window menu again, it may have changed */

@@ -2446,6 +2446,85 @@ static LRESULT handle_nc_mouse_leave( HWND hwnd )
 }
 
 
+/* A window's keyboard cues (WM_QUERYUISTATE): UISF_HIDEFOCUS, UISF_HIDEACCEL. */
+UINT win_get_ui_state( HWND hwnd )
+{
+    WND *win = get_win_ptr( hwnd );
+    UINT ret = 0;
+
+    if (win && win != WND_OTHER_PROCESS && win != WND_DESKTOP)
+    {
+        ret = win->ui_state;
+        release_win_ptr( win );
+    }
+    return ret;
+}
+
+static UINT ui_state_change( UINT state, WORD action, WORD flags )
+{
+    flags &= UISF_HIDEFOCUS | UISF_HIDEACCEL;
+    if (action == UIS_SET) return state | flags;
+    if (action == UIS_CLEAR) return state & ~flags;
+    return state;
+}
+
+/* WM_CHANGEUISTATE: a child asks its parent, a top-level window updates itself
+ * and its children (WM_UPDATEUISTATE) when the state changes. UIS_INITIALIZE
+ * hides the cues unless the user wants them always shown. */
+static void change_ui_state( HWND hwnd, WPARAM wparam, LPARAM lparam )
+{
+    WORD action = LOWORD( wparam ), flags = HIWORD( wparam );
+    HWND parent;
+
+    if (lparam || action > UIS_INITIALIZE || (flags & ~(UISF_HIDEFOCUS | UISF_HIDEACCEL | UISF_ACTIVE))) return;
+    if ((get_window_long( hwnd, GWL_STYLE ) & (WS_CHILD | WS_POPUP)) == WS_CHILD &&
+        (parent = get_parent( hwnd )) && !is_desktop_window( parent ))
+    {
+        send_message( parent, WM_CHANGEUISTATE, wparam, lparam );
+        return;
+    }
+    if (action == UIS_INITIALIZE)
+    {
+        BOOL cues = FALSE;
+        NtUserSystemParametersInfo( SPI_GETKEYBOARDCUES, 0, &cues, 0 );
+        action = cues ? UIS_CLEAR : UIS_SET;
+        wparam = MAKEWPARAM( action, flags );
+    }
+    if (ui_state_change( win_get_ui_state( hwnd ), action, flags ) != win_get_ui_state( hwnd ))
+        send_message( hwnd, WM_UPDATEUISTATE, wparam, 0 );
+}
+
+/* WM_UPDATEUISTATE: the window's state, then its children's. */
+static void update_ui_state( HWND hwnd, WPARAM wparam, LPARAM lparam )
+{
+    WORD action = LOWORD( wparam ), flags = HIWORD( wparam );
+    UINT changed = 0;
+    HWND *list;
+    WND *win;
+    int i;
+
+    if (lparam || action > UIS_INITIALIZE || (flags & ~(UISF_HIDEFOCUS | UISF_HIDEACCEL | UISF_ACTIVE))) return;
+    if (action == UIS_INITIALIZE)
+    {
+        BOOL cues = FALSE;
+        NtUserSystemParametersInfo( SPI_GETKEYBOARDCUES, 0, &cues, 0 );
+        action = cues ? UIS_CLEAR : UIS_SET;
+        wparam = MAKEWPARAM( action, flags );
+    }
+    if ((win = get_win_ptr( hwnd )) && win != WND_OTHER_PROCESS && win != WND_DESKTOP)
+    {
+        UINT old = win->ui_state;
+        win->ui_state = ui_state_change( old, action, flags );
+        changed = old ^ win->ui_state;
+        release_win_ptr( win );
+    }
+    /* the menu bar's access keys */
+    if ((changed & UISF_HIDEACCEL) && get_menu( hwnd )) NtUserDrawMenuBar( hwnd );
+    if (!(list = list_window_children( hwnd ))) return;
+    for (i = 0; list[i]; i++) send_message( list[i], WM_UPDATEUISTATE, wparam, lparam );
+    free( list );
+}
+
 LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, BOOL ansi )
 {
     LRESULT result = 0;
@@ -2811,6 +2890,9 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, 
     case WM_SYSKEYDOWN:
         if (HIWORD( lparam ) & KEYDATA_ALT)
         {
+            /* a keyboard user: show the window's keyboard cues */
+            if (wparam == VK_MENU || wparam == VK_LMENU || wparam == VK_RMENU)
+                send_message( hwnd, WM_CHANGEUISTATE, MAKEWPARAM( UIS_CLEAR, UISF_HIDEACCEL | UISF_HIDEFOCUS ), 0 );
             if ((wparam == VK_MENU || wparam == VK_LMENU || wparam == VK_RMENU) && !menu_sys_key)
                 menu_sys_key = 1;
             else
@@ -2833,6 +2915,18 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, 
         }
         else if (wparam == VK_ESCAPE && (NtUserGetKeyState( VK_SHIFT ) & 0x8000))
             send_message( hwnd, WM_SYSCOMMAND, SC_KEYMENU, ' ' );
+        break;
+
+    case WM_QUERYUISTATE:
+        result = win_get_ui_state( hwnd );
+        break;
+
+    case WM_CHANGEUISTATE:
+        change_ui_state( hwnd, wparam, lparam );
+        break;
+
+    case WM_UPDATEUISTATE:
+        update_ui_state( hwnd, wparam, lparam );
         break;
 
     case WM_KEYUP:

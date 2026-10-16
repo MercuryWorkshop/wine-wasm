@@ -5854,6 +5854,7 @@ HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
     INT sw = SW_SHOW;
     RECT surface_rect;
     UINT context;
+    BOOL cues = FALSE;
     WND *win;
 
     TRACE( "ex_style %#x, class_name %s, version %s, window_name %s, style %#x, x %u, y %u, cx %u, cy %u, "
@@ -5911,6 +5912,7 @@ HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
 
     fix_cs_coordinates( &cs, &sw );
     cs.dwExStyle = fix_exstyle( cs.style, cs.dwExStyle );
+    NtUserSystemParametersInfo( SPI_GETKEYBOARDCUES, 0, &cues, 0 );
 
     /* Create the window structure */
 
@@ -5924,6 +5926,20 @@ HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
     /* Fill the window structure */
 
     win->text        = NULL;
+    /* Keyboard cues (WM_QUERYUISTATE): a child starts with its parent's, any
+     * other window hidden unless the user wants them always shown, as on
+     * Windows; a keyboard user's Alt (DefWindowProc) or Tab (dialogs) shows them. */
+    win->ui_state    = 0;
+    if ((style & (WS_CHILD | WS_POPUP)) == WS_CHILD && parent && !is_desktop_window( parent ))
+    {
+        WND *parent_ptr = get_win_ptr( parent );
+        if (parent_ptr && parent_ptr != WND_OTHER_PROCESS && parent_ptr != WND_DESKTOP)
+        {
+            win->ui_state = parent_ptr->ui_state;
+            release_win_ptr( parent_ptr );
+        }
+    }
+    else if (!cues) win->ui_state = UISF_HIDEFOCUS | UISF_HIDEACCEL;
     win->dwStyle     = style;
     win->dwExStyle   = ex_style;
     win->helpContext = 0;
