@@ -446,6 +446,179 @@ static HRESULT realtime_stylus_create( IUnknown *outer, REFIID iid, void **obj )
     return hr;
 }
 
+/* Drawing attributes for the dynamic renderer. Windows hands out a default set
+ * (black, 53 HIMETRIC wide, ball tip); callers read and change them. */
+struct drawing_attrs
+{
+    IInkDrawingAttributes IInkDrawingAttributes_iface;
+    LONG ref;
+    LONG color, transparency;
+    float width, height;
+    VARIANT_BOOL fit, ignore_pressure, antialiased;
+    InkRasterOperation rop;
+    InkPenTip tip;
+};
+
+static struct drawing_attrs *impl_from_IInkDrawingAttributes( IInkDrawingAttributes *iface )
+{
+    return CONTAINING_RECORD( iface, struct drawing_attrs, IInkDrawingAttributes_iface );
+}
+
+static HRESULT drawing_attrs_create( const struct drawing_attrs *from, IInkDrawingAttributes **out );
+
+static HRESULT WINAPI attrs_QueryInterface( IInkDrawingAttributes *iface, REFIID iid, void **obj )
+{
+    TRACE( "(%p)->(%s %p)\n", iface, debugstr_guid( iid ), obj );
+    if (IsEqualIID( iid, &IID_IUnknown ) || IsEqualIID( iid, &IID_IDispatch ) ||
+        IsEqualIID( iid, &IID_IInkDrawingAttributes ))
+    {
+        *obj = iface;
+        IInkDrawingAttributes_AddRef( iface );
+        return S_OK;
+    }
+    FIXME( "interface %s not implemented\n", debugstr_guid( iid ) );
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI attrs_AddRef( IInkDrawingAttributes *iface )
+{
+    struct drawing_attrs *This = impl_from_IInkDrawingAttributes( iface );
+    return InterlockedIncrement( &This->ref );
+}
+
+static ULONG WINAPI attrs_Release( IInkDrawingAttributes *iface )
+{
+    struct drawing_attrs *This = impl_from_IInkDrawingAttributes( iface );
+    ULONG ref = InterlockedDecrement( &This->ref );
+    if (!ref) free( This );
+    return ref;
+}
+
+static HRESULT WINAPI attrs_GetTypeInfoCount( IInkDrawingAttributes *iface, UINT *count )
+{
+    *count = 0;
+    return S_OK;
+}
+
+static HRESULT WINAPI attrs_GetTypeInfo( IInkDrawingAttributes *iface, UINT index, LCID lcid, ITypeInfo **info )
+{
+    FIXME( "%p, %u\n", iface, index );
+    *info = NULL;
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI attrs_GetIDsOfNames( IInkDrawingAttributes *iface, REFIID iid, LPOLESTR *names,
+                                           UINT count, LCID lcid, DISPID *ids )
+{
+    FIXME( "%p, %u\n", iface, count );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI attrs_Invoke( IInkDrawingAttributes *iface, DISPID id, REFIID iid, LCID lcid, WORD flags,
+                                    DISPPARAMS *params, VARIANT *result, EXCEPINFO *excep, UINT *arg )
+{
+    FIXME( "%p, %ld\n", iface, id );
+    return E_NOTIMPL;
+}
+
+#define ATTR_GET_PUT( name, type, field ) \
+static HRESULT WINAPI attrs_get_##name( IInkDrawingAttributes *iface, type *value ) \
+{ \
+    struct drawing_attrs *This = impl_from_IInkDrawingAttributes( iface ); \
+    TRACE( "%p, %p\n", This, value ); \
+    if (!value) return E_POINTER; \
+    *value = This->field; \
+    return S_OK; \
+} \
+static HRESULT WINAPI attrs_put_##name( IInkDrawingAttributes *iface, type value ) \
+{ \
+    struct drawing_attrs *This = impl_from_IInkDrawingAttributes( iface ); \
+    TRACE( "%p\n", This ); \
+    This->field = value; \
+    return S_OK; \
+}
+
+ATTR_GET_PUT( Color, LONG, color )
+ATTR_GET_PUT( Width, float, width )
+ATTR_GET_PUT( Height, float, height )
+ATTR_GET_PUT( FitToCurve, VARIANT_BOOL, fit )
+ATTR_GET_PUT( IgnorePressure, VARIANT_BOOL, ignore_pressure )
+ATTR_GET_PUT( AntiAliased, VARIANT_BOOL, antialiased )
+ATTR_GET_PUT( Transparency, LONG, transparency )
+ATTR_GET_PUT( RasterOperation, InkRasterOperation, rop )
+ATTR_GET_PUT( PenTip, InkPenTip, tip )
+
+#undef ATTR_GET_PUT
+
+static HRESULT WINAPI attrs_get_ExtendedProperties( IInkDrawingAttributes *iface, IInkExtendedProperties **props )
+{
+    FIXME( "%p, %p\n", iface, props );
+    if (!props) return E_POINTER;
+    *props = NULL;
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI attrs_Clone( IInkDrawingAttributes *iface, IInkDrawingAttributes **clone )
+{
+    struct drawing_attrs *This = impl_from_IInkDrawingAttributes( iface );
+    TRACE( "%p, %p\n", This, clone );
+    if (!clone) return E_POINTER;
+    return drawing_attrs_create( This, clone );
+}
+
+static const IInkDrawingAttributesVtbl drawing_attrs_vtbl =
+{
+    attrs_QueryInterface,
+    attrs_AddRef,
+    attrs_Release,
+    attrs_GetTypeInfoCount,
+    attrs_GetTypeInfo,
+    attrs_GetIDsOfNames,
+    attrs_Invoke,
+    attrs_get_Color,
+    attrs_put_Color,
+    attrs_get_Width,
+    attrs_put_Width,
+    attrs_get_Height,
+    attrs_put_Height,
+    attrs_get_FitToCurve,
+    attrs_put_FitToCurve,
+    attrs_get_IgnorePressure,
+    attrs_put_IgnorePressure,
+    attrs_get_AntiAliased,
+    attrs_put_AntiAliased,
+    attrs_get_Transparency,
+    attrs_put_Transparency,
+    attrs_get_RasterOperation,
+    attrs_put_RasterOperation,
+    attrs_get_PenTip,
+    attrs_put_PenTip,
+    attrs_get_ExtendedProperties,
+    attrs_Clone
+};
+
+static HRESULT drawing_attrs_create( const struct drawing_attrs *from, IInkDrawingAttributes **out )
+{
+    struct drawing_attrs *This = calloc( 1, sizeof(*This) );
+
+    if (!This) return E_OUTOFMEMORY;
+    if (from) *This = *from;
+    else
+    {
+        This->width = 53.0f;
+        This->height = 1.0f;
+        This->ignore_pressure = VARIANT_FALSE;
+        This->antialiased = VARIANT_TRUE;
+        This->rop = IRO_CopyPen;
+        This->tip = IPT_Ball;
+    }
+    This->IInkDrawingAttributes_iface.lpVtbl = &drawing_attrs_vtbl;
+    This->ref = 1;
+    *out = &This->IInkDrawingAttributes_iface;
+    return S_OK;
+}
+
 /* The dynamic renderer draws ink while the pen moves. With no packets there is
  * nothing to draw; it keeps its settings. */
 struct renderer
@@ -802,6 +975,11 @@ static HRESULT dynamic_renderer_create( IUnknown *outer, REFIID iid, void **obj 
     This->IStylusSyncPlugin_iface.lpVtbl = &plugin_vtbl;
     This->ref = 1;
     This->enabled = TRUE;
+    if (FAILED(hr = drawing_attrs_create( NULL, &This->attrs )))
+    {
+        free( This );
+        return hr;
+    }
 
     hr = IDynamicRenderer_QueryInterface( &This->IDynamicRenderer_iface, iid, obj );
     IDynamicRenderer_Release( &This->IDynamicRenderer_iface );
