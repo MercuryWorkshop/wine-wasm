@@ -493,6 +493,27 @@ static int word_struct_param( const ORDDEF *odp, unsigned int j )
     static const struct { const char *name; unsigned int param; } table[] =
     {
         { "GdiAlphaBlend", 10 },  /* BLENDFUNCTION */
+        /* the console's COORD: Windows 7's cmd.exe "cls" scrolled the
+         * buffer with an origin read from the address its value made */
+        { "ScrollConsoleScreenBufferA", 3 },
+        { "ScrollConsoleScreenBufferW", 3 },
+        { "SetConsoleCursorPosition", 1 },
+        { "SetConsoleScreenBufferSize", 1 },
+        { "FillConsoleOutputAttribute", 3 },
+        { "FillConsoleOutputCharacterA", 3 },
+        { "FillConsoleOutputCharacterW", 3 },
+        { "WriteConsoleOutputAttribute", 3 },
+        { "WriteConsoleOutputCharacterA", 3 },
+        { "WriteConsoleOutputCharacterW", 3 },
+        { "ReadConsoleOutputAttribute", 3 },
+        { "ReadConsoleOutputCharacterA", 3 },
+        { "ReadConsoleOutputCharacterW", 3 },
+        { "WriteConsoleOutputA", 2 }, { "WriteConsoleOutputA", 3 },
+        { "WriteConsoleOutputW", 2 }, { "WriteConsoleOutputW", 3 },
+        { "ReadConsoleOutputA", 2 }, { "ReadConsoleOutputA", 3 },
+        { "ReadConsoleOutputW", 2 }, { "ReadConsoleOutputW", 3 },
+        { "CreatePseudoConsole", 0 },
+        { "ResizePseudoConsole", 1 },
     };
     const char *name = odp->name ? odp->name : get_link_name( odp );
     unsigned int i;
