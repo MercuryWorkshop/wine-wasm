@@ -2324,7 +2324,10 @@ static LRESULT handle_nc_rbutton_down( HWND hwnd, WPARAM wparam, LPARAM lparam )
             if (NtUserCallMsgFilter( &msg, MSGF_MAX )) continue;
             if (msg.message == WM_RBUTTONUP)
             {
-                hittest = handle_nc_hit_test( hwnd, msg.pt );
+                /* The window's own hit test, as Windows asks it: a window that
+                 * answers HTCAPTION for its client area (the taskbar) gets its
+                 * WM_CONTEXTMENU. The default test said HTCLIENT there. */
+                hittest = send_message( hwnd, WM_NCHITTEST, 0, MAKELPARAM( msg.pt.x, msg.pt.y ));
                 break;
             }
         }
