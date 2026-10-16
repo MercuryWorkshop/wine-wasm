@@ -1013,12 +1013,15 @@ INT WINAPI DrawTextExW( HDC hdc, LPWSTR str, INT i_count,
                 else
                     len_seg = len;
 
-                if (!ExtTextOutW( hdc, xseg, y,
+                /* DT_PREFIXONLY draws just the access key's underscore */
+                if (!(flags & DT_PREFIXONLY) &&
+                    !ExtTextOutW( hdc, xseg, y,
                                  ((flags & DT_NOCLIP) ? 0 : ETO_CLIPPED) |
                                  ((flags & DT_RTLREADING) ? ETO_RTLREADING : 0),
                                  rect, str, len_seg, NULL ))
                     goto done;
-                if (prefix_offset != -1 && prefix_offset < len_seg)
+                /* DT_HIDEPREFIX removes the prefix characters but draws no underscore */
+                if (prefix_offset != -1 && prefix_offset < len_seg && !(flags & DT_HIDEPREFIX))
                 {
                     TEXT_DrawUnderscore (hdc, xseg, y + tm.tmAscent + 1, str, prefix_offset, (flags & DT_NOCLIP) ? NULL : rect);
                 }
