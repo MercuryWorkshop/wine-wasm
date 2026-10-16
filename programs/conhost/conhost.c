@@ -2425,27 +2425,39 @@ static NTSTATUS scroll_output( struct screen_buffer *screen_buffer, const struct
 {
     int x, y, xsrc, ysrc, w, h;
     char_info_t *psrc, *pdst;
-    SMALL_RECT src, dst;
+    SMALL_RECT src, dst, scroll;
     RECT update_rect;
     SMALL_RECT clip;
+    COORD origin;
 
     enter_absolute_mode( screen_buffer->console );
-    xsrc = params->scroll.Left;
-    ysrc = params->scroll.Top;
-    w = params->scroll.Right - params->scroll.Left + 1;
-    h = params->scroll.Bottom - params->scroll.Top + 1;
 
-    TRACE( "(%d %d) -> (%u %u) w %u h %u\n", xsrc, ysrc, params->origin.X, params->origin.Y, w, h );
+    /* The rectangle to move is clipped to the buffer, as Windows does: Windows
+     * 7's cmd.exe asks for the buffer's size as its bottom-right corner, one
+     * past the last cell. What is cut from its top or left moves the
+     * destination with it. */
+    scroll = params->scroll;
+    origin = params->origin;
+    if (scroll.Left < 0) { origin.X -= scroll.Left; scroll.Left = 0; }
+    if (scroll.Top < 0)  { origin.Y -= scroll.Top;  scroll.Top = 0; }
+    scroll.Right  = min( scroll.Right,  screen_buffer->width - 1 );
+    scroll.Bottom = min( scroll.Bottom, screen_buffer->height - 1 );
+
+    xsrc = scroll.Left;
+    ysrc = scroll.Top;
+    w = scroll.Right - scroll.Left + 1;
+    h = scroll.Bottom - scroll.Top + 1;
+
+    TRACE( "(%d %d) -> (%d %d) w %d h %d\n", xsrc, ysrc, origin.X, origin.Y, w, h );
 
     clip.Left   = max( params->clip.Left, 0 );
     clip.Top    = max( params->clip.Top,  0 );
     clip.Right  = min( params->clip.Right,  screen_buffer->width - 1 );
     clip.Bottom = min( params->clip.Bottom, screen_buffer->height - 1 );
-    if (clip.Left > clip.Right || clip.Top > clip.Bottom || params->scroll.Left < 0 || params->scroll.Top < 0 ||
-        params->scroll.Right >= screen_buffer->width || params->scroll.Bottom >= screen_buffer->height ||
-        params->scroll.Right < params->scroll.Left || params->scroll.Top > params->scroll.Bottom ||
-        params->origin.X < -screen_buffer->width || params->origin.X >= screen_buffer->width ||
-        params->origin.Y < -screen_buffer->height || params->origin.Y >= screen_buffer->height)
+    if (clip.Left > clip.Right || clip.Top > clip.Bottom ||
+        scroll.Right < scroll.Left || scroll.Top > scroll.Bottom ||
+        origin.X < -screen_buffer->width || origin.X >= screen_buffer->width ||
+        origin.Y < -screen_buffer->height || origin.Y >= screen_buffer->height)
         return STATUS_INVALID_PARAMETER;
     /* The destination may start above or left of the buffer: what lands outside
      * is clipped away and the source filled, which is how Windows 7's cmd.exe
@@ -2456,10 +2468,10 @@ static NTSTATUS scroll_output( struct screen_buffer *screen_buffer, const struct
     src.Right  = min( xsrc + w - 1, clip.Right );
     src.Bottom = min( ysrc + h - 1, clip.Bottom );
 
-    dst.Left   = params->origin.X;
-    dst.Top    = params->origin.Y;
-    dst.Right  = params->origin.X + w - 1;
-    dst.Bottom = params->origin.Y + h - 1;
+    dst.Left   = origin.X;
+    dst.Top    = origin.Y;
+    dst.Right  = origin.X + w - 1;
+    dst.Bottom = origin.Y + h - 1;
 
     if (dst.Left < clip.Left)
     {
