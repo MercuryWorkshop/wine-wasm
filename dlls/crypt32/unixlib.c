@@ -954,6 +954,32 @@ static const char * const CRYPT_knownLocations[] = {
  "/etc/security/cacerts",  /* Android */
 };
 
+/* The bundle a build ships beside itself, DIST/etc/ssl/certs (gex's W3
+ * dist), for a machine that has none of its own: a browser page, whose
+ * filesystem is the dist and the prefix, with no /etc/ssl. */
+static void import_dist_certs(void)
+{
+    static const WCHAR suffix[] = {'\\','.','.','\\','.','.','\\','e','t','c','\\','s','s','l',
+        '\\','c','e','r','t','s','\\','c','a','-','c','e','r','t','i','f','i','c','a','t','e','s','.','c','r','t',0};
+    const WCHAR *dir = ntdll_get_data_dir();  /* DIST/share/wine */
+    WCHAR *nt;
+    char *path = NULL;
+    size_t len = 0;
+
+    if (!dir) return;
+    while (dir[len]) len++;  /* WCHAR: not the C library's wcslen */
+    if (!(nt = malloc( (len + ARRAY_SIZE(suffix)) * sizeof(WCHAR) ))) return;
+    memcpy( nt, dir, len * sizeof(WCHAR) );
+    memcpy( nt + len, suffix, sizeof(suffix) );
+    if (!ntdll_get_unix_file_name( nt, &path, FILE_OPEN ))
+    {
+        TRACE( "%s\n", debugstr_a(path) );
+        import_certs_from_path( path, FALSE );
+    }
+    free( path );
+    free( nt );
+}
+
 static void load_root_certs(void)
 {
     unsigned int i;
@@ -993,6 +1019,7 @@ static void load_root_certs(void)
 
     for (i = 0; i < ARRAY_SIZE(CRYPT_knownLocations) && list_empty(&root_cert_list); i++)
         import_certs_from_path( CRYPT_knownLocations[i], TRUE );
+    if (list_empty(&root_cert_list)) import_dist_certs();
 }
 
 static NTSTATUS enum_root_certs( void *args )
