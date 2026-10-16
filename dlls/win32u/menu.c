@@ -1653,6 +1653,54 @@ INT WINAPI NtUserMenuItemFromPoint( HWND hwnd, HMENU handle, int x, int y )
     return pos;
 }
 
+static void init_sys_menu_popup( HMENU hmenu, DWORD style, DWORD class_style );
+
+/* A window of another process: the menu lives in this process (it can't be
+ * shared), one per window, kept for the next call. Callers (the taskbar, to
+ * see whether it may minimise a window) read its item states, so they follow
+ * the window's style as init_sys_menu_popup gives them. */
+static HMENU get_other_process_sys_menu( HWND hwnd, BOOL revert )
+{
+    static struct { HWND hwnd; HMENU menu; } cache[16];
+    static unsigned int next;
+    HMENU sys = 0, ret = 0;
+    DWORD style;
+    unsigned int i;
+
+    if (!is_window( hwnd )) return 0;
+    hwnd = get_full_window_handle( hwnd );
+    style = get_window_long( hwnd, GWL_STYLE );
+
+    user_lock();
+    for (i = 0; i < ARRAY_SIZE(cache); i++)
+    {
+        if (!cache[i].hwnd) continue;
+        if (cache[i].hwnd == hwnd && !revert) sys = cache[i].menu;
+        else if (cache[i].hwnd == hwnd || !is_window( cache[i].hwnd ))
+        {
+            NtUserDestroyMenu( cache[i].menu );
+            cache[i].hwnd = 0;
+            cache[i].menu = 0;
+        }
+    }
+    if (!sys && !revert && (style & WS_SYSMENU) && (sys = get_sys_menu( hwnd, 0 )))
+    {
+        for (i = 0; i < ARRAY_SIZE(cache) && cache[i].hwnd; i++);
+        if (i == ARRAY_SIZE(cache))
+        {
+            i = next++ % ARRAY_SIZE(cache);
+            NtUserDestroyMenu( cache[i].menu );
+        }
+        cache[i].hwnd = hwnd;
+        cache[i].menu = sys;
+    }
+    user_unlock();
+
+    if (sys && (ret = get_sub_menu( sys, 0 )))
+        init_sys_menu_popup( ret, style, get_class_long( hwnd, GCL_STYLE, FALSE ));
+    return ret;
+}
+
 /**********************************************************************
  *           NtUserGetSystemMenu    (win32u.@)
  */
@@ -1662,11 +1710,7 @@ HMENU WINAPI NtUserGetSystemMenu( HWND hwnd, BOOL revert )
     HMENU retvalue = 0;
 
     if (win == WND_DESKTOP || !win) return 0;
-    if (win == WND_OTHER_PROCESS)
-    {
-        if (is_window( hwnd )) FIXME( "not supported on other process window %p\n", hwnd );
-        return 0;
-    }
+    if (win == WND_OTHER_PROCESS) return get_other_process_sys_menu( hwnd, revert );
 
     if (win->hSysMenu && revert)
     {
