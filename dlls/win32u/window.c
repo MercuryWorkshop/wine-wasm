@@ -4130,7 +4130,16 @@ BOOL set_window_pos( WINDOWPOS *winpos, int parent_x, int parent_y )
     {
         NtUserNotifyWinEvent( EVENT_OBJECT_SHOW, winpos->hwnd, 0, 0 );
         if (is_shell_hook_window( winpos->hwnd ))
+        {
             shell_hook_notify( HSHELL_WINDOWCREATED, (LPARAM)winpos->hwnd );
+            /* A program activates its main window before showing it (the
+             * activation named no button then: an invisible window has none),
+             * so the taskbar learns it is active now. Without this, Windows 7's
+             * taskbar took a click on that button for "bring it up", never for
+             * "minimize it". */
+            if (winpos->hwnd == NtUserGetForegroundWindow())
+                shell_hook_notify( HSHELL_RUDEAPPACTIVATED, (LPARAM)winpos->hwnd );
+        }
 
         NtUserShowCaret( winpos->hwnd );
     }
