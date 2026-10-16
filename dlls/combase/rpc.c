@@ -684,6 +684,7 @@ HRESULT rpc_get_local_class_object(REFCLSID rclsid, REFIID riid, void **obj)
     IStream *stream = NULL;
     ULARGE_INTEGER newpos;
     LARGE_INTEGER seekto;
+    HANDLE idle = 0;
     int tries = 0;
     ULONG length;
     HRESULT hr;
@@ -720,20 +721,29 @@ HRESULT rpc_get_local_class_object(REFCLSID rclsid, REFIID riid, void **obj)
                 return hr;
         }
 
-        /* Wait for one second, even if messages arrive. */
+        /* Wait for one second, even if messages arrive. Only the first try
+         * has the server's process to wait on; the later ones wait on an event
+         * nobody sets. With no handle at all CoWaitForMultipleHandles fails at
+         * once (RPC_E_NO_SYNC), and the loop spun for the whole second of every
+         * try, taking the CPU from the server it waits for. */
+        if (!process && !idle) idle = CreateEventW(NULL, TRUE, FALSE, NULL);
         start_ticks = GetTickCount();
         do
         {
-            if (SUCCEEDED(CoWaitForMultipleHandles(0, 1000, (process != 0), &process, &index)) && process && !index)
+            HANDLE wait = process ? process : idle;
+
+            if (SUCCEEDED(CoWaitForMultipleHandles(0, 1000, (wait != 0), &wait, &index)) && process && !index)
             {
                 WARN("Server for %s failed to start.\n", debugstr_guid(rclsid));
                 CloseHandle(process);
+                if (idle) CloseHandle(idle);
                 return E_NOINTERFACE;
             }
         } while (GetTickCount() - start_ticks < 1000);
 
         if (process) CloseHandle(process);
     }
+    if (idle) CloseHandle(idle);
 
     if (!objref || tries >= MAXTRIES)
         return E_NOINTERFACE;
