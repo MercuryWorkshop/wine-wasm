@@ -2513,7 +2513,8 @@ GLhandleARB WINAPI glGetHandleARB( GLenum pname )
 
 void WINAPI glGetAttachedObjectsARB( GLhandleARB container, GLsizei max_count, GLsizei *count, GLhandleARB *obj )
 {
-    struct glGetAttachedObjectsARB_params args = { .teb = NtCurrentTeb(), .maxCount = max_count, .count = count };
+    GLsizei written = 0;
+    struct glGetAttachedObjectsARB_params args = { .teb = NtCurrentTeb(), .maxCount = max_count, .count = &written, .obj = obj };
     struct object_table *table;
     struct context *ctx;
     NTSTATUS status;
@@ -2523,12 +2524,13 @@ void WINAPI glGetAttachedObjectsARB( GLhandleARB container, GLsizei max_count, G
 
     args.containerObj = *map_context_objects( OBJ_TYPE_SHADER, 1, &container );
     if ((status = UNIX_CALL( glGetAttachedObjectsARB, &args ))) WARN( "glGetAttachedObjectsARB returned %#lx\n", status );
+    if (count) *count = written;
 
     if (!(ctx = context_from_handle( args.teb->glCurrentRC ))) return;
     if (!(table = get_object_table( ctx, OBJ_TYPE_SHADER, FALSE ))) return;
 
     AcquireSRWLockShared( &table->lock );
-    for (UINT i = 0; i < max_count; ++i)
+    for (GLsizei i = 0; obj && i < written; ++i)
     {
         if (!obj[i] || !(object = find_object_id( table->client_ids, obj[i] ))) continue;
         obj[i] = *object;
@@ -2538,7 +2540,8 @@ void WINAPI glGetAttachedObjectsARB( GLhandleARB container, GLsizei max_count, G
 
 void WINAPI glGetAttachedShaders( GLuint program, GLsizei max_count, GLsizei *count, GLuint *shaders )
 {
-    struct glGetAttachedShaders_params args = { .teb = NtCurrentTeb(), .maxCount = max_count, .count = count };
+    GLsizei written = 0;
+    struct glGetAttachedShaders_params args = { .teb = NtCurrentTeb(), .maxCount = max_count, .count = &written, .shaders = shaders };
     struct object_table *table;
     struct context *ctx;
     NTSTATUS status;
@@ -2548,12 +2551,13 @@ void WINAPI glGetAttachedShaders( GLuint program, GLsizei max_count, GLsizei *co
 
     args.program = *map_context_objects( OBJ_TYPE_SHADER, 1, &program );
     if ((status = UNIX_CALL( glGetAttachedShaders, &args ))) WARN( "glGetAttachedShaders returned %#lx\n", status );
+    if (count) *count = written;
 
     if (!(ctx = context_from_handle( args.teb->glCurrentRC ))) return;
     if (!(table = get_object_table( ctx, OBJ_TYPE_SHADER, FALSE ))) return;
 
     AcquireSRWLockShared( &table->lock );
-    for (UINT i = 0; i < max_count; ++i)
+    for (GLsizei i = 0; shaders && i < written; ++i)
     {
         if (!shaders[i] || !(object = find_object_id( table->client_ids, shaders[i] ))) continue;
         shaders[i] = *object;
