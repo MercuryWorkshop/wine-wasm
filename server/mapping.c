@@ -1270,8 +1270,8 @@ static enum server_fd_type mapping_get_fd_type( struct fd *fd )
     return FD_TYPE_FILE;
 }
 
-/* Pinned DLL addresses: the config dir's dll-bases file, "ADDRESS UNIXPATH"
- * lines. Without it, an image's address depends on the order in which the
+/* Pinned DLL addresses: the config dir's dll-bases file, "ADDRESS UNIXPATH
+ * [0xSIZE]" lines. Without it, an image's address depends on the order in which the
  * session's processes first map the images, which varies from run to run;
  * with it, an image the file names always gets the same address (when that
  * range is free), so code translated ahead of time for that address is used. */
@@ -1286,7 +1286,7 @@ static void load_pinned_bases(void)
 {
     static int loaded;
     unsigned int size = 0;
-    char line[1024], name[1024];
+    char line[1024], name[1024], *last, *end;
     unsigned long long addr;
     FILE *f;
     int fd;
@@ -1299,6 +1299,16 @@ static void load_pinned_bases(void)
     {
         /* the rest of the line: a path may have spaces ("Program Files") */
         if (sscanf( line, "%llx %1023[^\r\n]", &addr, name ) != 2 || (addr & granularity_mask)) continue;
+        /* less a last field "0x..." that is the slot's size (soju's dll-bases.py) */
+        if ((last = strrchr( name, ' ' )) && last[1] == '0' && (last[2] == 'x' || last[2] == 'X'))
+        {
+            strtoull( last + 1, &end, 16 );
+            if (!*end)
+            {
+                while (last > name && last[-1] == ' ') last--;
+                *last = 0;
+            }
+        }
         if (pinned_count == size)
         {
             struct pinned_base *new_bases;
