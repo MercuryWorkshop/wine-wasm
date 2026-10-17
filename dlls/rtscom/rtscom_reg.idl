@@ -48,3 +48,12 @@ coclass GestureRecognizer
 {
     [default] interface IGestureRecognizer;
 }
+
+[
+    uuid(e810cee7-6e51-4cb0-aa3a-0b985b70daf7),
+    threading(both)
+]
+coclass StrokeBuilder
+{
+    [default] interface IStrokeBuilder;
+}

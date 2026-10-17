@@ -257,6 +257,46 @@ interface IGestureRecognizer : IUnknown
 };
 
 [
+    object,
+    uuid(a5fd4e2d-c44b-4092-9177-260905eb672b),
+    pointer_default(unique)
+]
+interface IStrokeBuilder : IUnknown
+{
+    HRESULT CreateStroke( [in] ULONG cPktBuffLength, [in, size_is(cPktBuffLength)] const LONG *pPackets,
+                          [in] ULONG cPacketProperties,
+                          [in, size_is(cPacketProperties)] const PACKET_PROPERTY *pPacketProperties,
+                          [in] FLOAT fInkToDeviceScaleX, [in] FLOAT fInkToDeviceScaleY,
+                          [out] IInkStrokeDisp **ppIInkStroke );
+    HRESULT BeginStroke( [in] TABLET_CONTEXT_ID tcid, [in] STYLUS_ID sid, [in] const LONG *pPacket,
+                         [in] ULONG cPacketProperties,
+                         [in, size_is(cPacketProperties)] PACKET_PROPERTY *pPacketProperties,
+                         [in] FLOAT fInkToDeviceScaleX, [in] FLOAT fInkToDeviceScaleY,
+                         [in, out] IInkStrokeDisp **ppIInkStroke );
+    HRESULT AppendPackets( [in] TABLET_CONTEXT_ID tcid, [in] STYLUS_ID sid, [in] ULONG cPktBuffLength,
+                           [in, size_is(cPktBuffLength)] const LONG *pPackets );
+    HRESULT EndStroke( [in] TABLET_CONTEXT_ID tcid, [in] STYLUS_ID sid, [out] IInkStrokeDisp **ppIInkStroke,
+                       [out] RECT *pDirtyRect );
+
+    [propget]
+    HRESULT Ink( [retval, out] IInkDisp **ppiInkObj );
+
+    [propputref]
+    HRESULT Ink( [in] IInkDisp *piInkObj );
+};
+
+[
+    uuid(e810cee7-6e51-4cb0-aa3a-0b985b70daf7),
+    threading(both)
+]
+coclass StrokeBuilder
+{
+    [default] interface IStrokeBuilder;
+    interface IStylusSyncPlugin;
+    interface IStylusAsyncPlugin;
+};
+
+[
     uuid(ea30c654-c62c-441f-ac00-95f9a196782c),
     threading(both)
 ]

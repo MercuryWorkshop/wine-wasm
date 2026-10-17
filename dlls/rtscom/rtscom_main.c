@@ -1131,6 +1131,147 @@ static HRESULT gesture_recognizer_create( IUnknown *outer, REFIID iid, void **ob
     return hr;
 }
 
+/* The stroke builder makes ink strokes out of packets. With no tablet there
+ * are no packets; it holds the ink object it is given. */
+struct stroke_builder
+{
+    IStrokeBuilder IStrokeBuilder_iface;
+    struct plugin plugin;
+    LONG ref;
+    IInkDisp *ink;
+};
+
+static struct stroke_builder *impl_from_IStrokeBuilder( IStrokeBuilder *iface )
+{
+    return CONTAINING_RECORD( iface, struct stroke_builder, IStrokeBuilder_iface );
+}
+
+static HRESULT WINAPI stroke_builder_QueryInterface( IStrokeBuilder *iface, REFIID iid, void **obj )
+{
+    struct stroke_builder *This = impl_from_IStrokeBuilder( iface );
+
+    TRACE( "(%p)->(%s %p)\n", This, debugstr_guid( iid ), obj );
+
+    if (IsEqualIID( iid, &IID_IUnknown ) || IsEqualIID( iid, &IID_IStrokeBuilder ))
+        *obj = &This->IStrokeBuilder_iface;
+    else if (IsEqualIID( iid, &IID_IStylusSyncPlugin ) || IsEqualIID( iid, &IID_IStylusAsyncPlugin ) ||
+             IsEqualIID( iid, &IID_IStylusPlugin ))
+        *obj = &This->plugin.IStylusSyncPlugin_iface;
+    else
+    {
+        FIXME( "interface %s not implemented\n", debugstr_guid( iid ) );
+        *obj = NULL;
+        return E_NOINTERFACE;
+    }
+    IUnknown_AddRef( (IUnknown *)*obj );
+    return S_OK;
+}
+
+static ULONG WINAPI stroke_builder_AddRef( IStrokeBuilder *iface )
+{
+    struct stroke_builder *This = impl_from_IStrokeBuilder( iface );
+    ULONG ref = InterlockedIncrement( &This->ref );
+    TRACE( "(%p) ref = %lu\n", This, ref );
+    return ref;
+}
+
+static ULONG WINAPI stroke_builder_Release( IStrokeBuilder *iface )
+{
+    struct stroke_builder *This = impl_from_IStrokeBuilder( iface );
+    ULONG ref = InterlockedDecrement( &This->ref );
+
+    TRACE( "(%p) ref = %lu\n", This, ref );
+    if (!ref)
+    {
+        if (This->ink) IInkDisp_Release( This->ink );
+        free( This );
+    }
+    return ref;
+}
+
+static HRESULT WINAPI stroke_builder_CreateStroke( IStrokeBuilder *iface, ULONG count, const LONG *packets,
+                                                   ULONG props_count, const PACKET_PROPERTY *props,
+                                                   FLOAT scale_x, FLOAT scale_y, IInkStrokeDisp **stroke )
+{
+    FIXME( "%p, %lu, %p, %lu, %p, %f, %f, %p: stub\n", iface, count, packets, props_count, props, scale_x,
+           scale_y, stroke );
+    if (stroke) *stroke = NULL;
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI stroke_builder_BeginStroke( IStrokeBuilder *iface, TABLET_CONTEXT_ID tcid, STYLUS_ID sid,
+                                                  const LONG *packet, ULONG props_count, PACKET_PROPERTY *props,
+                                                  FLOAT scale_x, FLOAT scale_y, IInkStrokeDisp **stroke )
+{
+    FIXME( "%p, %lu, %lu, %p, %lu, %p, %f, %f, %p: stub\n", iface, tcid, sid, packet, props_count, props,
+           scale_x, scale_y, stroke );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI stroke_builder_AppendPackets( IStrokeBuilder *iface, TABLET_CONTEXT_ID tcid, STYLUS_ID sid,
+                                                    ULONG count, const LONG *packets )
+{
+    FIXME( "%p, %lu, %lu, %lu, %p: stub\n", iface, tcid, sid, count, packets );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI stroke_builder_EndStroke( IStrokeBuilder *iface, TABLET_CONTEXT_ID tcid, STYLUS_ID sid,
+                                                IInkStrokeDisp **stroke, RECT *dirty )
+{
+    FIXME( "%p, %lu, %lu, %p, %p: stub\n", iface, tcid, sid, stroke, dirty );
+    if (stroke) *stroke = NULL;
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI stroke_builder_get_Ink( IStrokeBuilder *iface, IInkDisp **ink )
+{
+    struct stroke_builder *This = impl_from_IStrokeBuilder( iface );
+    TRACE( "%p, %p\n", This, ink );
+    if (!ink) return E_POINTER;
+    if ((*ink = This->ink)) IInkDisp_AddRef( This->ink );
+    return S_OK;
+}
+
+static HRESULT WINAPI stroke_builder_putref_Ink( IStrokeBuilder *iface, IInkDisp *ink )
+{
+    struct stroke_builder *This = impl_from_IStrokeBuilder( iface );
+    TRACE( "%p, %p\n", This, ink );
+    if (ink) IInkDisp_AddRef( ink );
+    if (This->ink) IInkDisp_Release( This->ink );
+    This->ink = ink;
+    return S_OK;
+}
+
+static const IStrokeBuilderVtbl stroke_builder_vtbl =
+{
+    stroke_builder_QueryInterface,
+    stroke_builder_AddRef,
+    stroke_builder_Release,
+    stroke_builder_CreateStroke,
+    stroke_builder_BeginStroke,
+    stroke_builder_AppendPackets,
+    stroke_builder_EndStroke,
+    stroke_builder_get_Ink,
+    stroke_builder_putref_Ink
+};
+
+static HRESULT stroke_builder_create( IUnknown *outer, REFIID iid, void **obj )
+{
+    struct stroke_builder *This;
+    HRESULT hr;
+
+    if (outer) return CLASS_E_NOAGGREGATION;
+    if (!(This = calloc( 1, sizeof(*This) ))) return E_OUTOFMEMORY;
+    This->IStrokeBuilder_iface.lpVtbl = &stroke_builder_vtbl;
+    This->plugin.IStylusSyncPlugin_iface.lpVtbl = &plugin_vtbl;
+    This->plugin.owner = (IUnknown *)&This->IStrokeBuilder_iface;
+    This->ref = 1;
+
+    hr = IStrokeBuilder_QueryInterface( &This->IStrokeBuilder_iface, iid, obj );
+    IStrokeBuilder_Release( &This->IStrokeBuilder_iface );
+    return hr;
+}
+
 struct class_factory
 {
     IClassFactory IClassFactory_iface;
@@ -1198,6 +1339,7 @@ static const struct IClassFactoryVtbl class_factory_vtbl =
 static struct class_factory runtime_styus_cf = { { &class_factory_vtbl }, realtime_stylus_create };
 static struct class_factory dynamic_renderer_cf = { { &class_factory_vtbl }, dynamic_renderer_create };
 static struct class_factory gesture_recognizer_cf = { { &class_factory_vtbl }, gesture_recognizer_create };
+static struct class_factory stroke_builder_cf = { { &class_factory_vtbl }, stroke_builder_create };
 
 HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, LPVOID *obj)
 {
@@ -1211,6 +1353,8 @@ HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, LPVOID *obj)
         cf = &dynamic_renderer_cf.IClassFactory_iface;
     else if (IsEqualCLSID( clsid, &CLSID_GestureRecognizer ))
         cf = &gesture_recognizer_cf.IClassFactory_iface;
+    else if (IsEqualCLSID( clsid, &CLSID_StrokeBuilder ))
+        cf = &stroke_builder_cf.IClassFactory_iface;
     else
         FIXME( "(%s %s %p) unsupported interface\n", debugstr_guid( clsid ), debugstr_guid( iid ), obj );
 
