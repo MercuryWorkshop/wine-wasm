@@ -3593,7 +3593,15 @@ static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size
 
     if (!pe_mapping->image.map_addr &&
         (pe_mapping->image.image_charact & IMAGE_FILE_DLL) &&
-        (pe_mapping->image.image_flags & IMAGE_FLAGS_ImageDynamicallyRelocated))
+        ((pe_mapping->image.image_flags & IMAGE_FLAGS_ImageDynamicallyRelocated)
+#ifdef __wasm32__
+         /* gex: a fixed-base DLL that can move (a native wasm32 skeleton:
+          * ntdll, gdi32, user32...) goes where the prefix's dll-bases pins
+          * it, if it does: at its own base (0x52a10000, 0x70270000) every
+          * process's WebAssembly memory reached that far. */
+         || !(pe_mapping->image.image_charact & IMAGE_FILE_RELOCS_STRIPPED)
+#endif
+        ))
     {
         SERVER_START_REQ( get_image_map_address )
         {

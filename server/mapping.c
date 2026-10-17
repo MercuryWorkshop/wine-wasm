@@ -1396,6 +1396,19 @@ static client_ptr_t assign_map_address( struct mapping *mapping )
     return 0;
 }
 
+#ifdef __wasm32__
+/* the pinned address of a fixed-base image (see get_image_map_address), or 0 */
+static client_ptr_t pinned_map_address_only( struct mapping *mapping )
+{
+    struct addr_range *range = (mapping->image.base >> 32) ? &ranges64 : &ranges32;
+    mem_size_t size = round_size( mapping->size, granularity_mask ) + granularity_mask + 1;
+    client_ptr_t ret;
+
+    if ((ret = get_fd_map_address( mapping->fd ))) return ret;
+    return pinned_map_address( mapping, range, size );
+}
+#endif
+
 /* free a PE mapping address range when the last mapping is closed */
 void free_map_addr( client_ptr_t base, mem_size_t size )
 {
@@ -1750,6 +1763,15 @@ DECL_HANDLER(get_image_map_address)
         if (!mapping->image.map_addr) mapping->image.map_addr = assign_map_address( mapping );
         reply->addr = mapping->image.map_addr;
     }
+#ifdef __wasm32__
+    /* gex: a fixed-base DLL gets its dll-bases pin, never a pool address
+     * (0: its own base) */
+    else if ((mapping->flags & SEC_IMAGE) && (mapping->image.image_charact & IMAGE_FILE_DLL))
+    {
+        if (!mapping->image.map_addr) mapping->image.map_addr = pinned_map_address_only( mapping );
+        reply->addr = mapping->image.map_addr;
+    }
+#endif
     else set_error( STATUS_INVALID_PARAMETER );
 
     release_object( mapping );
