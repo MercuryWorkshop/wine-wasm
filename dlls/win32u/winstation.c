@@ -945,11 +945,12 @@ static inline TEB64 *NtCurrentTeb64(void) { return NULL; }
 static inline TEB64 *NtCurrentTeb64(void) { return (TEB64 *)NtCurrentTeb()->GdiBatchCount; }
 #endif
 
-#ifdef __wasm32__
+#ifdef __wasm__
 /* gex: explorer started with /desktop, the process making the desktop
- * window. Its display driver loads lazily on wasm32 (the null driver loads
+ * window. Its display driver loads lazily on wasm (the null driver loads
  * no module), which asks for the desktop window before the desktop class
- * window exists: it must not start another explorer (each one did). */
+ * window exists: it must not start another explorer (each one did; on
+ * wasm64 too, W64: a chain of them, each waiting 20 s or more). */
 static BOOL is_desktop_process(void)
 {
     static int ret = -1;
@@ -1092,6 +1093,8 @@ HWND get_desktop_window(void)
             else ERR_(win)( "failed to start the desktop thread %x\n", status );
         }
         if (desktop_thread) {} else
+#endif
+#ifdef __wasm__
         if (is_desktop_process()) return 0;  /* (explorer /desktop: creating it) */
 #endif
         if (NtCurrentTeb64() && !NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR])
