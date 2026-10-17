@@ -414,6 +414,7 @@ static void scmdatabase_autostart_services(struct scmdatabase *db)
     unsigned int delayed_cnt = 0;
     struct service_entry *service;
     HDEVINFO set;
+    BOOL inproc_themes = GetEnvironmentVariableW(L"WINEGEX_THEMES_INPROC", NULL, 0) != 0;
 
     services_list = malloc(size * sizeof(services_list[0]));
     if (!services_list)
@@ -426,6 +427,10 @@ static void scmdatabase_autostart_services(struct scmdatabase *db)
 
     LIST_FOR_EACH_ENTRY(service, &db->services, struct service_entry, entry)
     {
+        /* paint-fast (gex), WINEGEX_THEMES_INPROC: winlogon runs the Themes
+         * service on a thread of its own, so it is not started here too
+         * (that would start svchost -k netsvcs for a second copy) */
+        if (inproc_themes && !wcsicmp(service->name, L"Themes")) continue;
         if (service->config.dwStartType == SERVICE_BOOT_START ||
             service->config.dwStartType == SERVICE_SYSTEM_START ||
             service->config.dwStartType == SERVICE_AUTO_START ||
