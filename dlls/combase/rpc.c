@@ -627,6 +627,11 @@ static HRESULT create_surrogate_server(REFCLSID rclsid, HANDLE *process)
         if (FAILED(hr)) return hr;
         is_opposite = TRUE;
     }
+    /* A class with no AppID has no surrogate. In a 32-bit process that is not
+     * WOW64 the failure was not checked: the unset key was read, the query
+     * failed, and dllhost started for every class without a local server
+     * (and quit, unable to create it). */
+    if (FAILED(hr)) return hr;
 
     size = (MAX_PATH + 1) * sizeof(WCHAR);
     ret = RegQueryValueExW(key, L"DllSurrogate", NULL, NULL, (LPBYTE)command, &size);
