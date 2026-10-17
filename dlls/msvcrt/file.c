@@ -1721,6 +1721,16 @@ void CDECL rewind(FILE* file)
   _unlock_file(file);
 }
 
+#ifdef __wasm32__
+/* ucrtbase's i386 spec names the thunk above, which the wasm32 build has no
+ * assembly for: without this the export was a trap, and every rewind() of an
+ * i386 program trapped. Native code has no caller's stack to preserve. */
+void CDECL rewind_preserve_stack(FILE* file)
+{
+  rewind(file);
+}
+#endif
+
 static int msvcrt_get_flags(const wchar_t* mode, int *open_flags, int* stream_flags)
 {
   int plus = wcschr(mode, '+') != NULL;
