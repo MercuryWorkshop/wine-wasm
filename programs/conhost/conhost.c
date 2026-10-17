@@ -2440,8 +2440,8 @@ static NTSTATUS scroll_output( struct screen_buffer *screen_buffer, const struct
     origin = params->origin;
     if (scroll.Left < 0) { origin.X -= scroll.Left; scroll.Left = 0; }
     if (scroll.Top < 0)  { origin.Y -= scroll.Top;  scroll.Top = 0; }
-    scroll.Right  = min( scroll.Right,  screen_buffer->width - 1 );
-    scroll.Bottom = min( scroll.Bottom, screen_buffer->height - 1 );
+    scroll.Right  = min( scroll.Right,  (int)screen_buffer->width - 1 );
+    scroll.Bottom = min( scroll.Bottom, (int)screen_buffer->height - 1 );
 
     xsrc = scroll.Left;
     ysrc = scroll.Top;
@@ -2456,8 +2456,8 @@ static NTSTATUS scroll_output( struct screen_buffer *screen_buffer, const struct
     clip.Bottom = min( params->clip.Bottom, screen_buffer->height - 1 );
     if (clip.Left > clip.Right || clip.Top > clip.Bottom ||
         scroll.Right < scroll.Left || scroll.Top > scroll.Bottom ||
-        origin.X < -screen_buffer->width || origin.X >= screen_buffer->width ||
-        origin.Y < -screen_buffer->height || origin.Y >= screen_buffer->height)
+        origin.X < -(int)screen_buffer->width || origin.X >= (int)screen_buffer->width ||
+        origin.Y < -(int)screen_buffer->height || origin.Y >= (int)screen_buffer->height)
         return STATUS_INVALID_PARAMETER;
     /* The destination may start above or left of the buffer: what lands outside
      * is clipped away and the source filled, which is how Windows 7's cmd.exe
