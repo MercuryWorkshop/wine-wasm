@@ -39,3 +39,12 @@ coclass DynamicRenderer
 {
     [default] interface IDynamicRenderer;
 }
+
+[
+    uuid(ea30c654-c62c-441f-ac00-95f9a196782c),
+    threading(both)
+]
+coclass GestureRecognizer
+{
+    [default] interface IGestureRecognizer;
+}

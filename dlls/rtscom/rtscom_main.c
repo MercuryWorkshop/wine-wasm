@@ -619,12 +619,21 @@ static HRESULT drawing_attrs_create( const struct drawing_attrs *from, IInkDrawi
     return S_OK;
 }
 
+/* A stylus plugin: the renderer's and the gesture recognizer's. With no
+ * tablet there are no packets, so every notification is accepted and
+ * ignored. IStylusAsyncPlugin has the same methods as IStylusSyncPlugin. */
+struct plugin
+{
+    IStylusSyncPlugin IStylusSyncPlugin_iface;
+    IUnknown *owner;
+};
+
 /* The dynamic renderer draws ink while the pen moves. With no packets there is
  * nothing to draw; it keeps its settings. */
 struct renderer
 {
     IDynamicRenderer IDynamicRenderer_iface;
-    IStylusSyncPlugin IStylusSyncPlugin_iface;
+    struct plugin plugin;
     LONG ref;
     BOOL enabled, cache;
     HANDLE_PTR hwnd, region;
@@ -637,9 +646,9 @@ static struct renderer *impl_from_IDynamicRenderer( IDynamicRenderer *iface )
     return CONTAINING_RECORD( iface, struct renderer, IDynamicRenderer_iface );
 }
 
-static struct renderer *impl_from_IStylusSyncPlugin( IStylusSyncPlugin *iface )
+static struct plugin *impl_from_IStylusSyncPlugin( IStylusSyncPlugin *iface )
 {
-    return CONTAINING_RECORD( iface, struct renderer, IStylusSyncPlugin_iface );
+    return CONTAINING_RECORD( iface, struct plugin, IStylusSyncPlugin_iface );
 }
 
 static HRESULT WINAPI renderer_QueryInterface( IDynamicRenderer *iface, REFIID iid, void **obj )
@@ -651,7 +660,7 @@ static HRESULT WINAPI renderer_QueryInterface( IDynamicRenderer *iface, REFIID i
     if (IsEqualIID( iid, &IID_IUnknown ) || IsEqualIID( iid, &IID_IDynamicRenderer ))
         *obj = &This->IDynamicRenderer_iface;
     else if (IsEqualIID( iid, &IID_IStylusSyncPlugin ) || IsEqualIID( iid, &IID_IStylusPlugin ))
-        *obj = &This->IStylusSyncPlugin_iface;
+        *obj = &This->plugin.IStylusSyncPlugin_iface;
     else
     {
         FIXME( "interface %s not implemented\n", debugstr_guid( iid ) );
@@ -831,17 +840,18 @@ static const struct IDynamicRendererVtbl renderer_vtbl =
 
 static HRESULT WINAPI plugin_QueryInterface( IStylusSyncPlugin *iface, REFIID iid, void **obj )
 {
-    return renderer_QueryInterface( &impl_from_IStylusSyncPlugin( iface )->IDynamicRenderer_iface, iid, obj );
+    IUnknown *owner = impl_from_IStylusSyncPlugin( iface )->owner;
+    return IUnknown_QueryInterface( owner, iid, obj );
 }
 
 static ULONG WINAPI plugin_AddRef( IStylusSyncPlugin *iface )
 {
-    return renderer_AddRef( &impl_from_IStylusSyncPlugin( iface )->IDynamicRenderer_iface );
+    return IUnknown_AddRef( impl_from_IStylusSyncPlugin( iface )->owner );
 }
 
 static ULONG WINAPI plugin_Release( IStylusSyncPlugin *iface )
 {
-    return renderer_Release( &impl_from_IStylusSyncPlugin( iface )->IDynamicRenderer_iface );
+    return IUnknown_Release( impl_from_IStylusSyncPlugin( iface )->owner );
 }
 
 static HRESULT WINAPI plugin_RealTimeStylusEnabled( IStylusSyncPlugin *iface, IRealTimeStylus *rts, ULONG count, const TABLET_CONTEXT_ID *ids )
@@ -972,7 +982,8 @@ static HRESULT dynamic_renderer_create( IUnknown *outer, REFIID iid, void **obj 
     if (outer) return CLASS_E_NOAGGREGATION;
     if (!(This = calloc( 1, sizeof(*This) ))) return E_OUTOFMEMORY;
     This->IDynamicRenderer_iface.lpVtbl = &renderer_vtbl;
-    This->IStylusSyncPlugin_iface.lpVtbl = &plugin_vtbl;
+    This->plugin.IStylusSyncPlugin_iface.lpVtbl = &plugin_vtbl;
+    This->plugin.owner = (IUnknown *)&This->IDynamicRenderer_iface;
     This->ref = 1;
     This->enabled = TRUE;
     if (FAILED(hr = drawing_attrs_create( NULL, &This->attrs )))
@@ -983,6 +994,140 @@ static HRESULT dynamic_renderer_create( IUnknown *outer, REFIID iid, void **obj 
 
     hr = IDynamicRenderer_QueryInterface( &This->IDynamicRenderer_iface, iid, obj );
     IDynamicRenderer_Release( &This->IDynamicRenderer_iface );
+    return hr;
+}
+
+/* The gesture recognizer turns strokes into gestures. With no tablet there
+ * are no strokes; it keeps its settings. */
+struct gesture
+{
+    IGestureRecognizer IGestureRecognizer_iface;
+    struct plugin plugin;
+    LONG ref;
+    BOOL enabled;
+    int max_strokes;
+};
+
+static struct gesture *impl_from_IGestureRecognizer( IGestureRecognizer *iface )
+{
+    return CONTAINING_RECORD( iface, struct gesture, IGestureRecognizer_iface );
+}
+
+static HRESULT WINAPI gesture_QueryInterface( IGestureRecognizer *iface, REFIID iid, void **obj )
+{
+    struct gesture *This = impl_from_IGestureRecognizer( iface );
+
+    TRACE( "(%p)->(%s %p)\n", This, debugstr_guid( iid ), obj );
+
+    if (IsEqualIID( iid, &IID_IUnknown ) || IsEqualIID( iid, &IID_IGestureRecognizer ))
+        *obj = &This->IGestureRecognizer_iface;
+    else if (IsEqualIID( iid, &IID_IStylusSyncPlugin ) || IsEqualIID( iid, &IID_IStylusAsyncPlugin ) ||
+             IsEqualIID( iid, &IID_IStylusPlugin ))
+        *obj = &This->plugin.IStylusSyncPlugin_iface;
+    else
+    {
+        FIXME( "interface %s not implemented\n", debugstr_guid( iid ) );
+        *obj = NULL;
+        return E_NOINTERFACE;
+    }
+    IUnknown_AddRef( (IUnknown *)*obj );
+    return S_OK;
+}
+
+static ULONG WINAPI gesture_AddRef( IGestureRecognizer *iface )
+{
+    struct gesture *This = impl_from_IGestureRecognizer( iface );
+    ULONG ref = InterlockedIncrement( &This->ref );
+    TRACE( "(%p) ref = %lu\n", This, ref );
+    return ref;
+}
+
+static ULONG WINAPI gesture_Release( IGestureRecognizer *iface )
+{
+    struct gesture *This = impl_from_IGestureRecognizer( iface );
+    ULONG ref = InterlockedDecrement( &This->ref );
+    TRACE( "(%p) ref = %lu\n", This, ref );
+    if (!ref) free( This );
+    return ref;
+}
+
+static HRESULT WINAPI gesture_get_Enabled( IGestureRecognizer *iface, BOOL *enabled )
+{
+    struct gesture *This = impl_from_IGestureRecognizer( iface );
+    TRACE( "%p, %p\n", This, enabled );
+    if (!enabled) return E_POINTER;
+    *enabled = This->enabled;
+    return S_OK;
+}
+
+static HRESULT WINAPI gesture_put_Enabled( IGestureRecognizer *iface, BOOL enabled )
+{
+    struct gesture *This = impl_from_IGestureRecognizer( iface );
+    TRACE( "%p, %d\n", This, enabled );
+    This->enabled = enabled;
+    return S_OK;
+}
+
+static HRESULT WINAPI gesture_get_MaxStrokeCount( IGestureRecognizer *iface, int *count )
+{
+    struct gesture *This = impl_from_IGestureRecognizer( iface );
+    TRACE( "%p, %p\n", This, count );
+    if (!count) return E_POINTER;
+    *count = This->max_strokes;
+    return S_OK;
+}
+
+static HRESULT WINAPI gesture_put_MaxStrokeCount( IGestureRecognizer *iface, int count )
+{
+    struct gesture *This = impl_from_IGestureRecognizer( iface );
+    TRACE( "%p, %d\n", This, count );
+    if (count < 1 || count > 2) return E_INVALIDARG;
+    This->max_strokes = count;
+    return S_OK;
+}
+
+static HRESULT WINAPI gesture_EnableGestures( IGestureRecognizer *iface, ULONG count, const int *gestures )
+{
+    TRACE( "%p, %lu, %p\n", iface, count, gestures );
+    if (count && !gestures) return E_POINTER;
+    return S_OK;
+}
+
+static HRESULT WINAPI gesture_Reset( IGestureRecognizer *iface )
+{
+    TRACE( "%p\n", iface );
+    return S_OK;
+}
+
+static const IGestureRecognizerVtbl gesture_vtbl =
+{
+    gesture_QueryInterface,
+    gesture_AddRef,
+    gesture_Release,
+    gesture_get_Enabled,
+    gesture_put_Enabled,
+    gesture_get_MaxStrokeCount,
+    gesture_put_MaxStrokeCount,
+    gesture_EnableGestures,
+    gesture_Reset
+};
+
+static HRESULT gesture_recognizer_create( IUnknown *outer, REFIID iid, void **obj )
+{
+    struct gesture *This;
+    HRESULT hr;
+
+    if (outer) return CLASS_E_NOAGGREGATION;
+    if (!(This = calloc( 1, sizeof(*This) ))) return E_OUTOFMEMORY;
+    This->IGestureRecognizer_iface.lpVtbl = &gesture_vtbl;
+    This->plugin.IStylusSyncPlugin_iface.lpVtbl = &plugin_vtbl;
+    This->plugin.owner = (IUnknown *)&This->IGestureRecognizer_iface;
+    This->ref = 1;
+    This->enabled = TRUE;
+    This->max_strokes = 1;
+
+    hr = IGestureRecognizer_QueryInterface( &This->IGestureRecognizer_iface, iid, obj );
+    IGestureRecognizer_Release( &This->IGestureRecognizer_iface );
     return hr;
 }
 
@@ -1052,6 +1197,7 @@ static const struct IClassFactoryVtbl class_factory_vtbl =
 
 static struct class_factory runtime_styus_cf = { { &class_factory_vtbl }, realtime_stylus_create };
 static struct class_factory dynamic_renderer_cf = { { &class_factory_vtbl }, dynamic_renderer_create };
+static struct class_factory gesture_recognizer_cf = { { &class_factory_vtbl }, gesture_recognizer_create };
 
 HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, LPVOID *obj)
 {
@@ -1063,6 +1209,8 @@ HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, LPVOID *obj)
         cf = &runtime_styus_cf.IClassFactory_iface;
     else if (IsEqualCLSID( clsid, &CLSID_DynamicRenderer ))
         cf = &dynamic_renderer_cf.IClassFactory_iface;
+    else if (IsEqualCLSID( clsid, &CLSID_GestureRecognizer ))
+        cf = &gesture_recognizer_cf.IClassFactory_iface;
     else
         FIXME( "(%s %s %p) unsupported interface\n", debugstr_guid( clsid ), debugstr_guid( iid ), obj );
 
