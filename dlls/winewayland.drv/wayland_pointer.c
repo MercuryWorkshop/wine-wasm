@@ -123,6 +123,22 @@ static HWND wayland_pointer_get_focused_hwnd(void)
     return hwnd;
 }
 
+/* gex: under a compositor that places windows (gex_window_placement_manager_v1)
+ * nothing grabs the pointer, so a click outside an open menu went to the
+ * window under it, in another thread whose input has no capture, and the
+ * menu stayed open, taking the next click (X's B2: explorer's Start button
+ * menu, until the next input). The pointer goes to the capture window of a
+ * menu or move/size loop, as winex11's pointer grab sends it there. */
+static HWND pointer_target(HWND hwnd)
+{
+    GUITHREADINFO info = {.cbSize = sizeof(info)};
+
+    if (!process_wayland.gex_window_placement_manager_v1) return hwnd;
+    if (!NtUserGetGUIThreadInfo(0, &info) || !info.hwndCapture) return hwnd;
+    if (!(info.flags & (GUI_INMENUMODE | GUI_INMOVESIZE))) return hwnd;
+    return info.hwndCapture;
+}
+
 static void pointer_handle_motion_internal(wl_fixed_t sx, wl_fixed_t sy)
 {
     INPUT input = {0};
@@ -191,7 +207,7 @@ static void pointer_handle_motion_internal(wl_fixed_t sx, wl_fixed_t sy)
           hwnd, wl_fixed_to_double(sx), wl_fixed_to_double(sy),
           screen.x, screen.y);
 
-    NtUserSendHardwareInput(hwnd, SEND_HWMSG_RAWINPUT, &input, 0);
+    NtUserSendHardwareInput(pointer_target(hwnd), SEND_HWMSG_RAWINPUT, &input, 0);
 }
 
 static void pointer_handle_motion(void *data, struct wl_pointer *wl_pointer,
@@ -296,7 +312,7 @@ static void pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 
     TRACE("hwnd=%p button=%#x state=%u\n", hwnd, button, state);
 
-    NtUserSendHardwareInput(hwnd, SEND_HWMSG_RAWINPUT, &input, 0);
+    NtUserSendHardwareInput(pointer_target(hwnd), SEND_HWMSG_RAWINPUT, &input, 0);
 }
 
 static void pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
@@ -345,7 +361,7 @@ static void pointer_handle_axis_value120(void *data, struct wl_pointer *wl_point
 
     TRACE("hwnd=%p axis=%u value120=%d\n", hwnd, axis, value120);
 
-    NtUserSendHardwareInput(hwnd, SEND_HWMSG_RAWINPUT, &input, 0);
+    NtUserSendHardwareInput(pointer_target(hwnd), SEND_HWMSG_RAWINPUT, &input, 0);
 }
 
 static void pointer_handle_axis_discrete(void *data, struct wl_pointer *wl_pointer,
