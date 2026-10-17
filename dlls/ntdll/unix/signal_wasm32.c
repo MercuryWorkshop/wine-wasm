@@ -846,6 +846,9 @@ NTSTATUS WINAPI __wine_unix_call_dispatcher( unixlib_handle_t handle, unsigned i
      * callee-saved registers to be. */
     int ctx = cur_ctx(), i;
     unsigned long long regs[8], pc = GEX_C64( GEX_CTX_PC );
+    struct thread_data *data = get_thread_data();
+    struct syscall_frame *frame = get_syscall_frame( data );
+    UINT esp = gp_reg( ctx, R_ESP ), frame_esp = 0;
     NTSTATUS status;
 
     /* a DLL whose Unix library is not linked into this program (W3's closed
@@ -853,10 +856,38 @@ NTSTATUS WINAPI __wine_unix_call_dispatcher( unixlib_handle_t handle, unsigned i
      * still makes the call (DLL_PROCESS_DETACH) */
     if (!handle) return STATUS_DLL_NOT_FOUND;
 
+    /* Where the program's stack is, for a user-mode callback the Unix side
+     * makes (KeUserModeCallback lays it out below the frame's ESP: opengl32's
+     * GL debug messages, winedmo's reads). There is no system-call switch to
+     * record it, so the frame still holds the ESP of the thread's last system
+     * call, and the program may have pushed frames below that since: a
+     * callback laid out there was written over them (Momodora and Hades x86
+     * on wined3d's thread came back to garbage). The program's ESP is the
+     * context's here, unless this is a call from the Unix side itself (on
+     * the kernel stack), which leaves the frame alone.
+     *
+     * A native PE module's frames are below that ESP (gexrt's entry moves
+     * its C stack under the program's), and a call from one has its
+     * arguments there: in the page, where the Unix side's C stack is not
+     * that one, a callback laid out below the ESP was written over them
+     * (tests/w3/usercb's thread: glReadPixels read a garbage TEB after its
+     * GL error came back). Then the frame's ESP is below the arguments, with
+     * 1 KiB for the frames the call itself went through below them. */
+    if (frame && esp && !is_inside_syscall( data, esp ))
+    {
+        char *base = data->teb->DeallocationStack;
+
+        if ((char *)args < (char *)(ULONG_PTR)esp && (char *)args >= base + 0x400)
+            esp = ((UINT)(ULONG_PTR)args - 0x400) & ~15;
+        frame_esp = frame->esp;
+        frame->esp = esp;
+    }
+
     for (i = 0; i < 8; i++) regs[i] = GEX_C64( GEX_CTX_XN(i) );
     status = ((const unixlib_entry_t *)(UINT_PTR)handle)[code]( args );
     for (i = 0; i < 8; i++) GEX_C64( GEX_CTX_XN(i) ) = regs[i];
     GEX_C64( GEX_CTX_PC ) = pc;
+    if (frame_esp) frame->esp = frame_esp;
     return status;
 }
 
@@ -997,18 +1028,69 @@ struct callback_return
     UINT    esp;      /* the guest stack pointer the call-out waits for */
 };
 
+/* Whether a callback whose lowest C frame or stack layout is at sp has
+ * room below it: min_kernel_stack above the low end of the stack sp is on.
+ * A system call's Unix side runs on the kernel stack; a Unix call's runs on
+ * the thread's Win32 stack (the TEB's), so a deep chain of callbacks from
+ * Unix calls still stops with STATUS_STACK_OVERFLOW before it writes below
+ * that stack. A stack neither of those contains has no known bound. */
+static BOOL callback_stack_room( struct thread_data *data, char *sp )
+{
+    char *kernel_stack = get_kernel_stack( data ), *low = data->teb->DeallocationStack;
+
+    if (sp >= kernel_stack && sp < kernel_stack + kernel_stack_size)
+        return sp >= kernel_stack + min_kernel_stack;
+    if (sp >= low && sp < (char *)data->teb->Tib.StackBase)
+        return sp >= low + min_kernel_stack;
+    return TRUE;
+}
+
 NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_ptr, ULONG *ret_len )
 {
     struct thread_data *data = get_thread_data();
     struct syscall_frame *frame = get_syscall_frame( data ), *cb_frame;
-    ULONG esp = (frame->esp - offsetof(struct callback_stack_layout, args_data[len])) & ~3;
-    struct callback_stack_layout *stack = (struct callback_stack_layout *)esp;
+    ULONG need = offsetof(struct callback_stack_layout, args_data[len]), esp;
+    struct callback_stack_layout *stack;
     struct callback_return ret = { 0 };
     int ctx = cur_ctx();
     UINT saved_esp = gp_reg( ctx, R_ESP ), saved_pc = (UINT)GEX_C64( GEX_CTX_PC );
     void *saved_list = data->teb->Tib.ExceptionList;
+    char *here = (char *)&frame, *block;
+    /* Natively, a Unix call's Unix side runs on the thread's Win32 stack,
+     * just below the program's frames and a native PE caller's: a layout put
+     * below the program's ESP (frame->esp) would sit on this call's live C
+     * frames. There the layout comes from this function's own frame, below
+     * every live frame, and the callback's stack grows down from it. A system
+     * call's Unix side runs on the kernel stack (and in the page a Unix
+     * call's runs on a stack of its own), and the layout goes below the
+     * frame's ESP. */
+    BOOL below_c = here >= (char *)data->teb->DeallocationStack && here < (char *)data->teb->Tib.StackBase;
 
-    if ((char *)get_kernel_stack( data ) + min_kernel_stack > (char *)&frame) return STATUS_STACK_OVERFLOW;
+    /* Room for the frame and layout below here, and for the layout below
+     * the frame's ESP when it goes there, each on the stack it is on.
+     * Checked against the kernel stack alone, the check refused every
+     * callback made from a Unix call: tests/w3/usercb's GL debug messages
+     * never arrived. */
+    if (!callback_stack_room( data, here - (frame_size + need + 256) ) ||
+        (!below_c && !callback_stack_room( data, (char *)(ULONG_PTR)frame->esp - (need + 256) )))
+        return STATUS_STACK_OVERFLOW;
+
+    /* a frame of its own for the system calls the callback makes, in this
+     * function's own frame: native code that a wasm caller reaches directly
+     * (a Unix call from the PE module, no system-call switch) runs on this
+     * stack, below the frame, and wrote over a frame put below it */
+    if (below_c)
+    {
+        block = __builtin_alloca( need + frame_size + 80 );
+        esp = ((ULONG_PTR)block + 15) & ~15;
+        cb_frame = (struct syscall_frame *)((esp + need + 63) & ~63);
+    }
+    else
+    {
+        esp = (frame->esp - need) & ~3;
+        cb_frame = (struct syscall_frame *)(((ULONG_PTR)__builtin_alloca( frame_size + 63 ) + 63) & ~63);
+    }
+    stack = (struct callback_stack_layout *)esp;
 
     stack->eip  = frame->eip;
     stack->id   = id;
@@ -1017,13 +1099,12 @@ NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_p
     stack->esp  = frame->esp;
     memcpy( stack->args_data, args, len );
 
-    /* a frame of its own for the system calls the callback makes */
-    /* in this function's own frame: native code that a wasm caller reaches
-     * directly (a Unix call from the PE module, no system-call switch) runs
-     * on this stack, below the frame, and wrote over a frame put below it */
-    cb_frame = (struct syscall_frame *)(((ULONG_PTR)__builtin_alloca( frame_size + 63 ) + 63) & ~63);
     cb_frame->prev_frame = frame;
     cb_frame->syscall_cfa = &ret;
+    /* until the callback's first system call fills it: a Unix call made from
+     * the callback before then starts from here, not from what the
+     * allocation held */
+    cb_frame->esp = esp;
     get_teb_data( data )->syscall_frame = cb_frame;
 
     /* the callback dispatcher is the PE side's: entered with the stack
