@@ -25,6 +25,7 @@
 #include "config.h"
 
 #include <assert.h>
+#include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -294,7 +295,10 @@ void wayland_surface_destroy(struct wayland_surface *surface)
         surface->small_icon_buffer = NULL;
     }
 
-    wl_display_flush(process_wayland.wl_display);
+    if (wl_display_flush(process_wayland.wl_display) < 0)
+        WARN("hwnd=%p: flushing the surface's destruction failed, errno %d\n", surface->hwnd, errno);
+    else
+        TRACE("hwnd=%p: destroyed and flushed\n", surface->hwnd);
 
     free(surface);
 }
@@ -580,7 +584,8 @@ void wayland_surface_clear_role(struct wayland_surface *surface)
     surface->content_width = 0;
     surface->content_height = 0;
 
-    wl_display_flush(process_wayland.wl_display);
+    if (wl_display_flush(process_wayland.wl_display) < 0)
+        WARN("surface=%p: flushing the cleared role failed, errno %d\n", surface, errno);
 }
 
 /**********************************************************************
