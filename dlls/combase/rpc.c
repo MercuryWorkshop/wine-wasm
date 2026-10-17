@@ -684,7 +684,7 @@ HRESULT rpc_get_local_class_object(REFCLSID rclsid, REFIID riid, void **obj)
     IStream *stream = NULL;
     ULARGE_INTEGER newpos;
     LARGE_INTEGER seekto;
-    HANDLE idle = 0;
+    HANDLE process = 0, idle = 0;
     int tries = 0;
     ULONG length;
     HRESULT hr;
@@ -709,7 +709,6 @@ HRESULT rpc_get_local_class_object(REFCLSID rclsid, REFIID riid, void **obj)
     while (tries++ < MAXTRIES)
     {
         DWORD index, start_ticks;
-        HANDLE process = 0;
 
         if (SUCCEEDED(hr = rpcss_get_class_object(rclsid, &objref)))
             break;
@@ -719,14 +718,15 @@ HRESULT rpc_get_local_class_object(REFCLSID rclsid, REFIID riid, void **obj)
             if ((hr = create_local_service(rclsid)) && (hr = create_server(rclsid, &process)) &&
                 (hr = create_surrogate_server(rclsid, &process)) )
                 return hr;
+            if (!process) idle = CreateEventW(NULL, TRUE, FALSE, NULL);
         }
 
-        /* Wait for one second, even if messages arrive. Only the first try
-         * has the server's process to wait on; the later ones wait on an event
-         * nobody sets. With no handle at all CoWaitForMultipleHandles fails at
-         * once (RPC_E_NO_SYNC), and the loop spun for the whole second of every
-         * try, taking the CPU from the server it waits for. */
-        if (!process && !idle) idle = CreateEventW(NULL, TRUE, FALSE, NULL);
+        /* Wait for one second, even if messages arrive, on the server's process
+         * (a server that exits without registering has failed, as Windows'
+         * SCM decides: a surrogate that cannot create the class quits at once,
+         * and its caller waited out all 120 tries) or, for a service, on an
+         * event nobody sets. With no handle at all CoWaitForMultipleHandles
+         * fails at once (RPC_E_NO_SYNC) and the loop spun for every second. */
         start_ticks = GetTickCount();
         do
         {
@@ -734,15 +734,15 @@ HRESULT rpc_get_local_class_object(REFCLSID rclsid, REFIID riid, void **obj)
 
             if (SUCCEEDED(CoWaitForMultipleHandles(0, 1000, (wait != 0), &wait, &index)) && process && !index)
             {
+                if (SUCCEEDED(hr = rpcss_get_class_object(rclsid, &objref))) break;
                 WARN("Server for %s failed to start.\n", debugstr_guid(rclsid));
                 CloseHandle(process);
-                if (idle) CloseHandle(idle);
                 return E_NOINTERFACE;
             }
         } while (GetTickCount() - start_ticks < 1000);
-
-        if (process) CloseHandle(process);
+        if (objref) break;
     }
+    if (process) CloseHandle(process);
     if (idle) CloseHandle(idle);
 
     if (!objref || tries >= MAXTRIES)
