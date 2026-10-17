@@ -855,12 +855,36 @@ static int msvcrt_flush_buffer(FILE* file)
 /*********************************************************************
  *		_isatty (MSVCRT.@)
  */
+#if _MSVCR_VER >= 140 && defined(__x86_64__)
+/* Ruby (2.3 and later, built against ucrtbase) finds __pioinfo by scanning
+ * _isatty's machine code: from the function's "add rsp, imm8; ret" back to the
+ * last "lea rdx, [rip + __pioinfo]", as MSVC compiles it. Without that shape
+ * a Ruby program prints "unexpected ucrtbase.dll" and exits, so _isatty keeps
+ * MSVC's prologue, lea and epilogue around the C body. */
+int CDECL isatty_body(int fd)
+{
+    TRACE(":fd (%d)\n",fd);
+
+    return get_ioinfo_nolock(fd)->wxflag & WX_TTY;
+}
+__ASM_GLOBAL_FUNC( _isatty,
+                   "subq $0x28,%rsp\n\t"
+                   __ASM_CFI(".cfi_adjust_cfa_offset 0x28\n\t")
+                   __ASM_SEH(".seh_stackalloc 0x28\n\t")
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   "leaq MSVCRT___pioinfo(%rip),%rdx\n\t"
+                   "call isatty_body\n\t"
+                   "addq $0x28,%rsp\n\t"
+                   __ASM_CFI(".cfi_adjust_cfa_offset -0x28\n\t")
+                   "ret" )
+#else
 int CDECL _isatty(int fd)
 {
     TRACE(":fd (%d)\n",fd);
 
     return get_ioinfo_nolock(fd)->wxflag & WX_TTY;
 }
+#endif
 
 /* INTERNAL: Allocate stdio file buffer */
 static BOOL msvcrt_alloc_buffer(FILE* file)
