@@ -197,6 +197,8 @@ static BOOL antialias_fakes = TRUE;
 static struct font_gamma_ramp font_gamma_ramp;
 
 static void add_face_to_cache( struct gdi_font_face *face );
+/* gex: set while gex_font_init makes the font cache: every face goes in it. */
+static BOOL gex_font_caching;
 static void remove_face_from_cache( struct gdi_font_face *face );
 
 static CPTABLEINFO utf8_cp;
@@ -1222,7 +1224,7 @@ int add_gdi_face( const WCHAR *family_name, const WCHAR *second_name,
     if ((face = create_face( family, style, fullname, file, data_ptr, data_size,
                              index, fs, ntmflags, weight, version, flags, size )))
     {
-        if (flags & ADDFONT_ADD_TO_CACHE) add_face_to_cache( face );
+        if ((flags & ADDFONT_ADD_TO_CACHE) || gex_font_caching) add_face_to_cache( face );
         release_face( face );
     }
     release_family( family );
@@ -1255,7 +1257,7 @@ int add_gdi_face( const WCHAR *family_name, const WCHAR *second_name,
         if ((face = create_face( family, style, fullname, file, data_ptr, data_size,
                                  index, fs, ntmflags, weight, version, flags | ADDFONT_VERTICAL_FONT, size )))
         {
-            if (flags & ADDFONT_ADD_TO_CACHE) add_face_to_cache( face );
+            if ((flags & ADDFONT_ADD_TO_CACHE) || gex_font_caching) add_face_to_cache( face );
             release_face( face );
         }
         release_family( family );
@@ -1360,6 +1362,33 @@ static void load_font_list_from_cache(void)
     }
 }
 
+/* gex: WINEGEX_FONT_CACHE=1 keeps the font list of Software\Wine\Fonts\Cache
+ * from one session to the next (a non-volatile key, with every face of the
+ * font directories in it, marked complete), so that a process starting in a
+ * prefix whose list is complete reads it from the registry instead of opening
+ * and mapping every font file to read its names. A page's fonts are files it
+ * downloads: the Win7 shell's 443, 340 MB with the CJK ones, were all read in
+ * full before its taskbar, by every process that loaded fonts. The list is
+ * made once, when the prefix is built, and not checked against the files
+ * again, so it is for a prefix whose fonts do not change. */
+static BOOL gex_font_cache(void)
+{
+    static int on = -1;
+    if (on < 0)
+    {
+        const char *env = getenv( "WINEGEX_FONT_CACHE" );
+        on = env && env[0] == '1';
+    }
+    return on;
+}
+
+static const WCHAR gex_font_cache_completeW[] = {'g','e','x',' ','c','o','m','p','l','e','t','e',0};
+
+static DWORD font_cache_option(void)
+{
+    return gex_font_cache() ? 0 : REG_OPTION_VOLATILE;
+}
+
 static void add_face_to_cache( struct gdi_font_face *face )
 {
     HKEY hkey_family, hkey_face;
@@ -1368,7 +1397,7 @@ static void add_face_to_cache( struct gdi_font_face *face )
 
     if (!(hkey_family = reg_create_key( wine_fonts_cache_key, face->family->family_name,
                                         lstrlenW( face->family->family_name ) * sizeof(WCHAR),
-                                        REG_OPTION_VOLATILE, NULL )))
+                                        font_cache_option(), NULL )))
         return;
 
     if (face->family->second_name[0])
@@ -1383,7 +1412,7 @@ static void add_face_to_cache( struct gdi_font_face *face )
         snprintf( name, sizeof(name), "%d", face->size.y_ppem );
         hkey_face = reg_create_key( hkey_family, nameW,
                                     asciiz_to_unicode( nameW, name ) - sizeof(WCHAR),
-                                    REG_OPTION_VOLATILE, NULL );
+                                    font_cache_option(), NULL );
     }
     else hkey_face = hkey_family;
 
@@ -6722,6 +6751,59 @@ static HKEY open_hkcu(void)
     return reg_open_key( NULL, bufferW, len * sizeof(WCHAR) );
 }
 
+/* gex (WINEGEX_FONT_CACHE, see gex_font_cache): the font list from a complete
+ * cache, or, the first time, made and kept there. FALSE: neither (the key
+ * could not be made); the caller loads the fonts as Wine always does. */
+static BOOL gex_font_init(void)
+{
+    static WCHAR wine_font_mutexW[] =
+        {'\\','B','a','s','e','N','a','m','e','d','O','b','j','e','c','t','s',
+         '\\','_','_','W','I','N','E','_','F','O','N','T','_','M','U','T','E','X','_','_'};
+    static const WCHAR cacheW[] = {'C','a','c','h','e'};
+    char buffer[FIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data[sizeof(DWORD)])];
+    OBJECT_ATTRIBUTES attr = { sizeof(attr) };
+    UNICODE_STRING name;
+    HANDLE mutex;
+    BOOL complete;
+    DWORD one = 1;
+
+    attr.Attributes = OBJ_OPENIF;
+    attr.ObjectName = &name;
+    name.Buffer = wine_font_mutexW;
+    name.Length = name.MaximumLength = sizeof(wine_font_mutexW);
+    if (NtCreateMutant( &mutex, MUTEX_ALL_ACCESS, &attr, FALSE ) < 0) return FALSE;
+    NtWaitForSingleObject( mutex, FALSE, NULL );
+
+    if (!(wine_fonts_cache_key = reg_create_key( wine_fonts_key, cacheW, sizeof(cacheW), 0, NULL )))
+    {
+        NtReleaseMutant( mutex, NULL );
+        NtClose( mutex );
+        return FALSE;
+    }
+    complete = query_reg_value( wine_fonts_cache_key, gex_font_cache_completeW, (void *)buffer, sizeof(buffer) ) != 0;
+    if (!complete)
+    {
+        /* The first time: every font, as Wine loads them, kept in the cache. */
+        TRACE( "making the font cache\n" );
+        gex_font_caching = TRUE;
+        load_system_bitmap_fonts();
+        load_file_system_fonts();
+        font_funcs->load_fonts();
+        load_registry_fonts();
+        update_external_font_keys();
+        gex_font_caching = FALSE;
+        set_reg_value( wine_fonts_cache_key, gex_font_cache_completeW, REG_DWORD, &one, sizeof(one) );
+    }
+    NtReleaseMutant( mutex, NULL );
+    NtClose( mutex );
+    if (complete)
+    {
+        load_font_list_from_cache();
+        load_registry_fonts();
+    }
+    return TRUE;
+}
+
 /***********************************************************************
  *              font_init
  */
@@ -6748,6 +6830,8 @@ UINT font_init(void)
 
     if (!(font_funcs = init_freetype_lib()))
         return dpi;
+
+    if (gex_font_cache() && gex_font_init()) goto loaded;
 
     load_system_bitmap_fonts();
     load_file_system_fonts();
@@ -6778,6 +6862,7 @@ UINT font_init(void)
         load_font_list_from_cache();
     }
 
+loaded:
     reorder_font_list();
     load_gdi_font_subst();
     load_gdi_font_replacements();
