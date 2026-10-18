@@ -2369,6 +2369,38 @@ failed:
  * Create a view and mmap the corresponding memory area.
  * virtual_mutex must be held by caller.
  */
+#ifdef W64_CODE_SPLIT
+/* gex's exe slot and DLL band, [0x10000000, 0x20000000): the images the
+ * prefix's dll-bases pins go there (server/mapping.c, pinned_map_address,
+ * gex tools/wine-wasm/w64/dll-bases.py), and gex's browser shim keeps its
+ * own heap out of it. A mapping that names no address is placed around it,
+ * or a game's heap taken bottom-up out of the reserved areas fills it before
+ * the images it is kept for are loaded, and they relocate (and miss the
+ * function-tier units built for their pins). */
+static char * const w64_band_lo = (char *)0x10000000;
+static char * const w64_band_hi = (char *)0x20000000;
+
+typedef void *(*w64_area_fn)( void *, void *, size_t, int, int, size_t );
+
+static void *w64_outside_band( w64_area_fn fn, void *start, void *end, size_t size, int top_down,
+                               int unix_prot, size_t align_mask )
+{
+    char *lo = start, *hi = end;
+    void *ptr;
+
+    if (hi <= w64_band_lo || lo >= w64_band_hi) return fn( start, end, size, top_down, unix_prot, align_mask );
+    if (top_down)
+    {
+        if (hi > w64_band_hi && (ptr = fn( w64_band_hi, hi, size, top_down, unix_prot, align_mask ))) return ptr;
+        if (lo < w64_band_lo) return fn( lo, w64_band_lo, size, top_down, unix_prot, align_mask );
+        return NULL;
+    }
+    if (lo < w64_band_lo && (ptr = fn( lo, w64_band_lo, size, top_down, unix_prot, align_mask ))) return ptr;
+    if (hi > w64_band_hi) return fn( w64_band_hi, hi, size, top_down, unix_prot, align_mask );
+    return NULL;
+}
+#endif
+
 static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
                           unsigned int alloc_type, unsigned int vprot,
                           ULONG_PTR limit_low, ULONG_PTR limit_high, size_t align_mask )
@@ -2449,7 +2481,11 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
         if (limit_low && (void *)limit_low > start) start = (void *)limit_low;
         if (limit_high && (void *)limit_high < end) end = (char *)limit_high + 1;
 
+#ifdef W64_CODE_SPLIT
+        if ((ptr = w64_outside_band( map_reserved_area, start, end, host_size, top_down, unix_prot, align_mask )))
+#else
         if ((ptr = map_reserved_area( start, end, host_size, top_down, unix_prot, align_mask )))
+#endif
         {
             TRACE( "got mem in reserved area %p-%p\n", ptr, (char *)ptr + size );
             goto done;
@@ -2464,7 +2500,11 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
         if (start > address_space_start || end < host_addr_space_limit || top_down)
 #endif
         {
+#ifdef W64_CODE_SPLIT
+            if (!(ptr = w64_outside_band( map_free_area, start, end, host_size, top_down, unix_prot, align_mask )))
+#else
             if (!(ptr = map_free_area( start, end, host_size, top_down, unix_prot, align_mask )))
+#endif
                 return STATUS_NO_MEMORY;
             TRACE( "got mem with map_free_area %p-%p\n", ptr, (char *)ptr + size );
             goto done;
