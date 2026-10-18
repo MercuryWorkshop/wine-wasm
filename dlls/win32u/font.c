@@ -1343,6 +1343,9 @@ static void load_font_list_from_cache(void)
     HKEY hkey_family;
     WCHAR *second_name = (WCHAR *)info->Data;
 
+    WCHAR family_name[LF_FACESIZE];
+    DWORD len;
+
     while (!NtEnumerateKey( wine_fonts_cache_key, family_index++, KeyNodeInformation, enum_info,
                             sizeof(buffer), &total_size ))
     {
@@ -1350,10 +1353,19 @@ static void load_font_list_from_cache(void)
                                           enum_info->NameLength )))
             continue;
         TRACE( "opened family key %s\n", debugstr_wn(enum_info->Name, enum_info->NameLength / sizeof(WCHAR)) );
-        if (!query_reg_value( hkey_family, NULL, info, sizeof(buffer) ))
+        /* The family is the key's name; the buffer is used again for its value
+         * and its faces, so keep the name (it was the buffer's start, not the name). */
+        len = min( enum_info->NameLength / sizeof(WCHAR), LF_FACESIZE - 1 );
+        memcpy( family_name, enum_info->Name, len * sizeof(WCHAR) );
+        family_name[len] = 0;
+        if (!query_reg_value( hkey_family, NULL, info, sizeof(buffer) - sizeof(WCHAR) ) ||
+            info->Type != REG_SZ)
             second_name[0] = 0;
+        else
+            second_name[info->DataLength / sizeof(WCHAR)] = 0;
 
-        family = create_family( buffer, second_name );
+        if ((family = find_family_from_name( family_name ))) family->refcount++;
+        else family = create_family( family_name, second_name );
 
         load_face_from_cache( hkey_family, family, buffer, sizeof(buffer), TRUE );
 
