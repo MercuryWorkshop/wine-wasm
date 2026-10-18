@@ -1268,6 +1268,64 @@ static enum server_fd_type mapping_get_fd_type( struct fd *fd )
     return FD_TYPE_FILE;
 }
 
+/* Pinned DLL addresses (W64): the config dir's dll-bases file, "ADDRESS
+ * UNIXPATH" lines, as gex's tools/wine-wasm/w64/dll-bases.py writes it. An
+ * image it names gets that address in every process of every run, so code
+ * translated ahead of time for the address (gex function-tier units, keyed
+ * by the image and its base) is used; ntdll maps the image there when the
+ * range is free in the process and anywhere else when it is not. The file
+ * pins into 0x11000000-0x20000000, which gex's browser shim keeps clear of
+ * its own heap in every Wine process (its exe slot and DLL band, the same
+ * island W3's pins use) and the pool never hands out. */
+static struct pinned_base
+{
+    client_ptr_t addr;
+    char        *name;
+} *pinned_bases;
+static unsigned int pinned_count;
+
+static void load_pinned_bases(void)
+{
+    static int loaded;
+    unsigned int size = 0;
+    char line[1024], name[1024];
+    unsigned long long addr;
+    FILE *f;
+    int fd;
+
+    if (loaded) return;
+    loaded = 1;
+    if (config_dir_fd == -1 || (fd = openat( config_dir_fd, "dll-bases", O_RDONLY )) == -1) return;
+    if (!(f = fdopen( fd, "r" ))) { close( fd ); return; }
+    while (fgets( line, sizeof(line), f ))
+    {
+        if (sscanf( line, "%llx %1023s", &addr, name ) != 2 || !addr || (addr & granularity_mask)) continue;
+        if (pinned_count == size)
+        {
+            struct pinned_base *new_bases;
+            size = max( 64, size * 2 );
+            if (!(new_bases = realloc( pinned_bases, size * sizeof(*pinned_bases) ))) break;
+            pinned_bases = new_bases;
+        }
+        if (!(pinned_bases[pinned_count].name = strdup( name ))) break;
+        pinned_bases[pinned_count++].addr = addr;
+    }
+    fclose( f );
+}
+
+/* the pinned address of an image, or 0 */
+static client_ptr_t pinned_map_address( struct mapping *mapping )
+{
+    const char *name = get_fd_unix_name( mapping->fd );
+    unsigned int i;
+
+    load_pinned_bases();
+    if (!name) return 0;
+    for (i = 0; i < pinned_count; i++)
+        if (!strcmp( pinned_bases[i].name, name )) return pinned_bases[i].addr;
+    return 0;
+}
+
 /* assign a mapping address to a PE image mapping */
 static client_ptr_t assign_map_address( struct mapping *mapping )
 {
@@ -1281,6 +1339,11 @@ static client_ptr_t assign_map_address( struct mapping *mapping )
     if ((ret = get_fd_map_address( mapping->fd ))) return ret;
 
     size += granularity_mask + 1;  /* leave some free space between mappings */
+
+    /* not recorded with set_fd_map_address: that range goes back to the
+     * pool when the last mapping of the file closes (free_map_addr), and a
+     * pinned range is never the pool's */
+    if ((ret = pinned_map_address( mapping ))) return ret;
 
     for (i = 0; i < range->count; i++)
     {
