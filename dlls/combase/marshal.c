@@ -301,15 +301,21 @@ static HRESULT WINAPI ftmarshaler_MarshalInterface(IMarshal *iface, IStream *str
             dest_context, pvDestContext, mshlflags);
 
     /* If the marshalling happens inside the same process the interface pointer is
-       copied between the apartments */
+       copied between the apartments: the one given, as is (pv is that interface
+       pointer; the object is asked for it only when the caller has none) */
     if (dest_context == MSHCTX_INPROC || dest_context == MSHCTX_CROSSCTX)
     {
+        struct ftmarshaler *marshaler = impl_ft_from_IMarshal(iface);
         union ftmarshaler_data data;
         GUID unknown_guid = { 0 };
 
         data.value = 0;
-        hr = IUnknown_QueryInterface((IUnknown *)pv, riid, (void **)&data.object);
-        if (FAILED(hr))
+        if (pv)
+        {
+            data.object = pv;
+            IUnknown_AddRef(data.object);
+        }
+        else if (FAILED(hr = IUnknown_QueryInterface(marshaler->outer_unk, riid, (void **)&data.object)))
             return hr;
 
         /* don't hold a reference to table-weak marshaled interfaces */

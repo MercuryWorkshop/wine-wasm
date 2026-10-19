@@ -3650,6 +3650,24 @@ static void test_freethreadedmarshaler(void)
 
     ok_no_locks();
 
+    /* inproc marshaling copies the interface pointer it is given: the object
+     * is not asked for the interface */
+
+    IStream_Seek(pStream, llZero, STREAM_SEEK_SET, NULL);
+    hr = IMarshal_MarshalInterface(pFTMarshal, pStream, &IID_IWineTest,
+        &Test_ClassFactory, MSHCTX_INPROC, NULL, MSHLFLAGS_TABLESTRONG);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    ok_more_than_one_lock();
+
+    test_freethreadedmarshaldata(pStream, MSHCTX_INPROC, &Test_ClassFactory, MSHLFLAGS_TABLESTRONG);
+
+    IStream_Seek(pStream, llZero, STREAM_SEEK_SET, NULL);
+    hr = IMarshal_ReleaseMarshalData(pFTMarshal, pStream);
+    ok_ole_success(hr, IMarshal_ReleaseMarshalData);
+
+    ok_no_locks();
+
     /* local normal marshaling */
 
     hr = IMarshal_GetUnmarshalClass(pFTMarshal, &IID_IClassFactory,
