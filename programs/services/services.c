@@ -406,18 +406,19 @@ static BOOL is_root_pnp_service(HDEVINFO set, const struct service_entry *servic
     return FALSE;
 }
 
-static BOOL is_driver(const struct service_entry *service)
+static BOOL is_boot_driver(const struct service_entry *service)
 {
-    return !!(service->config.dwServiceType & (SERVICE_KERNEL_DRIVER | SERVICE_FILE_SYSTEM_DRIVER));
+    return service->config.dwStartType <= SERVICE_SYSTEM_START;
 }
 
-/* The drivers first, then started_event (the session goes on: wineboot ends
- * and the first process runs), then the Win32 services: as on Windows, where
- * the boot and system drivers are loaded before the logon and the auto-start
- * services start beside it. A program that needs one of them starts it or
- * waits for it through the service manager, which is up. (gex: the session's
- * first process waited for every auto-start service host before it ran,
- * about 15 s of the Win7 shell's boot.) */
+/* The boot and system drivers first, then started_event (the session goes on:
+ * wineboot ends and the first process runs), then the rest: as on Windows,
+ * where the kernel loads the boot and system drivers before any process runs
+ * and the service manager starts the auto-start drivers and services beside
+ * the logon. A program that needs one of them starts it or waits for it
+ * through the service manager, which is up. (gex: the session's first
+ * process waited for every auto-start driver and service host before it ran,
+ * about 15 s of the Win7 shell's boot in the page.) */
 static void scmdatabase_autostart_services(struct scmdatabase *db, HANDLE started_event)
 {
     struct service_entry **services_list;
@@ -472,7 +473,7 @@ static void scmdatabase_autostart_services(struct scmdatabase *db, HANDLE starte
     {
         DWORD err;
         service = services_list[i];
-        if (!service || is_driver(service) != !pass) continue;
+        if (!service || is_boot_driver(service) != !pass) continue;
         services_list[i] = NULL;
         if (service->delayed_autostart)
         {
