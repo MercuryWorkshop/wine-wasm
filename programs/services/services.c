@@ -406,18 +406,33 @@ static BOOL is_root_pnp_service(HDEVINFO set, const struct service_entry *servic
     return FALSE;
 }
 
-static void scmdatabase_autostart_services(struct scmdatabase *db)
+static BOOL is_driver(const struct service_entry *service)
+{
+    return !!(service->config.dwServiceType & (SERVICE_KERNEL_DRIVER | SERVICE_FILE_SYSTEM_DRIVER));
+}
+
+/* The drivers first, then started_event (the session goes on: wineboot ends
+ * and the first process runs), then the Win32 services: as on Windows, where
+ * the boot and system drivers are loaded before the logon and the auto-start
+ * services start beside it. A program that needs one of them starts it or
+ * waits for it through the service manager, which is up. (gex: the session's
+ * first process waited for every auto-start service host before it ran,
+ * about 15 s of the Win7 shell's boot.) */
+static void scmdatabase_autostart_services(struct scmdatabase *db, HANDLE started_event)
 {
     struct service_entry **services_list;
     unsigned int i = 0;
     unsigned int size = 32;
-    unsigned int delayed_cnt = 0;
-    struct service_entry *service;
+    unsigned int delayed_cnt = 0, pass;
+    struct service_entry *service, **delayed;
     HDEVINFO set;
 
     services_list = malloc(size * sizeof(services_list[0]));
     if (!services_list)
+    {
+        if (started_event) SetEvent(started_event);
         return;
+    }
 
     if ((set = SetupDiGetClassDevsW( NULL, L"ROOT", NULL, DIGCF_ALLCLASSES )) == INVALID_HANDLE_VALUE)
         WINE_ERR("Failed to enumerate devices, error %#lx.\n", GetLastError());
@@ -449,14 +464,21 @@ static void scmdatabase_autostart_services(struct scmdatabase *db)
     qsort(services_list, size, sizeof(services_list[0]), compare_service);
     scmdatabase_lock_startup(db, INFINITE);
 
+    delayed = malloc(max(size, 1) * sizeof(delayed[0]));
+    for (pass = 0; pass < 2; pass++)
+    {
+    if (pass && started_event) SetEvent(started_event);
     for (i = 0; i < size; i++)
     {
         DWORD err;
         service = services_list[i];
+        if (!service || is_driver(service) != !pass) continue;
+        services_list[i] = NULL;
         if (service->delayed_autostart)
         {
             TRACE("delayed starting %s\n", wine_dbgstr_w(service->name));
-            services_list[delayed_cnt++] = service;
+            if (delayed) delayed[delayed_cnt++] = service;
+            else release_service(service);
             continue;
         }
         err = service_start(service, 0, NULL);
@@ -465,11 +487,13 @@ static void scmdatabase_autostart_services(struct scmdatabase *db)
                        wine_dbgstr_w(service->name), err);
         release_service(service);
     }
+    }
 
     scmdatabase_unlock_startup(db);
 
-    if (!delayed_cnt || !schedule_delayed_autostart(services_list, delayed_cnt))
-        free(services_list);
+    free(services_list);
+    if (!delayed_cnt || !schedule_delayed_autostart(delayed, delayed_cnt))
+        free(delayed);
     SetupDiDestroyDeviceInfoList(set);
 }
 
@@ -1345,7 +1369,7 @@ int __cdecl main(int argc, char *argv[])
          * after it, one slow service start (a service host connecting late)
          * held a shell that starts beside this process for the whole 60 s. */
         if (scm_created_event) SetEvent(scm_created_event);
-        scmdatabase_autostart_services(active_database);
+        scmdatabase_autostart_services(active_database, started_event);
         process_monitor_thread = CreateThread(NULL, 0, process_monitor_thread_proc, NULL, 0, NULL);
         SetEvent(started_event);
         WaitForSingleObject(exit_event, INFINITE);
