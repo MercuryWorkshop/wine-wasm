@@ -799,6 +799,10 @@ static struct message *find_mouse_message( struct thread_input *input, const str
     }
     if (!ptr) return NULL;
     if (prev->result) return NULL;
+    /* Already handed to the app, which holds its own copy until it accepts
+     * it (accept_hardware_message): anything merged into it now is lost --
+     * a wheel delta that arrives while a slow app has the last one. */
+    if (prev->unique_id) return NULL;
     if (prev->win && msg->win && prev->win != msg->win) return NULL;
     if (prev->msg != msg->msg) return NULL;
     if (prev->type != msg->type) return NULL;
