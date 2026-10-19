@@ -60,6 +60,7 @@ struct oss_stream
     UINT32 period_frames, bufsize_frames, held_frames, tmp_buffer_frames, in_oss_frames;
     UINT32 oss_bufsize_bytes, lcl_offs_frames; /* offs into local_buffer where valid data starts */
     REFERENCE_TIME period;
+    BOOL gex; /* gex's device: small fragments, two periods queued */
 
     BYTE *local_buffer, *tmp_buffer;
     INT32 getbuf_last; /* <0 when using tmp_buffer */
@@ -71,6 +72,37 @@ WINE_DEFAULT_DEBUG_CHANNEL(oss);
 
 static const REFERENCE_TIME def_period = 100000;
 static const REFERENCE_TIME min_period = 50000;
+
+/* gex's /dev/dsp (gex-kernel vfs/oss.rs) in the page, played by the browser's
+ * audio thread: it honours SNDCTL_DSP_SETFRAGMENT down to 16-byte fragments
+ * and tells what plays it with SNDCTL_DSP_GEX_INFO (_IOR('P', 0xe0, int[5]):
+ * playing, the player's rate, its latency in microseconds, its render
+ * quantum in frames, frames played). With it a period is 128 to 256 frames,
+ * not 10 ms, and two periods are queued, not three. */
+#define SNDCTL_DSP_GEX_INFO 0x801450e0
+static const REFERENCE_TIME gex_def_period = 53333; /* 256 frames at 48 kHz */
+static const REFERENCE_TIME gex_min_period = 26667; /* 128 frames */
+
+/* The player's rate when /dev/dsp is gex's with a player, else 0. */
+static int gex_player_rate(int fd)
+{
+    unsigned int info[5];
+    if(ioctl(fd, SNDCTL_DSP_GEX_INFO, info) < 0)
+        return 0;
+    return info[1] ? info[1] : 48000;
+}
+
+/* Whether the default output is gex's device with a player (asked once). */
+static int gex_device_rate(void)
+{
+    static int rate = -1;
+    if(rate < 0){
+        int fd = open("/dev/dsp", O_WRONLY | O_NONBLOCK);
+        rate = fd < 0 ? 0 : gex_player_rate(fd);
+        if(fd >= 0) close(fd);
+    }
+    return rate;
+}
 
 static ULONG_PTR zero_bits = 0;
 
@@ -595,6 +627,20 @@ static NTSTATUS oss_create_stream(void *args)
         goto exit;
     }
 
+    if(params->flow == eRender && gex_player_rate(stream->fd)){
+        /* Fragments of a period (the power of two at or above it), three of
+         * them: the two periods the timer loop keeps queued plus one of slack,
+         * where the default buffer would hold 32 KiB (170 ms). */
+        UINT32 bytes = stream->period_frames * params->fmt->nBlockAlign;
+        int shift = 4, frag;
+        while(shift < 14 && (1u << shift) < bytes) shift++;
+        frag = (3 << 16) | shift;
+        if(ioctl(stream->fd, SNDCTL_DSP_SETFRAGMENT, &frag) < 0)
+            WARN("SETFRAGMENT failed: %d (%s)\n", errno, strerror(errno));
+        else
+            stream->gex = TRUE;
+    }
+
     stream->bufsize_frames = muldiv(params->duration, params->fmt->nSamplesPerSec, 10000000);
     if(params->share == AUDCLNT_SHAREMODE_EXCLUSIVE)
         stream->bufsize_frames -= stream->bufsize_frames % stream->period_frames;
@@ -698,7 +744,7 @@ static void oss_write_data(struct oss_stream *stream)
     }
 
     write_limit = 0;
-    while(write_limit + in_oss_frames < max_period * 3)
+    while(write_limit + in_oss_frames < max_period * (stream->gex ? 2 : 3))
         write_limit += max_period;
     if(write_limit == 0)
         return;
@@ -1206,6 +1252,9 @@ static NTSTATUS oss_get_mix_format(void *args)
         fmt->Format.nSamplesPerSec = min(ai.max_rate, 44100);
     if(fmt->Format.nSamplesPerSec < ai.min_rate)
         fmt->Format.nSamplesPerSec = ai.min_rate;
+    /* gex's device: the player's own rate, so nothing is resampled. */
+    if(params->flow == eRender && gex_device_rate())
+        fmt->Format.nSamplesPerSec = gex_device_rate();
 
     fmt->dwChannelMask = get_channel_mask(fmt->Format.nChannels);
 
@@ -1226,9 +1275,9 @@ static NTSTATUS oss_get_device_period(void *args)
     struct get_device_period_params *params = args;
 
     if (params->def_period)
-        *params->def_period = def_period;
+        *params->def_period = gex_device_rate() ? gex_def_period : def_period;
     if (params->min_period)
-        *params->min_period = min_period;
+        *params->min_period = gex_device_rate() ? gex_min_period : min_period;
 
     params->result = S_OK;
 
