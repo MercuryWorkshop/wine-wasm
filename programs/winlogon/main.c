@@ -152,12 +152,6 @@ int main( void )
     enable_privilege( process_token, L"SeTcbPrivilege" );
     enable_privilege( process_token, L"SeDebugPrivilege" );
 
-    /* the session's desktop, before anything runs on it (Windows' winlogon
-     * creates it before it starts the shell): a shell starting first raced
-     * this process to start the desktop process, and the loser of two
-     * desktop processes opened a browser window */
-    GetDesktopWindow();
-
     if (*(shell = shell_command_line()))
     {
         STARTUPINFOW si = { sizeof(si) };
@@ -174,6 +168,14 @@ int main( void )
         else fprintf( stderr, "winlogon: could not start %ls (%lu)\n", cmd, GetLastError() );
         free( cmd );
     }
+
+    /* the session's desktop, before anything runs on it (Windows' winlogon
+     * creates it before it starts the shell): a shell starting first raced
+     * this process to start the desktop process, and the loser of two
+     * desktop processes opened a browser window. The shell's process is
+     * created (suspended, so nothing of it runs) before, so that its start
+     * goes on beside the desktop's. */
+    GetDesktopWindow();
 
     /* then leave the user's logon session: from here this is a system
      * process, which no longer keeps the session alive by itself */
