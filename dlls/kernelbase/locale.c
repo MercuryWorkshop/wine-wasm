@@ -6542,6 +6542,149 @@ INT WINAPI DECLSPEC_HOTPATCH IdnToUnicode( DWORD flags, const WCHAR *src, INT sr
 }
 
 
+/* The scripts of GetStringScripts, by ISO 15924 code, in alphabetical order. */
+static const char script_codes[][5] =
+{
+    "Arab", "Armn", "Beng", "Bopo", "Cans", "Cher", "Cyrl", "Deva", "Ethi", "Geor",
+    "Glag", "Grek", "Gujr", "Guru", "Hang", "Hani", "Hebr", "Hira", "Kana", "Khmr",
+    "Knda", "Laoo", "Latn", "Mlym", "Mong", "Mymr", "Nkoo", "Ogam", "Orya", "Qaii",
+    "Runr", "Sinh", "Syrc", "Taml", "Telu", "Thaa", "Thai", "Tibt", "Yiii", "Zyyy",
+    "Zzzz",
+};
+enum script_id
+{
+    S_Arab, S_Armn, S_Beng, S_Bopo, S_Cans, S_Cher, S_Cyrl, S_Deva, S_Ethi, S_Geor,
+    S_Glag, S_Grek, S_Gujr, S_Guru, S_Hang, S_Hani, S_Hebr, S_Hira, S_Kana, S_Khmr,
+    S_Knda, S_Laoo, S_Latn, S_Mlym, S_Mong, S_Mymr, S_Nkoo, S_Ogam, S_Orya, S_Qaii,
+    S_Runr, S_Sinh, S_Syrc, S_Taml, S_Telu, S_Thaa, S_Thai, S_Tibt, S_Yiii, S_Zyyy,
+    S_Zzzz,
+};
+
+/* Ranges of code points by script, sorted; a defined character in none of
+ * them counts as unknown ("Zzzz"). Block-level for most scripts, finer where
+ * the common characters (punctuation, digits, symbols) sit inside a block. */
+static const struct { UINT first, last; BYTE script; } script_ranges[] =
+{
+    { 0x0000, 0x0040, S_Zyyy }, { 0x0041, 0x005a, S_Latn }, { 0x005b, 0x0060, S_Zyyy },
+    { 0x0061, 0x007a, S_Latn }, { 0x007b, 0x00a9, S_Zyyy }, { 0x00aa, 0x00aa, S_Latn },
+    { 0x00ab, 0x00b9, S_Zyyy }, { 0x00ba, 0x00ba, S_Latn }, { 0x00bb, 0x00bf, S_Zyyy },
+    { 0x00c0, 0x00d6, S_Latn }, { 0x00d7, 0x00d7, S_Zyyy }, { 0x00d8, 0x00f6, S_Latn },
+    { 0x00f7, 0x00f7, S_Zyyy }, { 0x00f8, 0x02b8, S_Latn }, { 0x02b9, 0x02df, S_Zyyy },
+    { 0x02e0, 0x02e4, S_Latn }, { 0x02e5, 0x02ff, S_Zyyy }, { 0x0300, 0x036f, S_Qaii },
+    { 0x0370, 0x03ff, S_Grek }, { 0x0400, 0x052f, S_Cyrl }, { 0x0530, 0x058f, S_Armn },
+    { 0x0590, 0x05ff, S_Hebr }, { 0x0600, 0x06ff, S_Arab }, { 0x0700, 0x074f, S_Syrc },
+    { 0x0750, 0x077f, S_Arab }, { 0x0780, 0x07bf, S_Thaa }, { 0x07c0, 0x07ff, S_Nkoo },
+    { 0x0900, 0x097f, S_Deva }, { 0x0980, 0x09ff, S_Beng }, { 0x0a00, 0x0a7f, S_Guru },
+    { 0x0a80, 0x0aff, S_Gujr }, { 0x0b00, 0x0b7f, S_Orya }, { 0x0b80, 0x0bff, S_Taml },
+    { 0x0c00, 0x0c7f, S_Telu }, { 0x0c80, 0x0cff, S_Knda }, { 0x0d00, 0x0d7f, S_Mlym },
+    { 0x0d80, 0x0dff, S_Sinh }, { 0x0e00, 0x0e7f, S_Thai }, { 0x0e80, 0x0eff, S_Laoo },
+    { 0x0f00, 0x0fff, S_Tibt }, { 0x1000, 0x109f, S_Mymr }, { 0x10a0, 0x10ff, S_Geor },
+    { 0x1100, 0x11ff, S_Hang }, { 0x1200, 0x139f, S_Ethi }, { 0x13a0, 0x13ff, S_Cher },
+    { 0x1400, 0x167f, S_Cans }, { 0x1680, 0x169f, S_Ogam }, { 0x16a0, 0x16ff, S_Runr },
+    { 0x1780, 0x17ff, S_Khmr }, { 0x1800, 0x18af, S_Mong }, { 0x1d00, 0x1dbf, S_Latn },
+    { 0x1dc0, 0x1dff, S_Qaii }, { 0x1e00, 0x1eff, S_Latn }, { 0x1f00, 0x1fff, S_Grek },
+    { 0x2000, 0x200b, S_Zyyy }, { 0x200c, 0x200d, S_Qaii }, { 0x200e, 0x20cf, S_Zyyy },
+    { 0x20d0, 0x20ff, S_Qaii }, { 0x2100, 0x2bff, S_Zyyy }, { 0x2c00, 0x2c5f, S_Glag },
+    { 0x2c60, 0x2c7f, S_Latn }, { 0x2d00, 0x2d2f, S_Geor }, { 0x2e00, 0x2e7f, S_Zyyy },
+    { 0x2e80, 0x2fdf, S_Hani }, { 0x2ff0, 0x3004, S_Zyyy }, { 0x3005, 0x3005, S_Hani },
+    { 0x3006, 0x3006, S_Zyyy }, { 0x3007, 0x3007, S_Hani }, { 0x3008, 0x3020, S_Zyyy },
+    { 0x3021, 0x3029, S_Hani }, { 0x302a, 0x302d, S_Qaii }, { 0x302e, 0x3040, S_Zyyy },
+    { 0x3041, 0x3098, S_Hira }, { 0x3099, 0x309a, S_Qaii }, { 0x309b, 0x309c, S_Zyyy },
+    { 0x309d, 0x309f, S_Hira }, { 0x30a0, 0x30a0, S_Zyyy }, { 0x30a1, 0x30fa, S_Kana },
+    { 0x30fb, 0x30fc, S_Zyyy }, { 0x30fd, 0x30ff, S_Kana }, { 0x3100, 0x312f, S_Bopo },
+    { 0x3130, 0x318f, S_Hang }, { 0x3190, 0x319f, S_Zyyy }, { 0x31a0, 0x31bf, S_Bopo },
+    { 0x31c0, 0x31ef, S_Zyyy }, { 0x31f0, 0x31ff, S_Kana }, { 0x3200, 0x33ff, S_Zyyy },
+    { 0x3400, 0x4dbf, S_Hani }, { 0x4dc0, 0x4dff, S_Zyyy }, { 0x4e00, 0x9fff, S_Hani },
+    { 0xa000, 0xa4cf, S_Yiii }, { 0xa720, 0xa721, S_Zyyy }, { 0xa722, 0xa7ff, S_Latn },
+    { 0xac00, 0xd7af, S_Hang }, { 0xf900, 0xfaff, S_Hani }, { 0xfb00, 0xfb06, S_Latn },
+    { 0xfb13, 0xfb17, S_Armn }, { 0xfb1d, 0xfb4f, S_Hebr }, { 0xfb50, 0xfdff, S_Arab },
+    { 0xfe00, 0xfe0f, S_Qaii }, { 0xfe10, 0xfe1f, S_Zyyy }, { 0xfe20, 0xfe2f, S_Qaii },
+    { 0xfe30, 0xfe6f, S_Zyyy }, { 0xfe70, 0xfefe, S_Arab }, { 0xfeff, 0xff20, S_Zyyy },
+    { 0xff21, 0xff3a, S_Latn }, { 0xff3b, 0xff40, S_Zyyy }, { 0xff41, 0xff5a, S_Latn },
+    { 0xff5b, 0xff65, S_Zyyy }, { 0xff66, 0xff6f, S_Kana }, { 0xff70, 0xff70, S_Zyyy },
+    { 0xff71, 0xff9d, S_Kana }, { 0xff9e, 0xff9f, S_Zyyy }, { 0xffa0, 0xffdf, S_Hang },
+    { 0xffe0, 0xffff, S_Zyyy }, { 0x1f000, 0x1faff, S_Zyyy }, { 0x20000, 0x3ffff, S_Hani },
+    { 0xe0001, 0xe007f, S_Zyyy }, { 0xe0100, 0xe01ef, S_Qaii },
+};
+
+static enum script_id get_char_script( UINT ch )
+{
+    int lo = 0, hi = ARRAY_SIZE(script_ranges) - 1;
+
+    while (lo <= hi)
+    {
+        int mid = (lo + hi) / 2;
+        if (ch < script_ranges[mid].first) hi = mid - 1;
+        else if (ch > script_ranges[mid].last) lo = mid + 1;
+        else return script_ranges[mid].script;
+    }
+    return S_Zzzz;
+}
+
+
+/******************************************************************************
+ *	GetStringScripts   (kernelbase.@)
+ *
+ * The scripts of the characters in a string, as ISO 15924 codes in
+ * alphabetical order, each followed by a semicolon. Common and inherited
+ * characters count only with GSS_ALLOW_INHERITED_COMMON; an undefined one is
+ * "Zzzz" always.
+ */
+INT WINAPI GetStringScripts( DWORD flags, const WCHAR *str, INT len, WCHAR *scripts, INT size )
+{
+    BOOL seen[ARRAY_SIZE(script_codes)] = { 0 };
+    INT i, needed = 1;
+
+    TRACE( "%#lx, %s, %d, %p, %d\n", flags, debugstr_wn(str, len), len, scripts, size );
+
+    if (flags & ~GSS_ALLOW_INHERITED_COMMON)
+    {
+        SetLastError( ERROR_INVALID_FLAGS );
+        return 0;
+    }
+    if (!str || !len || len < -1 || size < 0 || (size && !scripts))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+    if (len == -1) len = lstrlenW( str );
+
+    for (i = 0; i < len; i++)
+    {
+        UINT ch = str[i];
+        enum script_id script;
+
+        if (IS_HIGH_SURROGATE( ch ) && i + 1 < len && IS_LOW_SURROGATE( str[i + 1] ))
+        {
+            ch = 0x10000 + ((ch - 0xd800) << 10) + (str[++i] - 0xdc00);
+            script = get_char_script( ch );
+        }
+        else if ((ch >= 0xd800 && ch <= 0xdfff) || !(get_char_type( CT_CTYPE1, ch ) & C1_DEFINED)) script = S_Zzzz;
+        else script = get_char_script( ch );
+
+        if ((script == S_Zyyy || script == S_Qaii) && !(flags & GSS_ALLOW_INHERITED_COMMON)) continue;
+        seen[script] = TRUE;
+    }
+
+    for (i = 0; i < ARRAY_SIZE(script_codes); i++) if (seen[i]) needed += 5;
+    if (!size) return needed;
+    if (size < needed)
+    {
+        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+        return 0;
+    }
+    for (i = 0; i < ARRAY_SIZE(script_codes); i++)
+    {
+        int j;
+        if (!seen[i]) continue;
+        for (j = 0; j < 4; j++) *scripts++ = script_codes[i][j];
+        *scripts++ = ';';
+    }
+    *scripts = 0;
+    return needed;
+}
+
+
 /******************************************************************************
  *	IsCharAlphaA   (kernelbase.@)
  */

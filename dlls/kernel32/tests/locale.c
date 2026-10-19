@@ -72,6 +72,7 @@ static BOOL (WINAPI *pIsValidLanguageGroup)(LGRPID, DWORD);
 static INT (WINAPI *pIdnToNameprepUnicode)(DWORD, LPCWSTR, INT, LPWSTR, INT);
 static INT (WINAPI *pIdnToAscii)(DWORD, LPCWSTR, INT, LPWSTR, INT);
 static INT (WINAPI *pIdnToUnicode)(DWORD, LPCWSTR, INT, LPWSTR, INT);
+static INT (WINAPI *pGetStringScripts)(DWORD, LPCWSTR, INT, LPWSTR, INT);
 static INT (WINAPI *pGetLocaleInfoEx)(LPCWSTR, LCTYPE, LPWSTR, INT);
 static BOOL (WINAPI *pIsValidLocaleName)(LPCWSTR);
 static INT (WINAPI *pResolveLocaleName)(LPCWSTR,LPWSTR,INT);
@@ -129,6 +130,7 @@ static void InitFunctionPointers(void)
   X(IdnToNameprepUnicode);
   X(IdnToAscii);
   X(IdnToUnicode);
+  X(GetStringScripts);
   X(GetLocaleInfoEx);
   X(IsValidLocaleName);
   X(ResolveLocaleName);
@@ -8741,6 +8743,68 @@ static void test_EnumDateFormatsExEx(void)
        "EnumDateFormatsExEx failed, error %#lx.\n", error);
 }
 
+static void test_GetStringScripts(void)
+{
+    static const struct
+    {
+        const WCHAR *str;
+        DWORD flags;
+        const WCHAR *expect;
+    }
+    tests[] =
+    {
+        { L"Hello", 0, L"Latn;" },
+        { L"Hello, world 42!", 0, L"Latn;" },
+        { L"Hello, world 42!", GSS_ALLOW_INHERITED_COMMON, L"Latn;Zyyy;" },
+        { L"123 ...", 0, L"" },
+        { L"123 ...", GSS_ALLOW_INHERITED_COMMON, L"Zyyy;" },
+        /* alphabetical, not in order of appearance */
+        { L"\x043f\x0440\x0438 hi \x03b1", 0, L"Cyrl;Grek;Latn;" },
+        { L"\x65e5\x672c\x3072\x3089\x30ab\x30ca", 0, L"Hani;Hira;Kana;" },
+        { L"\xd55c\xae00 \x05e9\x05dc\x05d5\x05dd \x0639\x0631\x0628", 0, L"Arab;Hang;Hebr;" },
+        { L"e\x0301", 0, L"Latn;" },
+        { L"e\x0301", GSS_ALLOW_INHERITED_COMMON, L"Latn;Qaii;" },
+        /* a surrogate pair is one character */
+        { L"\xd840\xdc00", 0, L"Hani;" },
+    };
+    WCHAR buf[64];
+    int i, ret;
+
+    if (!pGetStringScripts)
+    {
+        win_skip("GetStringScripts is not available\n");
+        return;
+    }
+
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
+    {
+        winetest_push_context("%d", i);
+        memset(buf, 0xcc, sizeof(buf));
+        ret = pGetStringScripts(tests[i].flags, tests[i].str, -1, buf, ARRAY_SIZE(buf));
+        ok(ret == wcslen(tests[i].expect) + 1, "got %d\n", ret);
+        ok(!wcscmp(buf, tests[i].expect), "got %s\n", wine_dbgstr_w(buf));
+        ret = pGetStringScripts(tests[i].flags, tests[i].str, -1, NULL, 0);
+        ok(ret == wcslen(tests[i].expect) + 1, "size query got %d\n", ret);
+        winetest_pop_context();
+    }
+
+    /* an explicit length stops before the rest */
+    ret = pGetStringScripts(0, L"ab\x0430", 2, buf, ARRAY_SIZE(buf));
+    ok(ret == 6 && !wcscmp(buf, L"Latn;"), "got %d %s\n", ret, wine_dbgstr_w(buf));
+
+    SetLastError(0xdeadbeef);
+    ret = pGetStringScripts(0, L"Hello", -1, buf, 3);
+    ok(!ret && GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %d, error %lu\n", ret, GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = pGetStringScripts(0x2, L"Hello", -1, buf, ARRAY_SIZE(buf));
+    ok(!ret && GetLastError() == ERROR_INVALID_FLAGS, "got %d, error %lu\n", ret, GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = pGetStringScripts(0, NULL, -1, buf, ARRAY_SIZE(buf));
+    ok(!ret && GetLastError() == ERROR_INVALID_PARAMETER, "got %d, error %lu\n", ret, GetLastError());
+}
+
 START_TEST(locale)
 {
   char **argv;
@@ -8814,6 +8878,7 @@ START_TEST(locale)
   test_EnumCalendarInfoW();
   test_EnumCalendarInfoExA();
   test_EnumCalendarInfoExW();
+  test_GetStringScripts();
 
   /* Run this test at the end */
   test_EnumDateFormatsExEx();

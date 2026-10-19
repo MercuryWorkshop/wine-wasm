@@ -710,7 +710,7 @@
 # @ stub GetStateSettingsFolder
 # @ stub GetStateVersion
 @ stdcall GetStdHandle(long)
-# @ stub GetStringScripts
+@ stdcall GetStringScripts(long wstr long ptr long)
 @ stub GetStringTableEntry
 @ stdcall GetStringTypeA(long long str long ptr)
 @ stdcall GetStringTypeExW(long long wstr long ptr)

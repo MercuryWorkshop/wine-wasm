@@ -836,7 +836,7 @@
 @ stdcall GetStartupInfoA(ptr)
 @ stdcall -import GetStartupInfoW(ptr)
 @ stdcall -import GetStdHandle(long)
-# @ stub GetStringScripts
+@ stdcall -import GetStringScripts(long wstr long ptr long)
 @ stdcall -import GetStringTypeA(long long str long ptr)
 @ stdcall GetStringTypeExA(long long str long ptr)
 @ stdcall -import GetStringTypeExW(long long wstr long ptr)
