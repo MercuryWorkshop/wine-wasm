@@ -57,7 +57,13 @@ struct stream
     int out, in;
     UINT32 rate, frames;
     UINT64 written;
+    float *held;      /* capture read ahead, frames * 2 * HELD_BUFFERS floats */
+    UINT32 nheld;     /* frames in it */
 };
+
+/* Capture read ahead and kept, in buffers: past it the oldest goes, so the
+ * input stays within a buffer or two of the output however the two start. */
+#define HELD_BUFFERS 4
 
 static void fill_info(int fd, struct gexasio_info *info)
 {
@@ -118,6 +124,12 @@ static NTSTATUS do_open(void *args)
     s->rate = params->rate;
     s->frames = params->frames;
     s->in = -1;
+    if (params->inputs && !(s->held = malloc(params->frames * 2 * sizeof(float) * HELD_BUFFERS)))
+    {
+        free(s);
+        params->result = STATUS_NO_MEMORY;
+        return STATUS_SUCCESS;
+    }
     while (shift < 14 && (1u << shift) < bytes) shift++;
     if ((s->out = open("/dev/dsp", O_WRONLY)) < 0 || setup(s->out, s->rate, (2 << 16) | shift) < 0)
         goto fail;
@@ -135,6 +147,7 @@ static NTSTATUS do_open(void *args)
 fail:
     if (s->out >= 0) close(s->out);
     if (s->in >= 0) close(s->in);
+    free(s->held);
     free(s);
     params->result = STATUS_DEVICE_NOT_READY;
     return STATUS_SUCCESS;
@@ -149,6 +162,7 @@ static NTSTATUS do_close(void *args)
     {
         close(s->out);
         if (s->in >= 0) close(s->in);
+        free(s->held);
         free(s);
     }
     params->result = STATUS_SUCCESS;
@@ -182,23 +196,40 @@ static NTSTATUS do_write(void *args)
     return STATUS_SUCCESS;
 }
 
-/* What capture has, up to the buffer, without waiting; the rest silence. */
+/* One buffer of capture, without waiting: all capture has is read into the
+ * held frames; when they reach two buffers the oldest go, keeping the
+ * newest buffer. Short of a buffer, the rest is silence. */
 static NTSTATUS do_read(void *args)
 {
     struct gexasio_io_params *params = args;
     struct stream *s = (struct stream *)(UINT_PTR)params->stream;
-    size_t want = params->frames * 2 * sizeof(float), got = 0;
+    const UINT32 fb = 2 * sizeof(float), cap = s->frames * HELD_BUFFERS;
+    UINT32 n = params->frames < s->frames ? params->frames : s->frames, take;
 
-    while (s->in >= 0 && got < want)
+    while (s->in >= 0)
     {
-        ssize_t n = read(s->in, (char *)params->data + got, want - got);
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) break;
-        got += n;
+        ssize_t got;
+        if (s->nheld == cap)
+        {
+            memmove(s->held, s->held + 2 * s->frames, (cap - s->frames) * fb);
+            s->nheld -= s->frames;
+        }
+        got = read(s->in, s->held + 2 * s->nheld, (cap - s->nheld) * fb);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) break;
+        s->nheld += got / fb;
     }
-    got -= got % (2 * sizeof(float));
-    memset((char *)params->data + got, 0, want - got);
-    params->done = got / (2 * sizeof(float));
+    if (s->nheld >= 2 * n)
+    {
+        memmove(s->held, s->held + 2 * (s->nheld - n), n * fb);
+        s->nheld = n;
+    }
+    take = s->nheld < n ? s->nheld : n;
+    memcpy(params->data, s->held, take * fb);
+    memset((char *)params->data + take * fb, 0, (params->frames - take) * fb);
+    memmove(s->held, s->held + 2 * take, (s->nheld - take) * fb);
+    s->nheld -= take;
+    params->done = take;
     params->result = STATUS_SUCCESS;
     return STATUS_SUCCESS;
 }
