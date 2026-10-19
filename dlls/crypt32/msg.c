@@ -969,6 +969,12 @@ typedef struct _CSignedMsgData
     CRYPT_SIGNED_INFO *info;
     DWORD              cSignerHandle;
     CSignerHandles    *signerHandles;
+    /* Decoded messages only: each signer's authenticated attributes as they
+     * were encoded (tag set to SET OF), or an empty blob when not found. A
+     * signature covers those bytes, which need not be in DER order, so a
+     * verify must not hash a re-encoding of them. */
+    DWORD              cRawAuthAttrs;
+    CRYPT_DER_BLOB    *rawAuthAttrs;
 } CSignedMsgData;
 
 /* Constructs the signer handles for the signerIndex'th signer of msg_data.
@@ -1131,7 +1137,12 @@ static BOOL CSignedMsgData_UpdateAuthenticatedAttributes(
                     ret = CSignedMsgData_AppendMessageDigestAttribute(msg_data,
                      i);
             }
-            if (ret)
+            if (ret && flag == Verify && i < msg_data->cRawAuthAttrs &&
+             msg_data->rawAuthAttrs[i].cbData)
+                ret = CryptHashData(msg_data->signerHandles[i].authAttrHash,
+                 msg_data->rawAuthAttrs[i].pbData,
+                 msg_data->rawAuthAttrs[i].cbData, 0);
+            else if (ret)
             {
                 LPBYTE encodedAttrs;
                 DWORD size;
@@ -1503,6 +1514,8 @@ static HCRYPTMSG CSignedEncodeMsg_Open(DWORD dwFlags,
                 msg->msg_data.signerHandles = NULL;
                 msg->msg_data.cSignerHandle = 0;
             }
+            msg->msg_data.cRawAuthAttrs = 0;
+            msg->msg_data.rawAuthAttrs = NULL;
         }
         if (ret)
             ret = CRYPT_ConstructBlobArray(&msg->msg_data.info->cCertEncoded,
@@ -2138,6 +2151,8 @@ typedef struct _CDecodeMsg
     CONTEXT_PROPERTY_LIST *properties;
 } CDecodeMsg;
 
+static void CDecodeMsg_FreeRawAuthAttrs(CSignedMsgData *msg_data);
+
 static void CDecodeMsg_Close(HCRYPTMSG hCryptMsg)
 {
     CDecodeMsg *msg = hCryptMsg;
@@ -2162,6 +2177,7 @@ static void CDecodeMsg_Close(HCRYPTMSG hCryptMsg)
             LocalFree(msg->u.signed_data.info);
             CSignedMsgData_CloseHandles(&msg->u.signed_data);
         }
+        CDecodeMsg_FreeRawAuthAttrs(&msg->u.signed_data);
         break;
     }
     CryptMemFree(msg->msg_data.pbData);
@@ -2303,6 +2319,108 @@ static BOOL CDecodeMsg_DecodeEnvelopedContent(CDecodeMsg *msg,
     return ret;
 }
 
+/* One definite-length DER element at p (end is the end of the enclosing
+ * data): its tag, where its content starts and where it ends. FALSE for an
+ * indefinite or malformed length. */
+static BOOL CRYPT_RawElement(const BYTE *p, const BYTE *end, BYTE *tag,
+ const BYTE **content, const BYTE **next)
+{
+    DWORD len = 0, n, i;
+
+    if (end - p < 2)
+        return FALSE;
+    *tag = p[0];
+    if (p[1] < 0x80)
+    {
+        len = p[1];
+        p += 2;
+    }
+    else
+    {
+        n = p[1] & 0x7f;
+        if (!n || n > 4 || end - p < 2 + (ptrdiff_t)n)
+            return FALSE;
+        for (i = 0; i < n; i++)
+            len = (len << 8) | p[2 + i];
+        p += 2 + n;
+    }
+    if ((DWORD)(end - p) < len)
+        return FALSE;
+    *content = p;
+    *next = p + len;
+    return TRUE;
+}
+
+static void CDecodeMsg_FreeRawAuthAttrs(CSignedMsgData *msg_data)
+{
+    DWORD i;
+
+    for (i = 0; i < msg_data->cRawAuthAttrs; i++)
+        CryptMemFree(msg_data->rawAuthAttrs[i].pbData);
+    CryptMemFree(msg_data->rawAuthAttrs);
+    msg_data->rawAuthAttrs = NULL;
+    msg_data->cRawAuthAttrs = 0;
+}
+
+/* Keeps each signer's authenticated attributes as encoded in blob, a
+ * SignedData: SEQUENCE { version, digestAlgorithms SET, encapContentInfo,
+ * [0] certificates OPTIONAL, [1] crls OPTIONAL, signerInfos SET OF
+ * SEQUENCE { version, sid, digestAlgorithm, [0] IMPLICIT authenticatedAttributes
+ * OPTIONAL, ... } }. Leaves nothing when blob is not definite-length DER,
+ * and the verify then hashes a re-encoding, as before. */
+static void CDecodeMsg_KeepRawAuthAttrs(CSignedMsgData *msg_data,
+ const CRYPT_DER_BLOB *blob)
+{
+    const BYTE *end = blob->pbData + blob->cbData, *p, *c, *next, *sis, *sie = NULL;
+    const BYTE *f, *fc, *fn;
+    DWORD count = msg_data->info->cSignerInfo, i = 0, n;
+    BYTE tag;
+
+    if (!count || !CRYPT_RawElement(blob->pbData, end, &tag, &c, &next) ||
+     tag != (ASN_SEQUENCE))
+        return;
+    end = next;
+    /* Skip version, digestAlgorithms, encapContentInfo, and certificates and
+     * crls when present: the signerInfos SET is the last element. */
+    for (p = c, sis = NULL; p < end; p = next)
+    {
+        if (!CRYPT_RawElement(p, end, &tag, &c, &next))
+            return;
+        sis = c;
+        sie = next;
+    }
+    if (!sis || tag != (ASN_CONSTRUCTOR | ASN_SETOF))
+        return;
+    if (!(msg_data->rawAuthAttrs = CryptMemAlloc(count * sizeof(CRYPT_DER_BLOB))))
+        return;
+    memset(msg_data->rawAuthAttrs, 0, count * sizeof(CRYPT_DER_BLOB));
+    msg_data->cRawAuthAttrs = count;
+    for (p = sis; p < sie && i < count; p = next, i++)
+    {
+        if (!CRYPT_RawElement(p, sie, &tag, &c, &next) || tag != ASN_SEQUENCE)
+            break;
+        /* version, sid, digestAlgorithm, then [0] when present. */
+        for (f = c, n = 0; f < next && n < 4; f = fn, n++)
+        {
+            if (!CRYPT_RawElement(f, next, &tag, &fc, &fn))
+                break;
+            if (n == 3 && tag == (ASN_CONTEXT | ASN_CONSTRUCTOR | 0))
+            {
+                DWORD size = fn - f;
+
+                if ((msg_data->rawAuthAttrs[i].pbData = CryptMemAlloc(size)))
+                {
+                    memcpy(msg_data->rawAuthAttrs[i].pbData, f, size);
+                    msg_data->rawAuthAttrs[i].pbData[0] = ASN_CONSTRUCTOR | ASN_SETOF;
+                    msg_data->rawAuthAttrs[i].cbData = size;
+                }
+            }
+        }
+    }
+    if (p < sie || i != count)
+        CDecodeMsg_FreeRawAuthAttrs(msg_data);
+}
+
 static BOOL CDecodeMsg_DecodeSignedContent(CDecodeMsg *msg,
  const CRYPT_DER_BLOB *blob)
 {
@@ -2314,7 +2432,11 @@ static BOOL CDecodeMsg_DecodeSignedContent(CDecodeMsg *msg,
      CRYPT_DECODE_ALLOC_FLAG, NULL, (CRYPT_SIGNED_INFO *)&signedInfo,
      &size);
     if (ret)
+    {
         msg->u.signed_data.info = signedInfo;
+        CDecodeMsg_FreeRawAuthAttrs(&msg->u.signed_data);
+        CDecodeMsg_KeepRawAuthAttrs(&msg->u.signed_data, blob);
+    }
     return ret;
 }
 
