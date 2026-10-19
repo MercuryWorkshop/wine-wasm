@@ -215,6 +215,20 @@ static void *internal_context_create( void *share, int *context_format )
     return NULL;
 }
 
+/* The context every other one shares with, made when the first context is:
+ * initializing the driver (which every process does to enumerate the GPUs)
+ * does not start a GL context nobody has asked for yet. */
+static void *get_global_context(void)
+{
+    void *context;
+
+    if ((context = ReadPointerAcquire( &global_context ))) return context;
+    if (!(context = internal_context_create( NULL, NULL ))) return NULL;
+    if (InterlockedCompareExchangePointer( &global_context, context, NULL ))
+        driver_funcs->p_context_destroy( context );
+    return global_context;
+}
+
 static BOOL make_null_context_current( struct opengl_drawable *drawable )
 {
     struct opengl_thread_data *data = get_opengl_thread_data();
@@ -222,7 +236,7 @@ static BOOL make_null_context_current( struct opengl_drawable *drawable )
 
     if (!data->null_context)
     {
-        if (!(data->null_context = internal_context_create( global_context, &format ))) return FALSE;
+        if (!(data->null_context = internal_context_create( get_global_context(), &format ))) return FALSE;
         if (driver_funcs->p_null_surface_create) driver_funcs->p_null_surface_create( format, &data->null_surface );
     }
 
@@ -2298,7 +2312,7 @@ static BOOL win32u_context_create( struct opengl_context *context, HDC hdc, cons
         else RtlSetLastWin32Error( ERROR_INVALID_HANDLE );
         return FALSE;
     }
-    if (!driver_funcs->p_context_create( format, global_context, attribs, &context->driver_private, &shared ))
+    if (!driver_funcs->p_context_create( format, get_global_context(), attribs, &context->driver_private, &shared ))
     {
         WARN( "Failed to create driver context for context %p\n", context );
         return FALSE;
@@ -2795,8 +2809,6 @@ static void display_funcs_init(void)
         LIST_FOR_EACH_ENTRY_SAFE( egl, next, &devices_egl, struct egl_platform, entry )
             init_device_info( egl, &display_funcs );
     }
-
-    if (!global_context) global_context = internal_context_create( NULL, NULL );
 }
 
 /***********************************************************************
