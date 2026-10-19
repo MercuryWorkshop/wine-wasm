@@ -1483,36 +1483,43 @@ static int ProcessWindowsFileProtection(void)
     return 1;
 }
 
-static BOOL start_services_process(void)
+/* Start services.exe; wait_services_process waits for its service manager
+ * (and its drivers) to be up. */
+static HANDLE start_services_process(void)
 {
-    static const WCHAR svcctl_started_event[] = SVCCTL_STARTED_EVENT;
     PROCESS_INFORMATION pi;
     STARTUPINFOW si = { sizeof(si) };
-    HANDLE wait_handles[2];
 
     if (!CreateProcessW(L"C:\\windows\\system32\\services.exe", NULL,
                         NULL, NULL, TRUE, DETACHED_PROCESS, NULL, L"C:\\windows\\system32", &si, &pi))
     {
         WINE_ERR("Couldn't start services.exe: error %lu\n", GetLastError());
-        return FALSE;
+        return 0;
     }
     CloseHandle(pi.hThread);
+    return pi.hProcess;
+}
+
+static BOOL wait_services_process( HANDLE process )
+{
+    static const WCHAR svcctl_started_event[] = SVCCTL_STARTED_EVENT;
+    HANDLE wait_handles[2];
 
     wait_handles[0] = CreateEventW(NULL, TRUE, FALSE, svcctl_started_event);
-    wait_handles[1] = pi.hProcess;
+    wait_handles[1] = process;
 
     /* wait for the event to become available or the process to exit */
     if ((WaitForMultipleObjects(2, wait_handles, FALSE, INFINITE)) == WAIT_OBJECT_0 + 1)
     {
         DWORD exit_code;
-        GetExitCodeProcess(pi.hProcess, &exit_code);
+        GetExitCodeProcess(process, &exit_code);
         WINE_ERR("Unexpected termination of services.exe - exit code %ld\n", exit_code);
-        CloseHandle(pi.hProcess);
+        CloseHandle(process);
         CloseHandle(wait_handles[0]);
         return FALSE;
     }
 
-    CloseHandle(pi.hProcess);
+    CloseHandle(process);
     CloseHandle(wait_handles[0]);
     return TRUE;
 }
@@ -1694,6 +1701,40 @@ static void update_user_profile(void)
 }
 
 /* execute rundll32 on the wine.inf file if necessary */
+/* Whether the prefix is up to date with wine.inf (update_wineprefix would do
+ * nothing), without changing it. */
+static BOOL prefix_is_current(void)
+{
+    const WCHAR *config_dir = _wgetenv( L"WINECONFIGDIR" );
+    WCHAR *inf_path = get_wine_inf_path(), *file;
+    char buffer[100];
+    struct stat st;
+    BOOL ret = FALSE;
+    int fd, count;
+
+    if (!inf_path || !config_dir) goto done;
+    if ((fd = _wopen( inf_path, O_RDONLY )) == -1) goto done;
+    fstat( fd, &st );
+    close( fd );
+    if (!(file = malloc( wcslen(config_dir) * sizeof(WCHAR) + sizeof(L"\\.update-timestamp") ))) goto done;
+    lstrcpyW( file, config_dir );
+    lstrcatW( file, L"\\.update-timestamp" );
+    if ((fd = _wopen( file, O_RDONLY )) != -1)
+    {
+        if ((count = read( fd, buffer, sizeof(buffer) - 1 )) >= 0)
+        {
+            buffer[count] = 0;
+            ret = !strncmp( buffer, "disable", sizeof("disable")-1 ) ||
+                  (unsigned long)st.st_mtime == strtoul( buffer, NULL, 10 );
+        }
+        close( fd );
+    }
+    free( file );
+done:
+    free( inf_path );
+    return ret;
+}
+
 static void update_wineprefix( BOOL force )
 {
     const WCHAR *config_dir = _wgetenv( L"WINECONFIGDIR" );
@@ -1856,7 +1897,8 @@ int __cdecl main( int argc, char *argv[] )
     HANDLE event;
     OBJECT_ATTRIBUTES attr;
     UNICODE_STRING nameW = RTL_CONSTANT_STRING( L"\\KernelObjects\\__wineboot_event" );
-    HANDLE process = 0;
+    HANDLE process = 0, services = 0;
+    BOOL tail_done = FALSE;
     BOOL is_wow64;
 
     end_session = force = init = kill = restart = shutdown = update = FALSE;
@@ -1957,14 +1999,29 @@ int __cdecl main( int argc, char *argv[] )
     if (init || (kill && !restart))
     {
         ProcessRunKeys( HKEY_LOCAL_MACHINE, L"RunServices", FALSE, FALSE );
-        start_services_process();
+        services = start_services_process();
     }
+    /* A prefix that wine.inf does not update gets the rest while services.exe
+     * starts its drivers (gex: in the page, about a second of the shell's
+     * boot); one that it updates gets it after the update, as before. */
+    if (services && !update && prefix_is_current())
+    {
+        create_volatile_environment_registry_key();
+        create_known_dlls();
+        initialize_internet();
+        create_sqmclient_registry_key();
+        tail_done = TRUE;
+    }
+    if (services) wait_services_process( services );
     if (init || update) update_wineprefix( update );
 
-    create_volatile_environment_registry_key();
-    create_known_dlls();
-    initialize_internet();
-    create_sqmclient_registry_key();
+    if (!tail_done)
+    {
+        create_volatile_environment_registry_key();
+        create_known_dlls();
+        initialize_internet();
+        create_sqmclient_registry_key();
+    }
 
     ProcessRunKeys( HKEY_LOCAL_MACHINE, L"RunOnce", TRUE, TRUE );
 
