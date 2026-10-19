@@ -241,6 +241,29 @@ static void init_limits(void)
 #endif
 }
 
+#ifdef __wasm32__
+#include <spawn.h>
+#include <string.h>
+extern char **environ;
+
+/* gex: `wineserver -f -- PROGRAM ARGS...` starts the session's
+ * first client itself once it is up. The page's first process is then the
+ * server, and no client has to start it: a client that does relaunches its
+ * program as a child to get the door (ntdll's wineserver_relaunch) and waits
+ * for it, which kept the starter's whole Windows address space (2 GiB of the
+ * page's memory) for nothing, and the server's fork of it another 2 GiB. */
+static void run_first_client( int argc, char **argv )
+{
+    pid_t pid;
+    int i;
+
+    for (i = 1; i < argc; i++) if (!strcmp( argv[i], "--" )) break;
+    if (i >= argc - 1) return;
+    if (posix_spawn( &pid, argv[i + 1], NULL, NULL, argv + i + 1, environ ))
+        fprintf( stderr, "wineserver: could not start %s\n", argv[i + 1] );
+}
+#endif
+
 int main( int argc, char *argv[] )
 {
     setvbuf( stderr, NULL, _IOLBF, 0 );
@@ -274,6 +297,7 @@ int main( int argc, char *argv[] )
         extern void wineserver_ready(void);
         wineserver_ready();
     }
+    run_first_client( argc, argv );
 #endif
     main_loop();
     return 0;
