@@ -78,17 +78,39 @@ static void enable_privilege( HANDLE token, const WCHAR *name )
         trace( "could not enable %ls: %lu\n", name, GetLastError() );
 }
 
+/* How long the service manager gives a service to start: ServicesPipeTimeout,
+ * read as services.exe reads it. */
+static DWORD service_start_timeout(void)
+{
+    WCHAR buffer[16];
+    DWORD size = sizeof(buffer), type, value = 10000;
+    HKEY key;
+
+    if (RegOpenKeyExW( HKEY_LOCAL_MACHINE, L"System\\CurrentControlSet\\Control", 0, KEY_READ, &key )) return value;
+    if (!RegQueryValueExW( key, L"ServicesPipeTimeout", NULL, &type, (BYTE *)buffer, &size ))
+    {
+        if (type == REG_SZ && wcstoul( buffer, NULL, 10 )) value = wcstoul( buffer, NULL, 10 );
+        else if (type == REG_DWORD && *(DWORD *)buffer) value = *(DWORD *)buffer;
+    }
+    RegCloseKey( key );
+    return value;
+}
+
 /* the user's shell: what follows "winlogon.exe" on the command line, if anything */
 /* The Themes service, when it starts by itself: the theme logon below talks to
  * it, and without it the session's theme is Windows Classic. The service
  * manager starts it beside the logon (its auto-start services run after the
- * session's first process goes on), so wait for it to run, a while at most. */
+ * session's first process goes on), one service after another, and gives each
+ * the service start timeout; so wait for it as long as the service manager
+ * would: the timeout while it waits its turn, and again once it is starting. A
+ * fixed 30 s gave up on a cold first visit, where the service's DLL comes late,
+ * and the session came up in Windows Classic. */
 static void wait_for_themes(void)
 {
     SC_HANDLE scm, svc;
     QUERY_SERVICE_CONFIGW *config;
     SERVICE_STATUS status;
-    DWORD size = 0, start = GetTickCount();
+    DWORD size = 0, start = GetTickCount(), since = start, state = 0, timeout = service_start_timeout();
     BOOL automatic = FALSE;
 
     if (!(scm = OpenSCManagerW( NULL, NULL, SC_MANAGER_CONNECT ))) return;
@@ -104,9 +126,16 @@ static void wait_for_themes(void)
             automatic = config->dwStartType <= SERVICE_AUTO_START;
         free( config );
     }
-    while (automatic && QueryServiceStatus( svc, &status ) && status.dwCurrentState != SERVICE_RUNNING &&
-           GetTickCount() - start < 30000)
+    while (automatic && QueryServiceStatus( svc, &status ) && status.dwCurrentState != SERVICE_RUNNING)
+    {
+        if (status.dwCurrentState != state)
+        {
+            state = status.dwCurrentState;
+            since = GetTickCount();
+        }
+        if (GetTickCount() - since >= timeout) break;
         Sleep( 20 );
+    }
     trace( "Themes service %s after %lu ms\n", automatic ? "waited for" : "not automatic", GetTickCount() - start );
     CloseServiceHandle( svc );
     CloseServiceHandle( scm );
