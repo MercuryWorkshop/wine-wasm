@@ -378,6 +378,32 @@ done:
 }
 
 /******************************************************************************
+ *  RtlSetEnvironmentVar		[NTDLL.@]
+ *
+ * RtlSetEnvironmentVariable with the name and the value as counted strings
+ * (lengths in characters, no terminator needed); a NULL value removes the
+ * variable.
+ */
+NTSTATUS WINAPI RtlSetEnvironmentVar( WCHAR **env, const WCHAR *name, SIZE_T name_len,
+                                      const WCHAR *value, SIZE_T value_len )
+{
+    UNICODE_STRING name_str, value_str;
+
+    TRACE( "(%p, %s, %Iu, %s, %Iu)\n", env, debugstr_wn(name, name_len), name_len,
+           debugstr_wn(value, value_len), value_len );
+
+    if (name_len > UNICODE_STRING_MAX_CHARS || (value && value_len > UNICODE_STRING_MAX_CHARS))
+        return STATUS_INVALID_PARAMETER;
+
+    name_str.Buffer = (WCHAR *)name;
+    name_str.Length = name_str.MaximumLength = name_len * sizeof(WCHAR);
+    if (!value) return RtlSetEnvironmentVariable( env, &name_str, NULL );
+    value_str.Buffer = (WCHAR *)value;
+    value_str.Length = value_str.MaximumLength = value_len * sizeof(WCHAR);
+    return RtlSetEnvironmentVariable( env, &name_str, &value_str );
+}
+
+/******************************************************************************
  *		RtlExpandEnvironmentStrings (NTDLL.@)
  */
 NTSTATUS WINAPI RtlExpandEnvironmentStrings( const WCHAR *renv, WCHAR *src, SIZE_T src_len,

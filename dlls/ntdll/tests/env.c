@@ -40,6 +40,7 @@ static NTSTATUS (WINAPI *pRtlCreateProcessParameters)(RTL_USER_PROCESS_PARAMETER
                                                       PWSTR, const UNICODE_STRING*, const UNICODE_STRING*,
                                                       const UNICODE_STRING*, const UNICODE_STRING*);
 static void (WINAPI *pRtlDestroyProcessParameters)(RTL_USER_PROCESS_PARAMETERS *);
+static NTSTATUS (WINAPI *pRtlSetEnvironmentVar)(WCHAR **, const WCHAR *, SIZE_T, const WCHAR *, SIZE_T);
 
 static void *initial_env;
 
@@ -720,6 +721,51 @@ static void test_RtlSetEnvironmentVariable(void)
     ok(!status, "got %#lx\n", status);
 }
 
+static void test_RtlSetEnvironmentVar(void)
+{
+    NTSTATUS status;
+    WCHAR *env;
+
+    if (!pRtlSetEnvironmentVar)
+    {
+        win_skip("RtlSetEnvironmentVar is not available\n");
+        return;
+    }
+
+    status = RtlCreateEnvironment(FALSE, &env);
+    ok(!status, "got %#lx\n", status);
+
+    /* counted strings: only the given characters are the name and the value */
+    status = pRtlSetEnvironmentVar(&env, L"catalog", 3, L"dogged", 3);
+    ok(!status, "got %#lx\n", status);
+    query_env_var(env, L"cat", L"dog");
+    query_env_var(env, L"catalog", NULL);
+
+    status = pRtlSetEnvironmentVar(&env, L"CAT", 3, L"horse", 5);
+    ok(!status, "got %#lx\n", status);
+    query_env_var(env, L"cat", L"horse");
+
+    status = pRtlSetEnvironmentVar(&env, L"foo", 3, L"", 0);
+    ok(!status, "got %#lx\n", status);
+    query_env_var(env, L"foo", L"");
+
+    status = pRtlSetEnvironmentVar(&env, L"cat", 3, NULL, 0);
+    ok(!status, "got %#lx\n", status);
+    query_env_var(env, L"cat", NULL);
+
+    status = pRtlSetEnvironmentVar(&env, L"cat", 3, NULL, 0);
+    ok(!status, "got %#lx\n", status);
+
+    status = pRtlSetEnvironmentVar(&env, L"me=too", 6, L"also", 4);
+    ok(status == STATUS_INVALID_PARAMETER, "got %#lx\n", status);
+
+    status = pRtlSetEnvironmentVar(&env, L"x", 0, L"also", 4);
+    ok(status == STATUS_INVALID_PARAMETER_1, "got %#lx\n", status);
+
+    status = RtlDestroyEnvironment(env);
+    ok(!status, "got %#lx\n", status);
+}
+
 START_TEST(env)
 {
     HMODULE mod = GetModuleHandleA("ntdll.dll");
@@ -733,11 +779,13 @@ START_TEST(env)
     pRtlExpandEnvironmentStrings_U = (void*)GetProcAddress(mod, "RtlExpandEnvironmentStrings_U");
     pRtlCreateProcessParameters = (void*)GetProcAddress(mod, "RtlCreateProcessParameters");
     pRtlDestroyProcessParameters = (void*)GetProcAddress(mod, "RtlDestroyProcessParameters");
+    pRtlSetEnvironmentVar = (void*)GetProcAddress(mod, "RtlSetEnvironmentVar");
 
     testQuery();
     testExpand();
     test_process_params();
     test_RtlSetCurrentEnvironment();
     test_RtlSetEnvironmentVariable();
+    test_RtlSetEnvironmentVar();
     test_RtlExpandEnvironmentStrings();
 }

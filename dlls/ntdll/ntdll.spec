@@ -1025,6 +1025,7 @@
 @ stdcall RtlSetCurrentEnvironment(wstr ptr)
 @ stdcall RtlSetCurrentTransaction(ptr)
 @ stdcall RtlSetDaclSecurityDescriptor(ptr long ptr long)
+@ stdcall RtlSetEnvironmentVar(ptr ptr long ptr long)
 @ stdcall RtlSetEnvironmentVariable(ptr ptr ptr)
 @ stdcall RtlSetExtendedFeaturesMask(ptr int64)
 @ stdcall RtlSetGroupSecurityDescriptor(ptr ptr long)
