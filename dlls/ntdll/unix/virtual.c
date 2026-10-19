@@ -2972,7 +2972,16 @@ static void *get_host_addr_space_limit(void)
     flags |= MAP_FIXED_NOREPLACE;
 #endif
 
+#if defined(__wasm64__) && !defined(GEX_MEMORY64)
+    /* W64 lowered to wasm32: the space may end below 4 GiB (gex's browser
+     * page names 2 GiB of guest memory, its shim's GUEST_LIMIT; native gexc
+     * all 4), so 2 GiB is probed too. Taking 4 GiB there sent every top-down
+     * allocation (a thread's stack) to 0xffee0000 first, an ENOMEM and an
+     * ERR each time. */
+    while (addr >> 31)
+#else
     while (addr >> 32)
+#endif
     {
         void *ret = mmap( (void *)addr, host_page_size, PROT_NONE, flags, -1, 0 );
         if (ret != MAP_FAILED)
