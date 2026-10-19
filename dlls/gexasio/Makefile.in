@@ -1,0 +1,8 @@
+MODULE    = gexasio.dll
+UNIXLIB   = gexasio.so
+IMPORTS   = uuid advapi32
+UNIX_LIBS = $(PTHREAD_LIBS)
+
+SOURCES = \
+	asio.c \
+	unixlib.c
