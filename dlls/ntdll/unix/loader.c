@@ -527,15 +527,21 @@ NTSTATUS exec_wineloader( char **argv, int socketfd, const struct pe_image_info 
  * environment, with the variables exec_wineloader would putenv, are made
  * here in the parent, and the child only calls wineloader_exec_plan.
  * argv's first two entries are reserved, as for exec_wineloader; winedebug
- * is a "WINEDEBUG=..." to set too, or NULL.
+ * is a "WINEDEBUG=..." to set too, or NULL. image is the Unix path of the
+ * .exe, or NULL: it is passed as WINEGEX_IMAGE, which names the program to
+ * gex's kernel (the exec itself names only the loader), so that a choice
+ * recorded for that program (its memory flavour) applies to its process.
+ * The kernel takes the variable out at the exec; the new process never
+ * sees it.
  */
 NTSTATUS prepare_wineloader_exec( struct wineloader_exec_plan *plan, char **argv, int socketfd,
-                                  const struct pe_image_info *pe_info, const char *winedebug )
+                                  const struct pe_image_info *pe_info, const char *winedebug,
+                                  const char *image )
 {
     WORD machine = pe_info->machine;
     ULONGLONG res_start = pe_info->base;
     ULONGLONG res_end = pe_info->base + pe_info->map_size;
-    char *set[4];
+    char *set[5];
     unsigned int i, j, k, count = 0, nset = 0;
 
     memset( plan, 0, sizeof(*plan) );
@@ -555,6 +561,7 @@ NTSTATUS prepare_wineloader_exec( struct wineloader_exec_plan *plan, char **argv
         set[nset - 1] = NULL;
     set[nset++] = strdup( "WINELOADERNOEXEC=1" );
     if (winedebug) set[nset++] = strdup( winedebug );
+    if (image && asprintf( &set[nset++], "WINEGEX_IMAGE=%s", image ) == -1) set[nset - 1] = NULL;
     plan->strings = malloc( sizeof(set) );
     if (plan->strings) memcpy( plan->strings, set, sizeof(set) );
     else for (j = 0; j < nset; j++) free( set[j] );

@@ -261,7 +261,8 @@ struct wineloader_exec_plan
     unsigned int nstrings;
 };
 extern NTSTATUS prepare_wineloader_exec( struct wineloader_exec_plan *plan, char **argv, int socketfd,
-                                         const struct pe_image_info *pe_info, const char *winedebug );
+                                         const struct pe_image_info *pe_info, const char *winedebug,
+                                         const char *image );
 extern void wineloader_exec_plan( const struct wineloader_exec_plan *plan );
 extern void free_wineloader_exec( struct wineloader_exec_plan *plan );
 #endif

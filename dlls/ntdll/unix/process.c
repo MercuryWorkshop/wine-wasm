@@ -547,7 +547,8 @@ static int spawnvp_child( void *arg )
 #endif
 
 static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int socketfd,
-                               int unixdir, char *winedebug, const struct pe_image_info *pe_info )
+                               int unixdir, char *winedebug, const struct pe_image_info *pe_info,
+                               const char *unix_name )
 {
     NTSTATUS status = STATUS_SUCCESS;
     int stdin_fd = -1, stdout_fd = -1;
@@ -574,7 +575,7 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
          * process. Nothing is lost by not reparenting: an orphan here goes
          * to pid 1, which is Wine too and reaps nothing either. */
         if (!(argv = build_argv( &params->CommandLine, 2 )) ||
-            prepare_wineloader_exec( &plan, argv, socketfd, pe_info, winedebug ))
+            prepare_wineloader_exec( &plan, argv, socketfd, pe_info, winedebug, unix_name ))
         {
             free( argv );
             if (stdin_fd != -1 && stdin_fd != 0) close( stdin_fd );
@@ -1080,7 +1081,7 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
 
     /* create the child process */
 
-    if ((status = spawn_process( params, socketfd[0], unixdir, winedebug, &pe_info ))) goto done;
+    if ((status = spawn_process( params, socketfd[0], unixdir, winedebug, &pe_info, unix_name ))) goto done;
 
     close( socketfd[0] );
     socketfd[0] = -1;
