@@ -962,7 +962,9 @@ static inline DWORD is_privileged_instr( CONTEXT *context )
     return 0;
 }
 
-static void __wine_gex_fault( int ctx, unsigned int code, unsigned int addr, unsigned int kind )
+/* addr is 64-bit: in a memory64 process the faulting address may be above
+ * 4 GiB (an image at its preferred base, 0x140000000). */
+static void __wine_gex_fault( int ctx, unsigned int code, ULONG64 addr, unsigned int kind )
 {
     struct thread_data *data = get_thread_data();
     struct syscall_frame *frame = get_syscall_frame( data );
@@ -988,7 +990,7 @@ static void __wine_gex_fault( int ctx, unsigned int code, unsigned int addr, uns
     {
     case EXCEPTION_ACCESS_VIOLATION:
         /* a general-protection fault (gex says so with ~0) */
-        if (addr == ~0u && (rec.ExceptionCode = is_privileged_instr( &xcontext.c ))) break;
+        if (addr == 0xffffffff && (rec.ExceptionCode = is_privileged_instr( &xcontext.c ))) break;
         rec.ExceptionCode = code;
         rec.NumberParameters = 2;
         rec.ExceptionInformation[0] = kind;  /* 8: executing; else 0 (gex cannot tell a read from a write) */
