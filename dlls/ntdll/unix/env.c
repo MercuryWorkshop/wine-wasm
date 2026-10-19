@@ -1923,6 +1923,15 @@ static RTL_USER_PROCESS_PARAMETERS *build_initial_params( void **module )
 
     get_full_path( main_argv[1], curdir, &nt_name );
     status = load_main_exe( &nt_name, 0, module );
+#ifdef __wasm64__
+    /* W64: an x64 executable's preferred base (0x140000000) is out of reach
+     * of the address space, so the image is relocated, into the reserved
+     * area at 0x400000 as a child's is, and STATUS_IMAGE_NOT_AT_BASE is a
+     * success; a child accepts it (init_startup_info's other path). Taken
+     * as failure here, every such program restarted itself through
+     * start.exe /exec: a second process before it ran, about 2-3 s under gex. */
+    if (status == STATUS_IMAGE_NOT_AT_BASE) status = STATUS_SUCCESS;
+#endif
     /* fail only if the file contained an explicit path */
     if (status == STATUS_DLL_NOT_FOUND &&
         (strpbrk( main_argv[1], "/\\" ) || (main_argv[1][0] && main_argv[1][1] == ':')))
