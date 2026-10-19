@@ -40,6 +40,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <windows.h>
 #include <winternl.h>
 
@@ -78,6 +79,39 @@ static void enable_privilege( HANDLE token, const WCHAR *name )
 }
 
 /* the user's shell: what follows "winlogon.exe" on the command line, if anything */
+/* The Themes service, when it starts by itself: the theme logon below talks to
+ * it, and without it the session's theme is Windows Classic. The service
+ * manager starts it beside the logon (its auto-start services run after the
+ * session's first process goes on), so wait for it to run, a while at most. */
+static void wait_for_themes(void)
+{
+    SC_HANDLE scm, svc;
+    QUERY_SERVICE_CONFIGW *config;
+    SERVICE_STATUS status;
+    DWORD size = 0, start = GetTickCount();
+    BOOL automatic = FALSE;
+
+    if (!(scm = OpenSCManagerW( NULL, NULL, SC_MANAGER_CONNECT ))) return;
+    if (!(svc = OpenServiceW( scm, L"Themes", SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG )))
+    {
+        CloseServiceHandle( scm );
+        return;
+    }
+    QueryServiceConfigW( svc, NULL, 0, &size );
+    if (size && (config = malloc( size )))
+    {
+        if (QueryServiceConfigW( svc, config, size, &size ))
+            automatic = config->dwStartType <= SERVICE_AUTO_START;
+        free( config );
+    }
+    while (automatic && QueryServiceStatus( svc, &status ) && status.dwCurrentState != SERVICE_RUNNING &&
+           GetTickCount() - start < 30000)
+        Sleep( 20 );
+    trace( "Themes service %s after %lu ms\n", automatic ? "waited for" : "not automatic", GetTickCount() - start );
+    CloseServiceHandle( svc );
+    CloseServiceHandle( scm );
+}
+
 static const WCHAR *shell_command_line(void)
 {
     const WCHAR *p = GetCommandLineW();
@@ -147,6 +181,7 @@ int main( void )
     if (set_info && (status = set_info( GetCurrentProcess(), ProcessWineMakeProcessSystem, &shutdown, sizeof(HANDLE *) )))
         fprintf( stderr, "winlogon: could not become a system process (%#lx)\n", status );
 
+    wait_for_themes();
     if ((uxinit = LoadLibraryW( L"UXInit.dll" )))
     {
         void_fn setup = (void_fn)GetProcAddress( uxinit, MAKEINTRESOURCEA(UXINIT_THEMES_ON_WINLOGON_SETUP) );
