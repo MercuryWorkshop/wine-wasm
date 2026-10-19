@@ -863,6 +863,46 @@ static void create_computer_name_keys(void)
     RegCloseKey( key );
 }
 
+/* The user's folders for the volatile environment from the prefix's registry
+ * (the Shell Folders key, the profile list), when they name a directory that
+ * is there; SHGetFolderPathW otherwise. SHGetFolderPathW loads shell32 and its
+ * imports (ole32, comdlg32, gdiplus, ...) into wineboot, a second or so of a
+ * boot that the session's first process waits for (gex). */
+static HRESULT get_folder( int csidl, WCHAR *path )
+{
+    const WCHAR *name = csidl == CSIDL_APPDATA ? L"AppData" : csidl == CSIDL_LOCAL_APPDATA ? L"Local AppData" : NULL;
+    DWORD size = MAX_PATH * sizeof(WCHAR), attr;
+    HANDLE token;
+
+    if (name)
+    {
+        if (RegGetValueW( HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+                          name, RRF_RT_REG_SZ, NULL, path, &size )) goto slow;
+    }
+    else
+    {
+        WCHAR key[256], *sid;
+        char buf[sizeof(TOKEN_USER) + SECURITY_MAX_SID_SIZE];
+        DWORD len;
+        BOOL ok = FALSE;
+
+        if (!OpenProcessToken( GetCurrentProcess(), TOKEN_QUERY, &token )) goto slow;
+        if (GetTokenInformation( token, TokenUser, buf, sizeof(buf), &len ) &&
+            ConvertSidToStringSidW( ((TOKEN_USER *)buf)->User.Sid, &sid ))
+        {
+            swprintf( key, ARRAY_SIZE(key), L"Software\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\%s", sid );
+            ok = !RegGetValueW( HKEY_LOCAL_MACHINE, key, L"ProfileImagePath", RRF_RT_REG_SZ, NULL, path, &size );
+            LocalFree( sid );
+        }
+        CloseHandle( token );
+        if (!ok) goto slow;
+    }
+    attr = GetFileAttributesW( path );
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) return S_OK;
+slow:
+    return SHGetFolderPathW( NULL, csidl | CSIDL_FLAG_CREATE, NULL, SHGFP_TYPE_CURRENT, path );
+}
+
 static void create_volatile_environment_registry_key(void)
 {
     WCHAR path[MAX_PATH];
@@ -875,14 +915,14 @@ static void create_volatile_environment_registry_key(void)
                          KEY_ALL_ACCESS, NULL, &hkey, NULL ))
         return;
 
-    hr = SHGetFolderPathW( NULL, CSIDL_APPDATA | CSIDL_FLAG_CREATE, NULL, SHGFP_TYPE_CURRENT, path );
+    hr = get_folder( CSIDL_APPDATA, path );
     if (SUCCEEDED(hr)) set_reg_value( hkey, L"APPDATA", path );
 
     set_reg_value( hkey, L"CLIENTNAME", L"Console" );
 
     /* Write the profile path's drive letter and directory components into
      * HOMEDRIVE and HOMEPATH respectively. */
-    hr = SHGetFolderPathW( NULL, CSIDL_PROFILE | CSIDL_FLAG_CREATE, NULL, SHGFP_TYPE_CURRENT, path );
+    hr = get_folder( CSIDL_PROFILE, path );
     if (SUCCEEDED(hr))
     {
         set_reg_value( hkey, L"USERPROFILE", path );
@@ -896,7 +936,7 @@ static void create_volatile_environment_registry_key(void)
 
     set_reg_value( hkey, L"HOMESHARE", L"" );
 
-    hr = SHGetFolderPathW( NULL, CSIDL_LOCAL_APPDATA | CSIDL_FLAG_CREATE, NULL, SHGFP_TYPE_CURRENT, path );
+    hr = get_folder( CSIDL_LOCAL_APPDATA, path );
     if (SUCCEEDED(hr))
         set_reg_value( hkey, L"LOCALAPPDATA", path );
 
