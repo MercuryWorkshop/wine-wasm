@@ -1,9 +1,10 @@
 /*
  * Native Wine modules on wasm64 under gex (W64): the run-time half of the
  * spec glue (winebuild's wasm64 entry adapters) and of the ICALL pass's
- * Win64 exit stubs and entry thunks. The code is LLP64 wasm64 lowered to
- * wasm32 (wcc64), so every address is below 4 GiB. See
- * docs/wine-native-x64.md in the gex tree.
+ * Win64 exit stubs and entry thunks. The code is LLP64 wasm64, lowered to
+ * wasm32 (wcc64), so every address is below 4 GiB, or left as it is for a
+ * 64-bit memory (GEX_MEMORY64). See docs/wine-native-x64.md and
+ * docs/mem64.md §5 in the gex tree.
  *
  * The guest is x86-64 with Win64's one calling convention: arguments 1-4
  * in RCX, RDX, R8, R9 (XMM0-3 for floating point, by position), the rest
@@ -19,7 +20,7 @@
  * version 2.1 of the License, or (at your option) any later version.
  */
 
-#if defined(__wasm64__) && !defined(GEX_MEMORY64)
+#if defined(__wasm64__)
 
 #include <stdint.h>
 #include "wine/gex/gex_abi.h"
@@ -28,8 +29,14 @@
 /* x86-64 registers in gex's context, numbered as x86 encodes them */
 enum { X_RAX, X_RCX, X_RDX, X_RBX, X_RSP, X_RBP, X_RSI, X_RDI, X_R8, X_R9, X_R10 };
 #define REG(r) GEX_C64( GEX_CTX_XN(r) )
-/* a guest quadword (below 4 GiB: the lowered flavour) */
+/* a guest quadword: below 4 GiB in the lowered flavour; anywhere in the
+ * memory64 one (GEX_MEMORY64, wcc64 -mgex-memory64: a twin install's PE
+ * core for a process with a 64-bit memory, gex docs/mem64.md §5) */
+#ifdef GEX_MEMORY64
+#define GQ(a) (*(gex_u64 *)GEX_P( (uint64_t)(a) ))
+#else
 #define GQ(a) (*(gex_u64 *)GEX_P( (uint32_t)(a) ))
+#endif
 
 /* Per-thread state: wasm globals of the module instance (gex instantiates
  * a module once per thread), as on wasm32 (wasm32.c), with the guest
@@ -815,4 +822,4 @@ __attribute__((weak)) const char *__gexw_module_imports( const unsigned short *n
     return 0;
 }
 
-#endif /* __wasm64__ && !GEX_MEMORY64 */
+#endif /* __wasm64__ */

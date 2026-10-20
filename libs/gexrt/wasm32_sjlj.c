@@ -73,12 +73,12 @@ void __wasm_longjmp( void *env, int val )
 
 #endif /* __wasm32__ */
 
-#if defined(__wasm64__) && !defined(GEX_MEMORY64)
+#if defined(__wasm64__)
 
 #include <stdint.h>
 
-/* The same for W64's PE side (LLP64 wasm64, lowered): the guest state kept
- * is x86-64's RSP. */
+/* The same for W64's PE side (LLP64 wasm64, lowered or memory64): the
+ * guest state kept is x86-64's RSP. */
 __asm__(
     "\t.tagtype __c_longjmp i64\n"
     "\t.globl __c_longjmp\n"
@@ -126,4 +126,4 @@ void __wasm_longjmp( void *env, int val )
     __builtin_wasm_throw( 1, &jb->arg );
 }
 
-#endif /* __wasm64__ && !GEX_MEMORY64 */
+#endif /* __wasm64__ */
