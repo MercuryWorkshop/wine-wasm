@@ -820,6 +820,17 @@ static void keyboard_handle_enter(void *private, struct wl_keyboard *wl_keyboard
          * request, and one arriving after the next activation would undo it. */
         if (surface->window.managed && !surface->gex_placement)
             NtUserPostMessage(hwnd, WM_WAYLAND_SET_FOREGROUND, 0, 0);
+        /* When nothing is active, though, the enter is the compositor's own
+         * choice (gex's compositors give the keyboard to the topmost window
+         * when no window has it): the window gains the focus, and Windows
+         * activates a window that gains the focus. With another window
+         * active it stays an answer, never acted on. */
+        else if (surface->gex_placement)
+        {
+            HWND fg = NtUserGetForegroundWindow();
+            if (!fg || fg == NtUserGetDesktopWindow())
+                NtUserPostMessage(hwnd, WM_WAYLAND_SET_FOREGROUND, 0, 0);
+        }
     }
 
     wayland_win_data_release(data);
