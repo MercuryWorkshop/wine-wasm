@@ -334,6 +334,7 @@ static LONG WINAPI asio_Start(IGexAsio *iface)
 {
     GexAsio *This = impl_from_IGexAsio(iface);
 
+    TRACE("state %d, %d frames\n", This->state, This->frames);
     if (This->state != Prepared) return ASE_NotPresent;
     memset(This->buffers, 0, (This->inputs + OUTPUTS) * 2 * This->frames * sizeof(float));
     This->num_samples = 0;
@@ -524,6 +525,7 @@ static LONG WINAPI asio_CreateBuffers(IGexAsio *iface, BufferInformation *buffer
     BufferInformation *b;
     LONG i, r;
 
+    TRACE("%d channels, %d frames, state %d\n", numChannels, bufferSize, This->state);
     if (This->state != Initialized) return ASE_NotPresent;
     if (!bufferInfo || !callbacks) return ASE_InvalidMode;
     for (i = 0, b = bufferInfo; i < numChannels; i++, b++)
