@@ -647,6 +647,17 @@ LRESULT WAYLAND_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_WAYLAND_SET_FOREGROUND:
         NtUserSetForegroundWindowInternal(hwnd);
         return 0;
+    case WM_WAYLAND_KEY:
+    {
+        /* (gex) A key that arrived while its window was being activated
+         * (keyboard_handle_enter): sent now, after the activation. */
+        INPUT input = {0};
+        input.type = INPUT_KEYBOARD;
+        input.ki.wScan = wp;
+        input.ki.dwFlags = lp;
+        NtUserSendHardwareInput(hwnd, 0, &input, 0);
+        return 0;
+    }
     default:
         FIXME("got window msg %x hwnd %p wp %lx lp %lx\n", msg, hwnd, (long)wp, lp);
         return 0;
