@@ -716,7 +716,7 @@ void wineserver_relaunch( int cwd_fd )
     const size_t stack_size = 64 * 1024;
     struct relaunch r = { NULL, cwd_fd };
     char *stack;
-    int status;
+    int status, image;
     pid_t pid;
 
     const char *door = getenv( "WINEGEX_DOOR" );
@@ -725,9 +725,17 @@ void wineserver_relaunch( int cwd_fd )
     stack = mmap( NULL, stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0 );
     if (stack == MAP_FAILED) return;
     setenv( "WINEGEX_SERVER_STARTER", "1", 1 );
+    /* The program named by its Unix path (a game started as `wine
+     * /game/x.exe`): named to gex's kernel too, as spawn_process names a
+     * new process's .exe (WINEGEX_IMAGE, prepare_wineloader_exec), so that
+     * a choice recorded for it applies to the process that runs it. The
+     * kernel takes the variable out at the exec. */
+    image = main_argv[1] && strchr( main_argv[1], '/' ) && !getenv( "WINEGEX_IMAGE" );
+    if (image) setenv( "WINEGEX_IMAGE", main_argv[1], 1 );
     pid = clone( relaunch_child, stack + stack_size, CLONE_VFORK | SIGCHLD, &r );
     munmap( stack, stack_size );
     unsetenv( "WINEGEX_SERVER_STARTER" );
+    if (image) unsetenv( "WINEGEX_IMAGE" );
     if (pid == -1) return;  /* carry on without doors */
     while (waitpid( pid, &status, 0 ) == -1 && errno == EINTR);
     if (WIFSIGNALED(status))
