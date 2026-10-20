@@ -802,6 +802,7 @@ static void keyboard_handle_enter(void *private, struct wl_keyboard *wl_keyboard
 
     pthread_mutex_lock(&keyboard->mutex);
     keyboard->focused_hwnd = hwnd;
+    keyboard->activating_hwnd = NULL;
     pthread_mutex_unlock(&keyboard->mutex);
 
     NtUserPostMessage(keyboard->focused_hwnd, WM_INPUTLANGCHANGEREQUEST, 0 /*FIXME*/,
@@ -829,7 +830,14 @@ static void keyboard_handle_enter(void *private, struct wl_keyboard *wl_keyboard
         {
             HWND fg = NtUserGetForegroundWindow();
             if (!fg || fg == NtUserGetDesktopWindow())
+            {
+                /* Its keys follow the activation through its queue: sent
+                 * before it, with nothing active, the server drops them. */
+                pthread_mutex_lock(&keyboard->mutex);
+                if (keyboard->focused_hwnd == hwnd) keyboard->activating_hwnd = hwnd;
+                pthread_mutex_unlock(&keyboard->mutex);
                 NtUserPostMessage(hwnd, WM_WAYLAND_SET_FOREGROUND, 0, 0);
+            }
         }
     }
 
@@ -854,6 +862,8 @@ static void keyboard_handle_leave(void *data, struct wl_keyboard *wl_keyboard,
     pthread_mutex_lock(&keyboard->mutex);
     if (keyboard->focused_hwnd == hwnd)
         keyboard->focused_hwnd = NULL;
+    if (keyboard->activating_hwnd == hwnd)
+        keyboard->activating_hwnd = NULL;
     pthread_mutex_unlock(&keyboard->mutex);
 
     /* The spec for the leave event tells us to treat all keys as released,
@@ -863,6 +873,21 @@ static void keyboard_handle_leave(void *data, struct wl_keyboard *wl_keyboard,
     /* FIXME: update foreground window as well */
 }
 
+/* (gex) A key for a window being activated on its enter goes through its
+ * queue, behind the activation (WM_WAYLAND_KEY); others go straight in. */
+static void send_key_input(HWND hwnd, INPUT *input)
+{
+    struct wayland_keyboard *keyboard = &process_wayland.keyboard;
+    BOOL queue;
+
+    pthread_mutex_lock(&keyboard->mutex);
+    queue = keyboard->activating_hwnd == hwnd;
+    pthread_mutex_unlock(&keyboard->mutex);
+
+    if (queue) NtUserPostMessage(hwnd, WM_WAYLAND_KEY, input->ki.wScan, input->ki.dwFlags);
+    else NtUserSendHardwareInput(hwnd, 0, input, 0);
+}
+
 static void send_right_control(HWND hwnd, uint32_t state)
 {
     INPUT input = {0};
@@ -870,7 +895,7 @@ static void send_right_control(HWND hwnd, uint32_t state)
     input.ki.wScan = 0xe000 | (key2scan(KEY_RIGHTCTRL) & 0xff);
     input.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_EXTENDEDKEY;
     if (state == WL_KEYBOARD_KEY_STATE_RELEASED) input.ki.dwFlags |= KEYEVENTF_KEYUP;
-    NtUserSendHardwareInput(hwnd, 0, &input, 0);
+    send_key_input(hwnd, &input);
 }
 
 static void keyboard_handle_key(void *data, struct wl_keyboard *wl_keyboard,
@@ -896,7 +921,7 @@ static void keyboard_handle_key(void *data, struct wl_keyboard *wl_keyboard,
     if (scan & ~0xff) input.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
 
     if (state == WL_KEYBOARD_KEY_STATE_RELEASED) input.ki.dwFlags |= KEYEVENTF_KEYUP;
-    NtUserSendHardwareInput(hwnd, 0, &input, 0);
+    send_key_input(hwnd, &input);
 }
 
 static void keyboard_handle_modifiers(void *data, struct wl_keyboard *wl_keyboard,

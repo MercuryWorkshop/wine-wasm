@@ -71,6 +71,7 @@ enum wayland_window_message
     WM_WAYLAND_INIT_DISPLAY_DEVICES = WM_WINE_FIRST_DRIVER_MSG,
     WM_WAYLAND_CONFIGURE,
     WM_WAYLAND_SET_FOREGROUND,
+    WM_WAYLAND_KEY,
 };
 
 enum wayland_surface_config_state
@@ -94,6 +95,7 @@ struct wayland_keyboard
     struct xkb_context *xkb_context;
     struct xkb_state *xkb_state;
     HWND focused_hwnd;
+    HWND activating_hwnd; /* (gex) activated on its enter: keys go through its queue */
     pthread_mutex_t mutex;
 };
 
