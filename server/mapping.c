@@ -1297,7 +1297,13 @@ static void load_pinned_bases(void)
     if (!(f = fdopen( fd, "r" ))) { close( fd ); return; }
     while (fgets( line, sizeof(line), f ))
     {
-        if (sscanf( line, "%llx %1023s", &addr, name ) != 2 || (addr & granularity_mask)) continue;
+        size_t len;
+
+        /* the path is the rest of the line: a unix path may hold spaces */
+        if (sscanf( line, "%llx %1023[^\n]", &addr, name ) != 2 || (addr & granularity_mask)) continue;
+        len = strlen( name );
+        while (len && (name[len - 1] == '\r' || name[len - 1] == ' ')) name[--len] = 0;
+        if (!len) continue;
         if (pinned_count == size)
         {
             struct pinned_base *new_bases;
