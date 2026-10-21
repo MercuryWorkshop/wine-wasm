@@ -5784,6 +5784,7 @@ static void fix_cs_coordinates( CREATESTRUCTW *cs, INT *sw )
     {
         RTL_USER_PROCESS_PARAMETERS *params = RtlGetCurrentPeb()->ProcessParameters;
         MONITORINFO mon_info;
+        BOOL cascade = FALSE;
 
         if (!is_default_coord( cs->x ) && !is_default_coord( cs->cx ) && !is_default_coord( cs->cy ))
             return;
@@ -5795,6 +5796,7 @@ static void fix_cs_coordinates( CREATESTRUCTW *cs, INT *sw )
             if (!is_default_coord( cs->y )) *sw = cs->y;
             cs->x = (params->dwFlags & STARTF_USEPOSITION) ? params->dwX : mon_info.rcWork.left;
             cs->y = (params->dwFlags & STARTF_USEPOSITION) ? params->dwY : mon_info.rcWork.top;
+            cascade = !(params->dwFlags & STARTF_USEPOSITION) && (cs->style & WS_CAPTION) == WS_CAPTION;
         }
 
         if (is_default_coord( cs->cx ))
@@ -5818,6 +5820,29 @@ static void fix_cs_coordinates( CREATESTRUCTW *cs, INT *sw )
         {
             FIXME( "Strange use of CW_USEDEFAULT in cy\n" );
             cs->cy = (mon_info.rcWork.bottom - mon_info.rcWork.top) * 3 / 4 - cs->y;
+        }
+
+        /* Like Windows, cascade default-positioned captioned windows down and
+         * right from the work area's corner, one caption and frame per window,
+         * starting over when the next one would leave the work area. */
+        if (cascade)
+        {
+            static LONG next;
+            int step = get_system_metrics( SM_CYCAPTION ) + get_system_metrics( SM_CYSIZEFRAME ) +
+                       get_system_metrics( SM_CXPADDEDBORDER );
+            LONG n = InterlockedIncrement( &next );
+
+            if (step <= 0) return;
+            if (cs->x + n * step + cs->cx > mon_info.rcWork.right ||
+                cs->y + n * step + cs->cy > mon_info.rcWork.bottom)
+            {
+                n = 1;
+                InterlockedExchange( &next, 1 );
+                if (cs->x + step + cs->cx > mon_info.rcWork.right ||
+                    cs->y + step + cs->cy > mon_info.rcWork.bottom) return;
+            }
+            cs->x += n * step;
+            cs->y += n * step;
         }
     }
 }
