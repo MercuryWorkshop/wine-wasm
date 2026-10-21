@@ -1021,6 +1021,16 @@ __ASM_GLOBAL_FUNC( switch_fiber,
                    "ldr x30, [x1, #0x108]\n\t"      /* new->Pc */
                    "mov sp, x2\n\t"
                    "ret" )
+#elif defined(__wasm32__)
+/* Fibers are i386 guest code: the old fiber's context is the guest's state
+ * at its call to SwitchToFiber, as that call returns (its argument popped),
+ * and loading the new one drops the native frames down to that call. */
+static void WINAPI switch_fiber( CONTEXT *old, CONTEXT *new )
+{
+    RtlCaptureContext( old );
+    old->Esp += sizeof(ULONG);
+    NtContinue( new, FALSE );
+}
 #else
 static void WINAPI switch_fiber( CONTEXT *old, CONTEXT *new )
 {
@@ -1029,6 +1039,7 @@ static void WINAPI switch_fiber( CONTEXT *old, CONTEXT *new )
 }
 #endif
 
+#ifndef __wasm32__
 /* call the fiber initial function once we have switched stack */
 static void CDECL start_fiber(void)
 {
@@ -1046,6 +1057,7 @@ static void CDECL start_fiber(void)
     }
     __ENDTRY
 }
+#endif
 
 static void init_fiber_context( struct fiber_data *fiber )
 {
@@ -1064,6 +1076,26 @@ static void init_fiber_context( struct fiber_data *fiber )
 #elif defined(__aarch64__)
     fiber->context.Sp = (ULONG_PTR)fiber->stack_base;
     fiber->context.Pc = (ULONG_PTR)start_fiber;
+#elif defined(__wasm32__)
+    /* The fiber starts in its guest start routine, as if called with its
+     * parameter by a caller that returns to RtlExitUserThread( 1 ), as
+     * start_fiber does; the addresses are the guest's. */
+    static ULONG exit_thread;
+    ULONG *esp = (ULONG *)fiber->stack_base - 4;
+
+    if (!exit_thread)
+        exit_thread = PtrToUlong( GetProcAddress( GetModuleHandleW( L"ntdll.dll" ), "RtlExitUserThread" ));
+    esp[0] = exit_thread;
+    esp[1] = PtrToUlong( fiber->param );
+    esp[2] = 0;
+    esp[3] = 1;
+    fiber->context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_SEGMENTS;
+    fiber->context.Esp = PtrToUlong( esp );
+    fiber->context.Eip = PtrToUlong( fiber->start );
+    fiber->context.EFlags = 0x202;
+    fiber->context.SegCs = 0x23;
+    fiber->context.SegDs = fiber->context.SegEs = fiber->context.SegSs = fiber->context.SegGs = 0x2b;
+    fiber->context.SegFs = 0x63;
 #endif
 }
 
