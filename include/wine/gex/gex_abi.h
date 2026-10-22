@@ -28,7 +28,10 @@
 #define GEX_FCACHE 0xaf000u
 #define GEX_FCACHE_BITS 15u
 #define GEX_FCACHE_MUL 0x9e3779b1u
+#define GEX_FCACHE_TAG_BITS 36u
 #define GEX_FTAB_RESOLVE 0u
+#define GEX_NATIVE_ABI 2u
+__asm__(".section .custom_section.gex.abi,\"\",@\n.int32 2\n.section .text,\"\",@\n");
 
 #define GEX_CTX_X 0u
 #define GEX_CTX_SP 32u
@@ -104,6 +107,7 @@ __attribute__((import_module("gex"), import_name("sysreg_write"))) void gex_sysr
 __attribute__((import_module("gex"), import_name("cache_op"))) void gex_cache_op(int ctx, int64_t pc, int32_t op, int64_t addr);
 __attribute__((import_module("gex"), import_name("fma"))) int64_t gex_fma(int ctx, int64_t a, int64_t b, int64_t c, int32_t dbl);
 __attribute__((import_module("gex"), import_name("safepoint"))) void gex_safepoint(int ctx, int64_t pc);
+__attribute__((import_module("gex"), import_name("icall_note"))) void gex_icall_note(int ctx, int64_t ret, int64_t target);
 __attribute__((import_module("gex"), import_name("lookup"))) int32_t gex_lookup(int ctx, int64_t addr);
 __attribute__((import_module("gex"), import_name("x87"))) int64_t gex_x87(int ctx, int32_t op, int64_t a_sig, int32_t a_se, int64_t b_sig, int32_t b_se, int32_t cw);
 /* Tail-called with ctx.LAST_TARGET holding the target; the splice replaces
@@ -197,8 +201,9 @@ GEX_INLINE uint64_t gex_fma64(int ctx, uint64_t ab, uint64_t bb_, uint64_t cb, u
 /* The function table (docs/merge-plan.md §9.8.1). A unit is linked
    position-independent, so its function pointers are indices into the
    process's table, and a call through one is `call_indirect` on it. The
-   index for a guest address comes from the probe cache: the entry's low half
-   is the address, its high half the index; a miss is the resolve stub (0),
+   index for a guest address comes from the probe cache: the entry's low
+   GEX_FCACHE_TAG_BITS bits are the address, the bits above them the index;
+   a miss is the resolve stub (0),
    which asks the host. Every call through the table stores its target in
    ctx.LAST_TARGET first (the resolve stub, and any slot a thread has not
    filled, read it). */
@@ -206,7 +211,7 @@ typedef int (*gex_body_t)(int ctx, int32_t depth, uint32_t need, uint64_t ret);
 GEX_INLINE uint32_t gex_ftab_idx(uint64_t t) {
     uint32_t slot = ((uint32_t)t * GEX_FCACHE_MUL) >> (32u - GEX_FCACHE_BITS);
     uint64_t e = __atomic_load_n((gex_a64 *)GEX_P(GEX_FCACHE + 8u * slot), __ATOMIC_RELAXED);
-    return (e & 0xffffffffull) == t ? (uint32_t)(e >> 32) : GEX_FTAB_RESOLVE;
+    return (e & ((1ull << GEX_FCACHE_TAG_BITS) - 1u)) == t ? (uint32_t)(e >> GEX_FCACHE_TAG_BITS) : GEX_FTAB_RESOLVE;
 }
 #define GEX_FTAB(i) ((gex_body_t)(uintptr_t)(i))
 
@@ -332,10 +337,14 @@ GEX_INLINE uint64_t gex_x87_narrow(int ctx, uint64_t sig, uint32_t se, uint32_t 
         GEX_C32(GEX_X87_SW) = ((uint32_t)(rem != 0) << 5) | (up << 9);
         return bits;
     }
+    if (sig == 0 && e == 0) { /* a zero: its sign alone, exact */
+        GEX_C32(GEX_X87_SW) = 0;
+        return (uint64_t)sign << (total - 1);
+    }
     return gex_x87_slow(ctx, single ? 1 : 2, sig, se, 0, 0, cw);
 }
 
-/* fist / fisttp (X87Op::ToInt): zero, and 1 <= |v| < 2^(bits-1). */
+/* fist / fisttp (X87Op::ToInt): zero, and normal |v| < 2^(bits-1). */
 GEX_INLINE uint64_t gex_x87_toint(int ctx, uint64_t sig, uint32_t se, uint32_t cw, uint32_t bits,
                                   uint32_t trunc) {
     uint32_t e = se & 0x7fff, sign = (se >> 15) & 1;
@@ -365,6 +374,18 @@ GEX_INLINE uint64_t gex_x87_toint(int ctx, uint64_t sig, uint32_t se, uint32_t c
         GEX_C32(GEX_X87_SW) = ((uint32_t)(rem != 0) << 5) | (up << 9);
         return v;
     }
+    if ((int64_t)sig < 0 && e - 1 < 16382) { /* 0 < |v| < 1: 0 or +-1, inexact */
+        uint32_t up = 0;
+        if (!trunc) {
+            uint32_t rc = (cw >> 10) & 3;
+            up = ((rc == 0) & (e == 16382) & (sig != 1ull << 63)) | (rc == 2 - sign);
+        }
+        uint64_t v = sign ? 0 - (uint64_t)up : (uint64_t)up;
+        if (bits < 64)
+            v &= (1ull << bits) - 1;
+        GEX_C32(GEX_X87_SW) = (1u << 5) | (up << 9);
+        return v;
+    }
     return gex_x87_slow(ctx, 0x100 | (int32_t)(bits << 1) | (int32_t)trunc, sig, se, 0, 0, cw);
 }
 
@@ -392,13 +413,104 @@ GEX_INLINE uint64_t gex_x87_round(int ctx, uint64_t hi, uint64_t lo, uint32_t e,
     return sig;
 }
 
+/* (u1:u0) / v for a normalised v (bit 63 set) and u1 < v: the 64-bit
+ * quotient and the remainder (Hacker's Delight divlu, 64-bit halves; no
+ * 128-bit division, which a unit has no runtime for). */
+GEX_INLINE uint64_t gex_x87_divlu(uint64_t u1, uint64_t u0, uint64_t v, uint64_t *r) {
+    const uint64_t b = 1ull << 32;
+    uint64_t vn1 = v >> 32, vn0 = v & 0xffffffffull;
+    uint64_t un1 = u0 >> 32, un0 = u0 & 0xffffffffull;
+    uint64_t q1 = u1 / vn1, rhat = u1 - q1 * vn1;
+    while (q1 >= b || q1 * vn0 > b * rhat + un1) {
+        q1--;
+        rhat += vn1;
+        if (rhat >= b)
+            break;
+    }
+    uint64_t un21 = u1 * b + un1 - q1 * v;
+    uint64_t q0 = un21 / vn1;
+    rhat = un21 - q0 * vn1;
+    while (q0 >= b || q0 * vn0 > b * rhat + un0) {
+        q0--;
+        rhat += vn1;
+        if (rhat >= b)
+            break;
+    }
+    *r = un21 * b + un0 - q0 * v;
+    return q1 * b + q0;
+}
+
+/* fdiv of normal operands: the quotient's first 66 or 67 bits and a
+ * sticky bit, normalised to hi:lo, then rounded as the others are. Sets
+ * *ok to 0 (and computes nothing) when the result would not be normal. */
+GEX_INLINE uint64_t gex_x87_div(int ctx, uint64_t asig, uint32_t ase, uint64_t bsig, uint32_t bse, uint32_t cw,
+                                int *ok) {
+    uint32_t ae = ase & 0x7fff, be = bse & 0x7fff;
+    uint32_t sign = ((ase ^ bse) >> 15) & 1;
+    uint32_t big = asig >= bsig;
+    int32_t e = (int32_t)ae - (int32_t)be + 16383 - 1 + (int32_t)big;
+    if ((uint32_t)(e - 1) > 0x7ffc) {
+        *ok = 0;
+        return 0;
+    }
+    *ok = 1;
+    uint64_t r, r2;
+    /* asig / bsig = big + q / 2^64 + q2 / 2^66 + rest */
+    uint64_t q = gex_x87_divlu(big ? asig - bsig : asig, 0, bsig, &r);
+    uint64_t q2 = gex_x87_divlu(r >> 62, r << 2, bsig, &r2);
+    uint64_t st = r2 != 0;
+    uint64_t hi, lo;
+    if (big) { /* 1 . q q2: bit 127 is the 1 */
+        hi = (1ull << 63) | (q >> 1);
+        lo = (q << 63) | (q2 << 61) | st;
+    } else { /* 0 . q q2, q's top bit set */
+        hi = q;
+        lo = (q2 << 62) | st;
+    }
+    return gex_x87_round(ctx, hi, lo, (uint32_t)e, sign, cw);
+}
+
 /* fadd / fsub / fmul / fdiv (X87Op::Arith, k = 0..3): add, subtract and
  * multiply inline for normal operands with a normal exact result (sums
- * with exponents at most 63 apart, an effective subtraction at least 2);
- * division and the rest through the import. */
+ * with exponents at most 63 apart, an effective subtraction at least 2),
+ * division of normal operands with a normal result, and a zero with a
+ * normal operand; the rest through the import. */
 GEX_INLINE uint64_t gex_x87_arith(int ctx, uint32_t k, uint64_t asig, uint32_t ase, uint64_t bsig,
                                   uint32_t bse, uint32_t cw) {
     uint32_t ae = ase & 0x7fff, be = bse & 0x7fff;
+    uint32_t anorm = (int64_t)asig < 0 && ae - 1 <= 0x7ffd, bnorm = (int64_t)bsig < 0 && be - 1 <= 0x7ffd;
+    uint32_t azero = asig == 0 && ae == 0, bzero = bsig == 0 && be == 0;
+    if (k == 3 && anorm && bnorm) {
+        int ok;
+        uint64_t v = gex_x87_div(ctx, asig, ase, bsig, bse, cw, &ok);
+        if (ok)
+            return v;
+    }
+    /* Two zeros: a sum is +0 unless both are -0 (or, rounding down,
+     * either is); a product the signs' exclusive or. (0/0 is invalid.) */
+    if (azero & bzero & (k != 3)) {
+        uint32_t as = (ase >> 15) & 1, bs = ((k == 1 ? bse ^ 0x8000 : bse) >> 15) & 1;
+        uint32_t s = k == 2 ? as ^ bs : ((cw >> 10) & 3) == 1 ? as | bs : as & bs;
+        GEX_C32(GEX_X87_SE) = s << 15;
+        GEX_C32(GEX_X87_SW) = 0;
+        return 0;
+    }
+    /* A zero and a normal number. A sum is the normal one (negated for
+     * 0 - b), rounded to the precision control; a product, or a zero
+     * divided, is a zero of the signs' exclusive or. */
+    if ((azero & bnorm) | (anorm & bzero)) {
+        if (k <= 1) {
+            uint64_t x = azero ? bsig : asig;
+            uint32_t xe = azero ? be : ae;
+            uint32_t xs = ((azero ? (k == 1 ? bse ^ 0x8000 : bse) : ase) >> 15) & 1;
+            return gex_x87_round(ctx, x, 0, xe, xs, cw);
+        }
+        if (k == 2 || (k == 3 && azero)) {
+            GEX_C32(GEX_X87_SE) = ((ase ^ bse) & 0x8000);
+            GEX_C32(GEX_X87_SW) = 0;
+            return 0;
+        }
+    }
     if (k != 3 && (int64_t)asig < 0 && ae - 1 <= 0x7ffd && (int64_t)bsig < 0 && be - 1 <= 0x7ffd) {
         uint64_t hi, lo;
         int32_t e;
