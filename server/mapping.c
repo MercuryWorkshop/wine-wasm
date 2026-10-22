@@ -1716,6 +1716,13 @@ DECL_HANDLER(get_image_map_address)
         if (!mapping->image.map_addr) mapping->image.map_addr = assign_map_address( mapping );
         reply->addr = mapping->image.map_addr;
     }
+    /* a fixed-base DLL gets its dll-bases pin, never a pool address (0: its
+     * own base) */
+    else if ((mapping->flags & SEC_IMAGE) && (mapping->image.image_charact & IMAGE_FILE_DLL))
+    {
+        if (!mapping->image.map_addr) mapping->image.map_addr = pinned_map_address( mapping );
+        reply->addr = mapping->image.map_addr;
+    }
     else set_error( STATUS_INVALID_PARAMETER );
 
     release_object( mapping );
