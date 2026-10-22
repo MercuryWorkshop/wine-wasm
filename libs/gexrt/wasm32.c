@@ -282,10 +282,18 @@ void __gexw_missing( int ctx )
  * gex-kernel's NT trampoline page (int3 filler). */
 #define GEXW_RETURN_PAD 0x3ffff1u
 
+/* The `need` of a call that returns to the pad: the flags (gex-abi's
+ * ftab::NEED_FLAGS) and, in the bits above the low two, how many bytes of
+ * arguments the callee may pop (ftab::NEED_ARGS). gex takes a return to the
+ * pad as this call's only with the stack pointer between the return
+ * address's slot + 4 and that + `args`. */
+#define GEXW_PAD_NEED( args ) (((args) & ~3u) | 1u)
+
 /* Run the guest from the context until it reaches `stop` (a return
  * address of ours, or a syscall's), as gex's own dispatch loop does: an
- * F_body that returns 0 has written where to go on into the context. */
-static void run_until( int ctx, uint32_t stop, uint32_t limit )
+ * F_body that returns 0 has written where to go on into the context.
+ * `need` is what each body is called with. */
+static void run_until( int ctx, uint32_t stop, uint32_t limit, uint32_t need )
 {
     int depth = gexw_get_depth() + 1;
     for (;;)
@@ -298,7 +306,7 @@ static void run_until( int ctx, uint32_t stop, uint32_t limit )
          * guest goes on from the context. */
         if (limit && gp_reg( ctx, R_ESP ) >= limit) __gexw_throw_unwind();
         GEX_C64( GEX_CTX_LAST_TARGET ) = pc;
-        if (GEX_FTAB( gex_ftab_idx( pc ))( ctx, depth, 0xffffffffu, stop )) return;
+        if (GEX_FTAB( gex_ftab_idx( pc ))( ctx, depth, need, stop )) return;
         /* a trap through native frames inside it skipped their entries'
          * restores */
         gexw_set_entry_esp( limit );
@@ -354,7 +362,7 @@ __attribute__((import_module("gex"), import_name("unix_dispatcher"))) int gex_un
 uint64_t __gexw_guest_call( uint32_t target, const uint32_t *words, uint32_t n )
 {
     int ctx = cur_ctx();
-    uint32_t sp0, sp, ra, i, limit;
+    uint32_t sp0, sp, ra, i, limit, need, esp;
 
     /* The trampoline page's Unix-call entry (ntdll's
      * __wine_unix_call_dispatcher under Wine's own Unix side): straight to
@@ -386,10 +394,21 @@ uint64_t __gexw_guest_call( uint32_t target, const uint32_t *words, uint32_t n )
      * entry's (native code moves it only around its guest calls, and puts
      * it back): what the guest leaves the native frames by going above */
     limit = sp0;
-    if (!GEX_FTAB( gex_ftab_idx( target ))( ctx, gexw_get_depth() + 1, 0xffffffffu, ra ))
+    need = GEXW_PAD_NEED( 4 * n );
+    if (!GEX_FTAB( gex_ftab_idx( target ))( ctx, gexw_get_depth() + 1, need, ra ))
     {
         gexw_set_entry_esp( limit );
-        run_until( ctx, ra, limit );
+        run_until( ctx, ra, limit, need );
+    }
+    /* At the pad, but with the stack pointer outside what this call's
+     * return leaves: the guest went on to an outer native caller's return
+     * (a handler resuming in a frame outside this call). Every native frame
+     * up to the innermost entry goes, and the guest carries on at the pad. */
+    esp = gp_reg( ctx, R_ESP );
+    if (esp < sp + 4 || esp > sp + 4 + 4 * n)
+    {
+        GEX_C64( GEX_CTX_PC ) = ra;
+        __gexw_throw_unwind();
     }
     gp_set( ctx, R_ESP, sp0 );
     return ((uint64_t)gp_reg( ctx, R_EDX ) << 32) | gp_reg( ctx, R_EAX );
@@ -586,7 +605,7 @@ uint32_t __gexw_syscall( uint32_t id, const uint32_t *words, uint32_t n )
     uint32_t esp0 = gp_reg( ctx, R_ESP ), pc0 = (uint32_t)GEX_C64( GEX_CTX_PC ), stop, ret;
 
     syscall_enter( ctx, id, words, n, &stop );
-    if ((uint32_t)GEX_C64( GEX_CTX_PC ) != stop) run_until( ctx, stop, esp0 );
+    if ((uint32_t)GEX_C64( GEX_CTX_PC ) != stop) run_until( ctx, stop, esp0, 0xffffffffu );
     ret = gp_reg( ctx, R_EAX );
     gp_set( ctx, R_ESP, esp0 );
     GEX_C64( GEX_CTX_PC ) = pc0;
