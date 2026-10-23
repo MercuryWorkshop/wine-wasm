@@ -82,6 +82,9 @@ struct thread
     int                    exit_code;     /* thread exit code */
     int                    unix_pid;      /* Unix pid of client */
     int                    unix_tid;      /* Unix tid of client */
+#ifdef __wasm32__
+    int                    door_unix_tid; /* its Unix tid for door calls, a system thread's too (init_thread) */
+#endif
     struct context        *context;       /* current context */
     client_ptr_t           suspend_cookie;/* wait cookie of suspending select */
     client_ptr_t           teb;           /* TEB address (in client address space) */

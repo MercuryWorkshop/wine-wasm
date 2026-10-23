@@ -355,6 +355,9 @@ static inline void init_thread_structure( struct thread *thread )
     thread->alert_sync      = NULL;
     thread->unix_pid        = -1;  /* not known yet */
     thread->unix_tid        = -1;  /* not known yet */
+#ifdef __wasm32__
+    thread->door_unix_tid   = -1;
+#endif
     thread->context         = NULL;
     thread->teb             = 0;
     thread->entry_point     = 0;
@@ -744,17 +747,18 @@ struct thread *get_thread_from_tid( int tid )
 }
 
 #ifdef __wasm32__
-/* the thread a door call comes from (door.c): its Unix pid and tid */
+/* the thread a door call comes from (door.c): its process's Unix pid and
+ * its tid (door_unix_tid: a system thread's unix_pid and unix_tid stay -1) */
 struct thread *door_find_thread( int unix_pid, int unix_tid )
 {
     struct thread *thread, *last = door_last;
 
-    if (last && last->unix_tid == unix_tid && last->unix_pid == unix_pid && last->state != TERMINATED &&
+    if (last && last->door_unix_tid == unix_tid && last->process->unix_pid == unix_pid && last->state != TERMINATED &&
         last->reply_fd)
         return last;
     LIST_FOR_EACH_ENTRY( thread, &thread_list, struct thread, entry )
     {
-        if (thread->unix_tid == unix_tid && thread->unix_pid == unix_pid && thread->state != TERMINATED &&
+        if (thread->door_unix_tid == unix_tid && thread->process->unix_pid == unix_pid && thread->state != TERMINATED &&
             thread->reply_fd)
             return door_last = thread;
     }
@@ -1779,6 +1783,9 @@ DECL_HANDLER(init_first_thread)
 
     current->unix_pid = process->unix_pid = req->unix_pid;
     current->unix_tid = req->unix_tid;
+#ifdef __wasm32__
+    current->door_unix_tid = req->unix_tid;
+#endif
 
     if (!process->parent_id)
         process->affinity = current->affinity = get_thread_affinity( current );
@@ -1809,6 +1816,13 @@ DECL_HANDLER(init_thread)
 {
     if (!init_thread( current, req->reply_fd, req->wait_fd )) return;
 
+#ifdef __wasm32__
+    /* A system thread (PsCreateSystemThread: an audio driver's timer loop)
+     * has no TEB and is refused below, keeping unix_tid -1: no signals,
+     * priority or affinity for it. Its door calls still need the tid, or
+     * every request it makes tries the door, fails and takes the pipes. */
+    current->door_unix_tid = req->unix_tid;
+#endif
     if (!is_valid_address(req->teb))
     {
         set_error( STATUS_INVALID_PARAMETER );
