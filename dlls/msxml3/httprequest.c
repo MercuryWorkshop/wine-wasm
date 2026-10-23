@@ -1069,7 +1069,7 @@ static HRESULT httprequest_send(httprequest *This, VARIANT body)
         /* success path to detach it is OnStopBinding call */
         BindStatusCallback_Detach(bsc);
 
-    return hr;
+    return FAILED(hr) ? hr : S_OK;
 }
 
 static HRESULT httprequest_abort(httprequest *This)

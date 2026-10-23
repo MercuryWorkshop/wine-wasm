@@ -1800,6 +1800,80 @@ static void test_XMLHTTP(void)
     free_bstrs();
 }
 
+/* mshtml's XMLHttpRequest opens XMLHTTP asynchronously even for a synchronous
+ * script request and treats any send() result other than S_OK as a failure. */
+static void test_XMLHTTP_async(void)
+{
+    VARIANT empty, vtrue, varbody;
+    IXMLHttpRequest *xhr;
+    IDispatch *event;
+    LONG state, status;
+    DWORD start;
+    BSTR str;
+    HRESULT hr;
+    MSG msg;
+
+    xhr = create_xhr();
+    if (!xhr)
+    {
+        win_skip("XMLHTTPRequest is not available.\n");
+        return;
+    }
+
+    httpreq = xhr;
+    event = create_dispevent();
+    hr = IXMLHttpRequest_put_onreadystatechange(xhr, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    V_VT(&empty) = VT_EMPTY;
+    V_VT(&vtrue) = VT_BOOL;
+    V_BOOL(&vtrue) = VARIANT_TRUE;
+    hr = IXMLHttpRequest_open(xhr, _bstr_("GET"), _bstr_(xmltestA), vtrue, empty, empty);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    V_VT(&varbody) = VT_EMPTY;
+    hr = IXMLHttpRequest_send(xhr, varbody);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    state = READYSTATE_UNINITIALIZED;
+    hr = IXMLHttpRequest_get_readyState(xhr, &state);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(state != READYSTATE_UNINITIALIZED && state != READYSTATE_COMPLETE, "Unexpected state %ld.\n", state);
+
+    /* the status is not available until the request completes */
+    hr = IXMLHttpRequest_get_status(xhr, &status);
+    ok(hr == E_FAIL, "Unexpected hr %#lx.\n", hr);
+
+    start = GetTickCount();
+    while (state != READYSTATE_COMPLETE && GetTickCount() - start < 10000)
+    {
+        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        MsgWaitForMultipleObjects(0, NULL, FALSE, 50, QS_ALLINPUT);
+        hr = IXMLHttpRequest_get_readyState(xhr, &state);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    }
+    ok(state == READYSTATE_COMPLETE, "Unexpected state %ld.\n", state);
+
+    status = 0;
+    hr = IXMLHttpRequest_get_status(xhr, &status);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(status == 200, "Unexpected status %ld.\n", status);
+
+    str = NULL;
+    hr = IXMLHttpRequest_get_responseText(xhr, &str);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(str && *str, "Expected response text.\n");
+    SysFreeString(str);
+
+    IXMLHttpRequest_Release(xhr);
+    IDispatch_Release(event);
+    free_bstrs();
+}
+
 static void test_server_xhr(void)
 {
     IServerXMLHTTPRequest *xhr;
@@ -1923,6 +1997,7 @@ START_TEST(httpreq)
     IXMLHttpRequest_Release(xhr);
 
     test_XMLHTTP();
+    test_XMLHTTP_async();
     test_server_xhr();
     test_safe_httpreq();
     test_supporterrorinfo();
