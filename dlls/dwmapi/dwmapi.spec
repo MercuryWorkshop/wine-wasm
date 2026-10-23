@@ -10,7 +10,7 @@
 109 stub -noname DwmpOpenGraphicsStream
 110 stub -noname DwmpCloseGraphicsStream
 112 stub -noname DwmpSetGraphicsStreamTransformHint
-113 stub -noname DwmpActivateLivePreview
+113 stdcall -noname DwmpActivateLivePreview(long ptr ptr long)
 114 stub -noname DwmpQueryThumbnailType
 115 stdcall -noname DwmpStartupViaUserInit(long)
 118 stub -noname DwmpGetAssessment

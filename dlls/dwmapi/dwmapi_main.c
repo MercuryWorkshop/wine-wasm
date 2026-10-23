@@ -73,6 +73,26 @@ HRESULT WINAPI DwmpStartupViaUserInit(DWORD timeout)
 }
 
 /**********************************************************************
+ *           DwmpActivateLivePreview         (DWMAPI.113)
+ *
+ * Aero Peek: Windows 7's taskbar calls it as the pointer rests on the Show
+ * desktop button or a window's thumbnail (and again to end the peek). The
+ * peek is the compositor's; with composition off there is none, as on
+ * Windows under the Basic theme.
+ */
+HRESULT WINAPI DwmpActivateLivePreview(BOOL activate, HWND hwnd, HWND insert_after, UINT type)
+{
+    BOOL enabled;
+
+    TRACE("%d %p %p %u\n", activate, hwnd, insert_after, type);
+
+    if (DwmIsCompositionEnabled(&enabled) == S_OK && !enabled)
+        return DWM_E_COMPOSITIONDISABLED;
+    FIXME("(%d %p %p %u) stub\n", activate, hwnd, insert_after, type);
+    return S_OK;
+}
+
+/**********************************************************************
  *           DwmEnableComposition         (DWMAPI.102)
  */
 HRESULT WINAPI DwmEnableComposition(UINT uCompositionAction)
