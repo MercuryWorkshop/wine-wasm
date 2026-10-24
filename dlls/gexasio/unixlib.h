@@ -38,7 +38,7 @@ struct gexasio_open_params
     UINT32 rate;        /* frames a second */
     UINT32 frames;      /* the ASIO buffer: one half, frames */
     UINT32 inputs;      /* 1: open capture too */
-    UINT32 pad;
+    UINT32 fragments;   /* out: output buffers the device holds */
     UINT64 stream;      /* out */
     NTSTATUS result;
 };

@@ -3,9 +3,11 @@
  *
  * The device (gex-kernel's vfs/oss.rs) mixes what each open writes and, in
  * the page, the browser's audio thread plays it; SNDCTL_DSP_GEX_INFO says
- * what plays it. A stream is float stereo at the host's rate, with two
- * fragments of one ASIO buffer each: a write of the next buffer returns once
- * the one before it starts to play, which paces the driver's thread.
+ * what plays it. A stream is float stereo at the host's rate, in fragments
+ * of one ASIO buffer each: two, and with a player at least one more, as
+ * many as cover its latency up to MAX_MORE_FRAMES, since it takes what is
+ * queued in bursts. A write returns once a fragment is free, which paces the
+ * driver's thread.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -65,6 +67,10 @@ struct stream
  * input stays within a buffer or two of the output however the two start. */
 #define HELD_BUFFERS 4
 
+/* Output held past the two buffers, at most, for the player's latency, in
+ * frames: its latency counts its output's delay too, which is not a burst. */
+#define MAX_MORE_FRAMES 512
+
 static void fill_info(int fd, struct gexasio_info *info)
 {
     unsigned int v[5] = {0};
@@ -96,10 +102,12 @@ static NTSTATUS probe(void *args)
     return STATUS_SUCCESS;
 }
 
-static int setup(int fd, UINT32 rate, int frag)
+/* frag: SNDCTL_DSP_SETFRAGMENT's request, answered with what the device set
+ * (NULL: the device's own). */
+static int setup(int fd, UINT32 rate, int *frag)
 {
     int v = AFMT_FLOAT;
-    if (frag && ioctl(fd, SNDCTL_DSP_SETFRAGMENT, &frag) < 0) return -1;
+    if (frag && ioctl(fd, SNDCTL_DSP_SETFRAGMENT, frag) < 0) return -1;
     if (ioctl(fd, SNDCTL_DSP_SETFMT, &v) < 0 || v != AFMT_FLOAT) return -1;
     v = 2;
     if (ioctl(fd, SNDCTL_DSP_CHANNELS, &v) < 0 || v != 2) return -1;
@@ -113,7 +121,9 @@ static NTSTATUS do_open(void *args)
     struct gexasio_open_params *params = args;
     struct stream *s;
     UINT32 bytes = params->frames * 2 * sizeof(float);
-    int shift = 4;
+    struct gexasio_info info;
+    UINT32 more;
+    int shift = 4, frag;
 
     params->stream = 0;
     if (!(s = calloc(1, sizeof(*s))))
@@ -131,12 +141,23 @@ static NTSTATUS do_open(void *args)
         return STATUS_SUCCESS;
     }
     while (shift < 14 && (1u << shift) < bytes) shift++;
-    if ((s->out = open("/dev/dsp", O_WRONLY)) < 0 || setup(s->out, s->rate, (2 << 16) | shift) < 0)
-        goto fail;
+    if ((s->out = open("/dev/dsp", O_WRONLY)) < 0) goto fail;
+    fill_info(s->out, &info);
+    more = 0;
+    if (info.player)
+    {
+        UINT64 burst = (UINT64)info.latency_us * s->rate / 1000000;
+        more = (burst + s->frames - 1) / s->frames;
+        if (more * s->frames > MAX_MORE_FRAMES) more = MAX_MORE_FRAMES / s->frames;
+        if (!more) more = 1;
+    }
+    frag = ((2 + more) << 16) | shift;
+    if (setup(s->out, s->rate, &frag) < 0) goto fail;
+    params->fragments = (UINT32)frag >> 16;
     if (params->inputs)
     {
         char drain[4096];
-        if ((s->in = open("/dev/dsp", O_RDONLY | O_NONBLOCK)) < 0 || setup(s->in, s->rate, 0) < 0)
+        if ((s->in = open("/dev/dsp", O_RDONLY | O_NONBLOCK)) < 0 || setup(s->in, s->rate, NULL) < 0)
             goto fail;
         /* from now on: what capture held before is not this stream's */
         while (read(s->in, drain, sizeof(drain)) > 0) ;

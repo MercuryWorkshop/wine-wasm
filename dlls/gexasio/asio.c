@@ -32,11 +32,12 @@
  */
 
 /* How it runs: CreateBuffers opens a float stereo stream on the device at
- * the host's rate, two fragments of one buffer each; Start starts a thread
- * that, for each buffer, takes what capture has (when the device has input),
- * calls the host's bufferSwitch on one half, and writes that half to the
- * device, which blocks until the buffer before it plays. Output latency is
- * then two buffers, the player's render quantum and its output latency. */
+ * the host's rate, in fragments of one buffer each (two, and more to cover
+ * the player's latency); Start starts a thread that, for each buffer, takes
+ * what capture has (when the device has input), calls the host's
+ * bufferSwitch on one half, and writes that half to the device, which blocks
+ * until a fragment is free. Output latency is then the buffers the device
+ * holds, the player's render quantum and its output latency. */
 
 #include <stdarg.h>
 #include <string.h>
@@ -59,7 +60,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(gexasio);
 #define CLSID_STRING       L"{F2D1C87F-1EC3-41DB-A5F3-9C335307145D}"
 #define MIN_BUFFER         64
 #define MAX_BUFFER         2048
-#define PREFERRED_BUFFER   256
+#define PREFERRED_BUFFER   512
 #define OUTPUTS            2
 #define MAX_INPUTS         2
 
@@ -162,6 +163,7 @@ typedef struct
     int inputs;
     double rate;
     LONG frames;
+    LONG fragments;   /* output buffers the device holds */
 
     Callbacks *callbacks;
     BOOL time_info, time_code;
@@ -371,7 +373,7 @@ static LONG WINAPI asio_GetChannels(IGexAsio *iface, LONG *numInputChannels, LON
     return ASE_OK;
 }
 
-/* In frames: output is the two buffers the device holds, the player's
+/* In frames: output is the buffers the device holds, the player's
  * quantum and its output latency; input one buffer and the quantum. */
 static LONG WINAPI asio_GetLatencies(IGexAsio *iface, LONG *inputLatency, LONG *outputLatency)
 {
@@ -389,7 +391,7 @@ static LONG WINAPI asio_GetLatencies(IGexAsio *iface, LONG *inputLatency, LONG *
             info.quantum = pos.quantum;
         }
     }
-    *outputLatency = 2 * This->frames + info.quantum + (LONG)(info.latency_us * This->rate / 1e6 + 0.5);
+    *outputLatency = (This->stream ? This->fragments : 2) * This->frames + info.quantum + (LONG)(info.latency_us * This->rate / 1e6 + 0.5);
     *inputLatency = This->frames + info.quantum;
     return ASE_OK;
 }
@@ -506,6 +508,8 @@ static LONG open_stream(GexAsio *This)
         return ASE_HWMalfunction;
     }
     This->stream = params.stream;
+    This->fragments = params.fragments;
+    TRACE("%u frames, %u fragments\n", params.frames, params.fragments);
     return ASE_OK;
 }
 
