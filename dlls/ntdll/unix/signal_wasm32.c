@@ -1007,8 +1007,34 @@ static void __wine_gex_fault( int ctx, unsigned int code, unsigned int addr, uns
         rec.NumberParameters = 1;
         break;
     }
-    call_user_exception_dispatcher( data, &rec, &xcontext.c );
+    /* A debugger has the first chance, as i386's setup_raise_exception
+     * gives it: one it continues resumes with the context it left. */
+    switch (send_debug_event( data, &rec, &xcontext.c, TRUE, TRUE ))
+    {
+    case DBG_CONTINUE:
+    case DBG_EXCEPTION_HANDLED:
+        NtSetContextThread( GetCurrentThread(), &xcontext.c );
+        break;
+    default:
+        call_user_exception_dispatcher( data, &rec, &xcontext.c );
+        break;
+    }
     frame_to_ctx( ctx, frame );
+}
+
+
+/***********************************************************************
+ *           debug_first_chance
+ *
+ * The PE side's RtlRaiseException dispatches in place, with no system
+ * call: a debugger's first chance at the exception is this call, which
+ * only reports it (the context comes back as the debugger left it).
+ */
+NTSTATUS debug_first_chance( void *args )
+{
+    struct debug_first_chance_params *params = args;
+
+    return send_debug_event( get_thread_data(), params->rec, params->context, TRUE, TRUE );
 }
 
 

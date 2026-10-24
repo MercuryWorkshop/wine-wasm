@@ -537,7 +537,17 @@ void WINAPI RtlRaiseException( EXCEPTION_RECORD *rec )
 
     TRACE( "code=%lx flags=%lx addr=%p\n", rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress );
 
-    status = dispatch_exception_in_place( rec, &context );
+    /* A debugger has the first chance, as NtRaiseException gives it
+     * elsewhere: one it continues resumes with the context it left. */
+    status = STATUS_UNSUCCESSFUL;
+    if (NtCurrentTeb()->Peb->BeingDebugged)
+    {
+        struct debug_first_chance_params params = { rec, &context };
+
+        status = WINE_UNIX_CALL( unix_debug_first_chance, &params );
+    }
+    if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED) status = STATUS_SUCCESS;
+    else status = dispatch_exception_in_place( rec, &context );
 
     if (status == STATUS_SUCCESS)
     {

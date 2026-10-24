@@ -315,6 +315,9 @@ extern NTSTATUS get_thread_context( HANDLE handle, void *context, BOOL *self, US
 extern unsigned int alloc_object_attributes( const OBJECT_ATTRIBUTES *attr, struct object_attributes **ret,
                                              data_size_t *ret_len );
 extern NTSTATUS system_time_precise( void *args );
+#ifdef __wasm32__
+extern NTSTATUS debug_first_chance( void *args );
+#endif
 
 extern void *anon_mmap_fixed( void *start, size_t size, int prot, int flags );
 extern void *anon_mmap_alloc( size_t size, int prot );

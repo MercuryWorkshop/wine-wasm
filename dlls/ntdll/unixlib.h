@@ -66,6 +66,15 @@ struct unwind_builtin_dll_params
     CONTEXT                    *context;
 };
 
+#ifdef __wasm32__
+/* An exception raised in place: the debugger's first chance at it. */
+struct debug_first_chance_params
+{
+    EXCEPTION_RECORD *rec;
+    CONTEXT          *context;
+};
+#endif
+
 enum ntdll_unix_funcs
 {
     unix_load_so_dll,
@@ -76,6 +85,9 @@ enum ntdll_unix_funcs
     unix_wine_server_handle_to_fd,
     unix_wine_spawnvp,
     unix_system_time_precise,
+#ifdef __wasm32__
+    unix_debug_first_chance,
+#endif
 };
 
 extern unixlib_handle_t __wine_unixlib_handle;
