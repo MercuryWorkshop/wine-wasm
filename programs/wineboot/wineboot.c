@@ -135,6 +135,8 @@ static BOOL update_timestamp( const WCHAR *config_dir, unsigned long timestamp )
             buffer[count] = 0;
             if (!strncmp( buffer, "disable", sizeof("disable")-1 )) goto done;
             if (timestamp == strtoul( buffer, NULL, 10 )) goto done;
+            /* a prefix made for another install: the whole of wine.inf runs again */
+            ERR( "prefix built for wine.inf %lu, running %lu: updating\n", strtoul( buffer, NULL, 10 ), timestamp );
         }
         lseek( fd, 0, SEEK_SET );
         chsize( fd, 0 );
