@@ -79,6 +79,37 @@ struct _PROC_THREAD_ATTRIBUTE_LIST
     struct proc_thread_attr attrs[];
 };
 
+#ifdef __wasm32__
+#include "wine/gex/runtime.h"
+
+/* A start for a thread of another process that is a native function of
+ * kernelbase (a function-table index, meaningful only in this process): the
+ * guest address of the same export, at the same place in every process.
+ * Any other start is returned unchanged; another native one is refused by
+ * the process that would run it. */
+static LPTHREAD_START_ROUTINE remote_start( HANDLE process, LPTHREAD_START_ROUTINE start )
+{
+    static const struct { void *func; const char *name; } exports[] =
+    {
+        { LoadLibraryA, "LoadLibraryA" },
+        { LoadLibraryW, "LoadLibraryW" },
+        { FreeLibrary, "FreeLibrary" },
+    };
+    HMODULE module;
+    FARPROC addr;
+    unsigned int i;
+
+    if (process == GetCurrentProcess() || !__gexw_is_native( start )) return start;
+    for (i = 0; i < ARRAY_SIZE(exports); i++)
+    {
+        if (exports[i].func != (void *)start) continue;
+        if ((module = GetModuleHandleW( L"kernelbase.dll" )) && (addr = GetProcAddress( module, exports[i].name )))
+            return (LPTHREAD_START_ROUTINE)addr;
+    }
+    return start;
+}
+#endif
+
 /***************************************************************************
  *           CreateRemoteThreadEx   (kernelbase.@)
  */
@@ -141,6 +172,9 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateRemoteThreadEx( HANDLE process, SECURITY_A
 
     RtlGetActiveActivationContext( &actctx );
 
+#ifdef __wasm32__
+    start = remote_start( process, start );
+#endif
     if (!set_ntstatus( NtCreateThreadEx( &handle, THREAD_ALL_ACCESS, &attr, process,
                                          (PRTL_THREAD_START_ROUTINE)start, param,
                                          THREAD_CREATE_FLAGS_CREATE_SUSPENDED, 0,

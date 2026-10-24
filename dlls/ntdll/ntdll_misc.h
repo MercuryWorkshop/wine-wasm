@@ -203,4 +203,8 @@ extern void *__os_arm64x_helper8;
 
 #endif
 
+#ifdef __wasm32__
+extern void *wasm32_remote_start( HANDLE process, void *start );
+#endif
+
 #endif

@@ -312,6 +312,37 @@ void WINAPI RtlExitUserThread( ULONG status )
 
 
 #ifdef __wasm32__
+#include "wine/gex/runtime.h"
+
+/* A start for a thread of another process that is a native function of
+ * ntdll (a function-table index, meaningful only in this process): the
+ * guest address of the same export, at the same place in every process.
+ * Any other start is returned unchanged; another native one is refused by
+ * the process that would run it. */
+void *wasm32_remote_start( HANDLE process, void *start )
+{
+    static const struct { void *func; const char *name; } exports[] =
+    {
+        { DbgUiRemoteBreakin, "DbgUiRemoteBreakin" },
+        { RtlExitUserThread, "RtlExitUserThread" },
+    };
+    UNICODE_STRING ntdll = RTL_CONSTANT_STRING( L"ntdll.dll" );
+    ANSI_STRING name;
+    HMODULE module;
+    void *addr;
+    unsigned int i;
+
+    if (process == NtCurrentProcess() || !__gexw_is_native( start )) return start;
+    for (i = 0; i < ARRAY_SIZE(exports); i++)
+    {
+        if (exports[i].func != start) continue;
+        RtlInitAnsiString( &name, exports[i].name );
+        if (!LdrGetDllHandle( NULL, 0, &ntdll, &module ) && !LdrGetProcedureAddress( module, &name, 0, &addr ))
+            return addr;
+    }
+    return start;
+}
+
 /* A thread's entry is called as LPTHREAD_START_ROUTINE (BaseThreadInitThunk);
  * RtlCreateUserThread's callers pass void functions (PRTL_THREAD_START_ROUTINE),
  * which wasm cannot call at the other type: a native one is wrapped. */
@@ -364,6 +395,7 @@ NTSTATUS WINAPI RtlCreateUserThread( HANDLE process, SECURITY_DESCRIPTOR *descr,
     InitializeObjectAttributes( &attr, NULL, 0, NULL, descr );
 
 #ifdef __wasm32__
+    start = wasm32_remote_start( process, start );
     if (process == NtCurrentProcess() && PtrToUlong( start ) < 0x3f0000)  /* a native function */
     {
         struct rtl_thread_start *s = RtlAllocateHeap( GetProcessHeap(), 0, sizeof(*s) );

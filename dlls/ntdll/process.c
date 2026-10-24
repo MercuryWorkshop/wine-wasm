@@ -737,8 +737,13 @@ NTSTATUS WINAPI DbgUiIssueRemoteBreakin( HANDLE process )
     NTSTATUS status;
     OBJECT_ATTRIBUTES attr = { sizeof(attr) };
 
+#ifdef __wasm32__
+    status = NtCreateThreadEx( &handle, THREAD_ALL_ACCESS, &attr, process,
+                               wasm32_remote_start( process, DbgUiRemoteBreakin ), NULL, 0, 0, 0, 0, NULL );
+#else
     status = NtCreateThreadEx( &handle, THREAD_ALL_ACCESS, &attr, process,
                                DbgUiRemoteBreakin, NULL, 0, 0, 0, 0, NULL );
+#endif
 #ifdef _WIN64
     /* FIXME: hack for debugging 32-bit wow64 process without a 64-bit ntdll */
     if (status == STATUS_INVALID_PARAMETER)
