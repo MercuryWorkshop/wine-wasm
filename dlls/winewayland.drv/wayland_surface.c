@@ -579,6 +579,7 @@ void wayland_surface_clear_role(struct wayland_surface *surface)
 
     surface->content_width = 0;
     surface->content_height = 0;
+    surface->window_contents = FALSE;
 
     wl_display_flush(process_wayland.wl_display);
 }
@@ -641,6 +642,7 @@ void wayland_surface_attach_shm(struct wayland_surface *surface,
 
     surface->content_width = win_width;
     surface->content_height = win_height;
+    surface->window_contents = TRUE;
 }
 
 /**********************************************************************
@@ -1461,7 +1463,10 @@ static const struct wl_buffer_listener dummy_buffer_listener =
  *          wayland_surface_ensure_contents
  *
  * Ensure that the wayland surface has up-to-date contents, by committing
- * a dummy buffer if necessary.
+ * a dummy buffer if necessary: when it has no buffer of the window's own
+ * and no placeholder of the window's size. A window buffer smaller than the
+ * window (its surface clipped to the screen) is kept: a placeholder would
+ * hide what it shows.
  */
 void wayland_surface_ensure_contents(struct wayland_surface *surface)
 {
@@ -1472,7 +1477,7 @@ void wayland_surface_ensure_contents(struct wayland_surface *surface)
 
     width = surface->window.rect.right - surface->window.rect.left;
     height = surface->window.rect.bottom - surface->window.rect.top;
-    needs_contents = surface->window.visible &&
+    needs_contents = surface->window.visible && !surface->window_contents &&
                      (surface->content_width != width ||
                       surface->content_height != height);
 
@@ -1497,6 +1502,7 @@ void wayland_surface_ensure_contents(struct wayland_surface *surface)
     if (wayland_surface_reconfigure(surface))
     {
         wayland_surface_attach_shm(surface, dummy_shm_buffer, damage);
+        surface->window_contents = FALSE;
         wl_surface_commit(surface->wl_surface);
     }
     else

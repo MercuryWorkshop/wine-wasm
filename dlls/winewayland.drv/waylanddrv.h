@@ -328,6 +328,10 @@ struct wayland_surface
     BOOL resizing;
     struct wayland_window_config window;
     int content_width, content_height;
+    /* The buffer attached last is the window's own (not a placeholder): it
+     * may be smaller than the window, when its surface is clipped to the
+     * screen, and is still the window's contents. */
+    BOOL window_contents;
     HCURSOR hcursor;
 };
 
