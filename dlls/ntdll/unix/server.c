@@ -926,7 +926,9 @@ static void invoke_system_apc( const union apc_call *call, union apc_result *res
             result->vm.status = STATUS_INVALID_PARAMETER;
             break;
         }
-        if (!(buffer = malloc( size ? size : 1 )))
+        /* mapped, not malloc'd: this runs in the SIGUSR1 handler, which may
+         * have interrupted malloc itself */
+        if ((buffer = mmap( NULL, size ? size : 1, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0 )) == MAP_FAILED)
         {
             result->vm.status = STATUS_NO_MEMORY;
             break;
@@ -958,7 +960,7 @@ static void invoke_system_apc( const union apc_call *call, union apc_result *res
             if (!result->vm.status && !(result->vm.status = virtual_uninterrupted_write_memory( addr, buffer, size )))
                 result->vm.size = size;
         }
-        free( buffer );
+        munmap( buffer, size ? size : 1 );
         break;
     }
     default:
