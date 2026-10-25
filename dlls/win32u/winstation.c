@@ -60,6 +60,11 @@ struct session_thread_data
     struct shared_input_cache shared_input;        /* current thread input shared session cached object */
     struct shared_input_cache shared_foreground;   /* foreground thread input shared session cached object */
     struct shared_input_cache other_thread_input;  /* other thread input shared session cached object */
+#ifdef __wasm__
+    struct session_slot *slots;                    /* this thread's copies of shared objects (session_slot_acquire) */
+    unsigned int nslots;
+    ULONGLONG slot_stamp;
+#endif
 };
 
 struct session_block
@@ -204,32 +209,241 @@ BOOL session_via_requests(void)
 }
 #endif
 
-void shared_object_acquire_seqlock( const shared_object_t *object, UINT64 *seq )
+#ifdef __wasm__
+/* SIZE bytes of the session at PTR (a place in the mirror) into DST, a copy
+ * of the caller's own: through the door, straight from the server's memory;
+ * else from the mirror, refreshed. */
+void session_read( const volatile void *ptr, void *dst, SIZE_T size )
+{
+    SIZE_T offset = (const char *)ptr - session_mirror;
+    if (session_by_door() && gex_session_copy( dst, offset, size ) == (int)size) return;
+    session_mirror_refresh( ptr, size );
+    memcpy( dst, (const void *)ptr, size );
+}
+
+/* a 64-bit word of the session at PTR: through the door, the live word */
+UINT64 session_read64( const volatile LONG64 *ptr )
+{
+    if (session_by_door()) return gex_session_seq( (const char *)ptr - session_mirror );
+    session_mirror_refresh( ptr, sizeof(*ptr) );
+    return ReadAcquire64( (LONG64 *)ptr );
+}
+#endif
+
+#ifdef __wasm__
+/* Each thread reads shared objects from copies of its own (slots), never
+ * from the process's mirror: another thread's copy into the mirror can
+ * land over the bytes this thread validated, after its acquire and before
+ * its read (a copy that read the object before a server write and wrote
+ * the mirror after the write had ended, a copy preempted midway), and the
+ * release, which checks only the live seq, would pass. The mirror keeps
+ * the objects' places (their identity) and the user entries.
+ *
+ * A slot is held from an acquire to its release and never reused while
+ * held, however deep a thread nests acquires: past the first eight, more
+ * are made. A held slot is shared only by an acquire that copies nothing.
+ *
+ * Through the door, a slot whose release found the live seq equal to the
+ * live seq read before its copy began (slot->pre, never the seq in the
+ * copied bytes) is valid: an acquire that finds the live seq even and
+ * equal to the slot's reads it again without copying; its release still
+ * checks the live seq. A copy that began at S and raced a write fails that
+ * test, as the live seq has moved past S. The seq is 64-bit and only grows
+ * (two per write), so a slot could match another state of its object only
+ * after 2^63 writes; not guarded. Without the door, a slot is the reply of
+ * a read_session_data request, one state of the object, kept while the
+ * process has made no request that can write the session
+ * (__wine_session_writes) and for session_ttl_us(). */
+#define SESSION_OBJECT_COPY (sizeof(shared_object_t) + 512)
+#define SESSION_SLOTS 8
+#define SESSION_SLOTS_MAX 64  /* (an ERR past it, once)*/
+
+struct session_slot
+{
+    struct session_slot *next;
+    const shared_object_t *object;  /* the object's place in the mirror; NULL: free */
+    UINT64 seq;                     /* the copy's seq */
+    UINT64 pre;                     /* the live seq read before the copy began (door) */
+    unsigned int pins;              /* acquires not yet released */
+    BOOL valid;                     /* (door) a release validated the copy */
+    LONG writes;                    /* (no door) __wine_session_writes before the request */
+    ULONGLONG time;                 /* (no door) when the reply arrived */
+    ULONGLONG used;                 /* last acquire, for reuse */
+    union { shared_object_t object; char bytes[SESSION_OBJECT_COPY]; } copy;
+};
+
+static struct session_slot *session_slot_new( struct session_thread_data *data )
+{
+    struct session_slot *slot;
+    if (data->nslots == SESSION_SLOTS_MAX)
+    {
+        /* more held at once than any nesting needs: an acquire never released */
+        static BOOL once;
+        if (!once++) ERR( "%u shared object copies held by one thread\n", data->nslots );
+    }
+    if (!(slot = calloc( 1, sizeof(*slot) ))) return NULL;
+    slot->next = data->slots;
+    data->slots = slot;
+    data->nslots++;
+    return slot;
+}
+
+/* the slot whose copy PTR points into */
+static struct session_slot *session_slot_of( struct session_thread_data *data, const volatile void *ptr )
+{
+    struct session_slot *slot;
+    for (slot = data->slots; slot; slot = slot->next)
+        if ((const char *)ptr >= slot->copy.bytes && (const char *)ptr < slot->copy.bytes + sizeof(slot->copy))
+            return slot;
+    return NULL;
+}
+
+static const shared_object_t *session_slot_acquire( struct session_thread_data *data, const shared_object_t *object, UINT64 *seq )
+{
+    extern LONG __wine_session_writes;
+    SIZE_T offset = (const char *)object - session_mirror, size = min( SESSION_OBJECT_COPY, SESSION_MIRROR_SIZE - offset );
+    unsigned int seq_offset = offset + offsetof( shared_object_t, seq );
+    struct session_slot *slot, *same = NULL, *oldest = NULL;
+    BOOL door = session_by_door();
+    UINT64 live = 0;
+    LONG writes = 0;
+    ULONGLONG now = 0;
+
+    if (door) live = gex_session_seq( seq_offset );
+    else
+    {
+        writes = __atomic_load_n( &__wine_session_writes, __ATOMIC_SEQ_CST );
+        now = session_now_us();
+    }
+    while (data->nslots < SESSION_SLOTS && session_slot_new( data )) ;
+    for (slot = data->slots; slot; slot = slot->next)
+    {
+        if (slot->object == object)
+        {
+            if (door ? slot->valid && !(live & 1) && slot->seq == live
+                     : slot->writes == writes && now - slot->time < session_ttl_us())
+            {
+                slot->pins++;
+                slot->used = ++data->slot_stamp;
+                *seq = slot->seq;
+                return &slot->copy.object;
+            }
+            if (!slot->pins) same = slot;
+        }
+        if (!slot->pins && (!oldest || slot->used < oldest->used)) oldest = slot;
+    }
+    if (!(slot = same ? same : oldest) && !(slot = session_slot_new( data )))
+    {
+        /* out of memory: the mirror, as before the slots */
+        do session_mirror_refresh( object, size );
+        while ((*seq = ReadNoFence64( &object->seq )) & 1);
+        return object;
+    }
+    slot->object = object;
+    slot->valid = FALSE;
+    slot->pins++;
+    slot->used = ++data->slot_stamp;
+    for (;;)
+    {
+        if (door)
+        {
+            slot->pre = live;
+            gex_session_copy( slot->copy.bytes, offset, size );
+        }
+        else
+        {
+            SERVER_START_REQ( read_session_data )
+            {
+                req->offset = offset;
+                req->size = size;
+                wine_server_set_reply( req, slot->copy.bytes, size );
+                wine_server_call( req );
+            }
+            SERVER_END_REQ;
+            slot->writes = writes;
+            slot->time = session_now_us();
+        }
+        if (!((slot->seq = ReadNoFence64( &slot->copy.object.seq )) & 1)) break;
+        /* the copy caught the server mid-write */
+        YieldProcessor();
+        if (door) live = gex_session_seq( seq_offset );
+        else writes = __atomic_load_n( &__wine_session_writes, __ATOMIC_SEQ_CST );
+    }
+    *seq = slot->seq;
+    return &slot->copy.object;
+}
+
+static BOOL session_slot_release( struct session_thread_data *data, const shared_object_t *object, UINT64 seq )
+{
+    struct session_slot *slot, *held = NULL;
+    BOOL door = session_by_door();
+    UINT64 live;
+
+    /* a copy (the caller's *shm), or the object (its place in the mirror) */
+    if (!(held = session_slot_of( data, object )))
+        for (slot = data->slots; slot; slot = slot->next)
+            if (slot->object == object && slot->pins && slot->seq == seq && (!held || slot->used > held->used)) held = slot;
+    if (!held)  /* (read in the mirror: session_slot_acquire out of memory) */
+        return (door ? gex_session_seq( (const char *)object - session_mirror ) : ReadNoFence64( &object->seq )) == seq;
+    /* (a copy no acquire holds: a lock used again after its release; no
+     * caller does, but the copy may be another object's by now) */
+    if (!held->pins) return FALSE;
+    held->pins--;
+    if (held->seq != seq) return FALSE;
+    if (!door) return TRUE;  /* a reply: one state of the object */
+    live = gex_session_seq( (const char *)held->object - session_mirror + offsetof( shared_object_t, seq ) );
+    if (live != seq) return FALSE;
+    if (held->pre == seq) held->valid = TRUE;
+    return TRUE;
+}
+
+void session_thread_data_free( void *ptr )
+{
+    struct session_thread_data *data = ptr;
+    struct session_slot *slot, *next;
+    if (!data) return;
+    for (slot = data->slots; slot; slot = next)
+    {
+        next = slot->next;
+        free( slot );
+    }
+    free( data );
+}
+#else
+void session_thread_data_free( void *ptr )
+{
+    free( ptr );
+}
+#endif
+
+const shared_object_t *shared_object_acquire_seqlock( const shared_object_t *object, UINT64 *seq )
 {
 #ifdef __wasm__
-    /* the object and its extra bytes (a window's or class's, up to 512),
-     * again for as long as the copy caught the server mid-write */
-    session_mirror_refresh( object, sizeof(*object) + 512 );
-    while ((*seq = ReadNoFence64( &object->seq )) & 1)
+    if (session_mirror)
     {
-        YieldProcessor();
-        memset( session_reads, 0, sizeof(session_reads) );
-        session_mirror_refresh( object, sizeof(*object) + 512 );
+        struct session_thread_data *data = get_session_thread_data();
+        struct session_slot *slot = session_slot_of( data, object );
+        if (slot) object = slot->object;
+        if ((const char *)object >= session_mirror && (const char *)object < session_mirror + SESSION_MIRROR_SIZE)
+            return session_slot_acquire( data, object, seq );
     }
-#else
-    while ((*seq = ReadNoFence64( &object->seq )) & 1) YieldProcessor();
 #endif
+    while ((*seq = ReadNoFence64( &object->seq )) & 1) YieldProcessor();
     __SHARED_READ_FENCE;
+    return object;
 }
 
 BOOL shared_object_release_seqlock( const shared_object_t *object, UINT64 seq )
 {
     __SHARED_READ_FENCE;
 #ifdef __wasm__
-    /* the live seq, not the copy's: the copy was taken at the acquire */
-    if (session_mirror && session_by_door() && (const char *)object >= session_mirror &&
-        (const char *)object < session_mirror + SESSION_MIRROR_SIZE)
-        return gex_session_seq( (const char *)&object->seq - session_mirror ) == seq;
+    if (session_mirror)
+    {
+        struct session_thread_data *data = get_session_thread_data();
+        if (session_slot_of( data, object ) || ((const char *)object >= session_mirror &&
+            (const char *)object < session_mirror + SESSION_MIRROR_SIZE))
+            return session_slot_release( data, object, seq );
+    }
 #endif
     return ReadNoFence64( &object->seq ) == seq;
 }
@@ -239,8 +453,7 @@ static object_id_t shared_object_get_id( const shared_object_t *object )
     struct object_lock lock = OBJECT_LOCK_INIT;
     do
     {
-        shared_object_acquire_seqlock( object, &lock.seq );
-        lock.id = object->id;
+        lock.id = shared_object_acquire_seqlock( object, &lock.seq )->id;
     } while (!shared_object_release_seqlock( object, lock.seq ));
     return lock.id;
 }
@@ -382,9 +595,9 @@ NTSTATUS get_shared_desktop( struct object_lock *lock, const desktop_shm_t **des
 
     if (!lock->id || !shared_object_release_seqlock( object, lock->seq ))
     {
-        shared_object_acquire_seqlock( object, &lock->seq );
-        *desktop_shm = &object->shm.desktop;
-        lock->id = object->id;
+        const shared_object_t *copy = shared_object_acquire_seqlock( object, &lock->seq );
+        *desktop_shm = &copy->shm.desktop;
+        lock->id = copy->id;
         return STATUS_PENDING;
     }
 
@@ -415,9 +628,9 @@ NTSTATUS get_shared_queue( struct object_lock *lock, const queue_shm_t **queue_s
 
     if (!lock->id || !shared_object_release_seqlock( object, lock->seq ))
     {
-        shared_object_acquire_seqlock( object, &lock->seq );
-        *queue_shm = &object->shm.queue;
-        lock->id = object->id;
+        const shared_object_t *copy = shared_object_acquire_seqlock( object, &lock->seq );
+        *queue_shm = &copy->shm.queue;
+        lock->id = copy->id;
         return STATUS_PENDING;
     }
 
@@ -427,7 +640,7 @@ NTSTATUS get_shared_queue( struct object_lock *lock, const queue_shm_t **queue_s
 static NTSTATUS try_get_shared_input( UINT tid, struct object_lock *lock, const input_shm_t **input_shm,
                                       struct shared_input_cache *cache )
 {
-    const shared_object_t *object;
+    const shared_object_t *object, *copy;
     BOOL valid = TRUE;
 
     if (!(object = cache->object))
@@ -447,18 +660,20 @@ static NTSTATUS try_get_shared_input( UINT tid, struct object_lock *lock, const 
         if (!(object = cache->object)) return STATUS_INVALID_HANDLE;
     }
 
-    /* check object validity by comparing ids, within the object seqlock */
-    if ((valid = cache->id == object->id) && !tid)
+    /* check object validity by comparing ids, within the object seqlock (on the
+     * copy the lock read, its *input_shm) */
+    copy = lock->id ? CONTAINING_RECORD( *input_shm, shared_object_t, shm.input ) : object;
+    if ((valid = cache->id == copy->id) && !tid)
     {
         /* check that a previously locked foreground thread input is still foreground */
-        valid = !!object->shm.input.foreground;
+        valid = !!copy->shm.input.foreground;
     }
 
     if (!lock->id || !shared_object_release_seqlock( object, lock->seq ))
     {
-        shared_object_acquire_seqlock( object, &lock->seq );
-        if (!(lock->id = object->id)) lock->id = -1;
-        *input_shm = &object->shm.input;
+        copy = shared_object_acquire_seqlock( object, &lock->seq );
+        if (!(lock->id = copy->id)) lock->id = -1;
+        *input_shm = &copy->shm.input;
         return STATUS_PENDING;
     }
 

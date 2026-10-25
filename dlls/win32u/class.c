@@ -469,9 +469,9 @@ static NTSTATUS get_shared_class( CLASS *class, struct object_lock *lock, const 
 
     if (!lock->id || !shared_object_release_seqlock( object, lock->seq ))
     {
-        shared_object_acquire_seqlock( object, &lock->seq );
-        *class_shm = &object->shm.class;
-        lock->id = object->id;
+        const shared_object_t *copy = shared_object_acquire_seqlock( object, &lock->seq );
+        *class_shm = &copy->shm.class;
+        lock->id = copy->id;
         return STATUS_PENDING;
     }
 
@@ -494,9 +494,9 @@ static NTSTATUS get_shared_window_class( HWND hwnd, struct object_lock *lock, co
 
     if (!lock->id || !shared_object_release_seqlock( object, lock->seq ))
     {
-        shared_object_acquire_seqlock( object, &lock->seq );
-        *class_shm = &object->shm.class;
-        lock->id = object->id;
+        const shared_object_t *copy = shared_object_acquire_seqlock( object, &lock->seq );
+        *class_shm = &copy->shm.class;
+        lock->id = copy->id;
         return STATUS_PENDING;
     }
 
@@ -669,6 +669,10 @@ ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *nam
            debugstr_w(wc->lpszClassName), debugstr_us(name), atom, wc->lpfnWndProc, instance,
            wc->hbrBackground, wc->style, wc->cbClsExtra, wc->cbWndExtra, class );
 
+#ifdef __wasm__
+    /* its name and local flag, read without a lock (constant): in the mirror */
+    session_mirror_refresh( shared, sizeof(*shared) + 512 );
+#endif
     class->icon_internal = icon_internal;
     class->shared        = shared;
 

@@ -113,16 +113,30 @@ static BOOL is_valid_entry( HANDLE handle, unsigned short type )
     WORD index = USER_HANDLE_TO_INDEX( handle );
     if (index >= MAX_USER_HANDLES) return FALSE;
 #ifdef __wasm__
-    session_mirror_refresh( entries + index, sizeof(*entries) );
-#endif
+    /* (the live word, not the process's mirror: winstation.c) */
+    return is_valid_entry_uniq( handle, type, session_read64( &entries[index].uniq ) );
+#else
     return is_valid_entry_uniq( handle, type, ReadAcquire64( (LONG64 *)&entries[index].uniq ) );
+#endif
 }
 
 static BOOL read_acquire_user_entry( HANDLE handle, unsigned short type, const volatile struct user_entry *src, struct user_entry *dst )
 {
     UINT64 uniq;
 #ifdef __wasm__
-    session_mirror_refresh( src, sizeof(*src) );  /* (winstation.c) */
+    /* a copy of this thread's own, not the process's mirror (winstation.c) */
+    struct user_entry copy;
+
+    /* uniq live before and after the copy, as the server writes it around the fields */
+    if (!is_valid_entry_uniq( handle, type, (uniq = session_read64( &src->uniq )) )) return FALSE;
+    session_read( src, &copy, sizeof(copy) );
+    if (copy.uniq != uniq) return FALSE;
+    dst->offset = copy.offset;
+    dst->tid = copy.tid;
+    dst->pid = copy.pid;
+    dst->id = copy.id;
+    dst->uniq = session_read64( &src->uniq );
+    return dst->uniq == uniq;
 #endif
     uniq = ReadAcquire64( (LONG64 *)&src->uniq );
     if (!is_valid_entry_uniq( handle, type, uniq )) return FALSE;
@@ -171,9 +185,9 @@ static NTSTATUS get_shared_window( HANDLE handle, struct object_lock *lock, cons
 
     if (!lock->id || !shared_object_release_seqlock( object, lock->seq ))
     {
-        shared_object_acquire_seqlock( object, &lock->seq );
-        *window_shm = &object->shm.window;
-        lock->id = object->id;
+        const shared_object_t *copy = shared_object_acquire_seqlock( object, &lock->seq );
+        *window_shm = &copy->shm.window;
+        lock->id = copy->id;
         return STATUS_PENDING;
     }
 
