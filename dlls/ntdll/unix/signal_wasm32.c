@@ -1241,12 +1241,16 @@ struct gex_i386_ucontext
 extern void __gex_signal_frames( volatile unsigned long long *x, unsigned long long pc );
 __attribute__((import_module("gex"), import_name("signal_hook"))) void gex_signal_hook( int idx );
 
-static __thread int in_guest_signal;
+static __thread int in_guest_signal, guest_signal_ctx;
 
 static void __wine_gex_signal( int ctx, unsigned int pc )
 {
+    int prev = guest_signal_ctx;
+
     in_guest_signal++;
+    guest_signal_ctx = ctx;
     __gex_signal_frames( (volatile unsigned long long *)(ULONG_PTR)ctx, pc );
+    guest_signal_ctx = prev;
     in_guest_signal--;
 }
 
@@ -1289,11 +1293,32 @@ static void signal_wait_suspend( void *ucontext )
     {
         struct gex_i386_ucontext *uc = ucontext;
         CONTEXT context;
+        XSAVE_FORMAT *xs = (XSAVE_FORMAT *)context.ExtendedRegisters;
 
         sc_to_context( &uc->sc, &context );
-        context.ContextFlags |= CONTEXT_EXCEPTION_REPORTING;
+        ctx_to_xsave( guest_signal_ctx, xs );
+        fpux_to_fpu( &context.FloatSave, xs );
+        context.ContextFlags |= CONTEXT_FLOATING_POINT | CONTEXT_EXTENDED_REGISTERS |
+                                CONTEXT_EXCEPTION_REPORTING;
         wait_suspend( &context );
         context_to_sc( &context, &uc->sc );
+        if (context.ContextFlags & (CONTEXT_FLOATING_POINT | CONTEXT_EXTENDED_REGISTERS) & ~CONTEXT_i386)
+        {
+            if (!(context.ContextFlags & CONTEXT_EXTENDED_REGISTERS & ~CONTEXT_i386))
+            {
+                ctx_to_xsave( guest_signal_ctx, xs );
+                fpu_to_fpux( xs, &context.FloatSave );
+            }
+            xsave_to_ctx( guest_signal_ctx, xs );
+            /* sigreturn takes MXCSR and the xmm registers from the frame's
+             * _fpstate_ia32, whose fxsave image starts at 112 */
+            if (uc->sc.fpstate)
+            {
+                XSAVE_FORMAT *fx = (XSAVE_FORMAT *)((char *)(ULONG_PTR)uc->sc.fpstate + 112);
+                fx->MxCsr = xs->MxCsr;
+                memcpy( fx->XmmRegisters, xs->XmmRegisters, 8 * sizeof(M128A) );
+            }
+        }
     }
     else
     {
