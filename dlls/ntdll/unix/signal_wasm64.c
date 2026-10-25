@@ -1158,12 +1158,16 @@ C_ASSERT( offsetof(struct gex_x86_64_ucontext, sc) == 40 );
 
 extern void __gex_signal_frames( volatile unsigned long long *x, unsigned long long pc );
 
-static __thread int in_guest_signal;
+static __thread int in_guest_signal, guest_signal_ctx;
 
 static void __wine_gex_signal( int ctx, unsigned int pc )
 {
+    int prev = guest_signal_ctx;
+
     in_guest_signal++;
+    guest_signal_ctx = ctx;
     __gex_signal_frames( (volatile unsigned long long *)GEX_CTXP( ctx ), pc );
+    guest_signal_ctx = prev;
     in_guest_signal--;
 }
 
@@ -1213,9 +1217,23 @@ static void signal_wait_suspend( void *ucontext )
         CONTEXT context;
 
         sc_to_context( &uc->sc, &context );
-        context.ContextFlags |= CONTEXT_EXCEPTION_REPORTING;
+        ctx_to_xsave( guest_signal_ctx, &context.FltSave );
+        context.MxCsr = context.FltSave.MxCsr;
+        context.ContextFlags |= CONTEXT_FLOATING_POINT | CONTEXT_EXCEPTION_REPORTING;
         wait_suspend( &context );
         context_to_sc( &context, &uc->sc );
+        if ((context.ContextFlags & CONTEXT_FLOATING_POINT & ~CONTEXT_AMD64))
+        {
+            context.FltSave.MxCsr = context.MxCsr;
+            xsave_to_ctx( guest_signal_ctx, &context.FltSave );
+            /* sigreturn takes MXCSR and the xmm registers from the frame's fxsave image */
+            if (uc->sc.fpstate)
+            {
+                XSAVE_FORMAT *fx = (XSAVE_FORMAT *)(ULONG_PTR)uc->sc.fpstate;
+                fx->MxCsr = context.MxCsr;
+                memcpy( fx->XmmRegisters, context.FltSave.XmmRegisters, sizeof(fx->XmmRegisters) );
+            }
+        }
     }
     else
     {
