@@ -287,6 +287,20 @@ static inline unsigned int wait_reply( int reply_fd, struct __server_request_inf
  * it): win32u's copy of the session in a child (winstation.c) is fresh
  * only while this has not moved. */
 LONG __wine_session_writes;
+
+/* Bumped both before a request is sent and after its reply: the bump after
+ * is what keeps the copy fresh. Another thread's read can load the count
+ * after the bump before, have the server serve it ahead of this write and
+ * keep the old bytes under that count; the bump after moves it on before
+ * this call returns, so a read begun after that sees a newer count and asks
+ * again (only reads that overlap the write may get the old state). The bump
+ * before covers the reads that overlap it once the server has written,
+ * before the reply arrives. */
+static inline void session_writes_note( const void *req_ptr )
+{
+    if (((const struct __server_request_info *)req_ptr)->u.req.request_header.req != REQ_read_session_data)
+        __atomic_add_fetch( &__wine_session_writes, 1, __ATOMIC_SEQ_CST );
+}
 #endif
 
 /* WINEGEX_REQSTATS=1: per request code, how many server calls this process
@@ -400,19 +414,19 @@ unsigned int server_call_unlocked( void *req_ptr )
     if (reqstats_on) t0 = reqstats_now();
 
 #ifdef __wasm__
-    if (req->u.req.request_header.req != REQ_read_session_data)
-        __atomic_add_fetch( &__wine_session_writes, 1, __ATOMIC_SEQ_CST );
-#endif
-
-#ifdef __wasm__
+    session_writes_note( req );
     if (door_try( req, &ret ))
     {
+        session_writes_note( req );
         if (reqstats_on) reqstats_note( code, reqstats_now() - t0 );
         return ret;
     }
 #endif
     if ((ret = send_request( data->request_fd, req ))) return ret;
     ret = wait_reply( data->reply_fd, req );
+#ifdef __wasm__
+    session_writes_note( req );
+#endif
     if (reqstats_on) reqstats_note( code, reqstats_now() - t0 );
     return ret;
 }
@@ -434,9 +448,12 @@ unsigned int CDECL wine_server_call( void *req_ptr )
      * system calls). The pipes still do. */
     if (!reqstats_on)
     {
-        if (((struct __server_request_info *)req_ptr)->u.req.request_header.req != REQ_read_session_data)
-            __atomic_add_fetch( &__wine_session_writes, 1, __ATOMIC_SEQ_CST );
-        if (door_try( req_ptr, &ret )) return ret;
+        session_writes_note( req_ptr );
+        if (door_try( req_ptr, &ret ))
+        {
+            session_writes_note( req_ptr );
+            return ret;
+        }
     }
     /* In a section entered without blocking signals (server_enter_section_
      * nosig): the pipes block them now, until the section is left, as the
