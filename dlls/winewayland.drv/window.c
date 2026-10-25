@@ -905,6 +905,41 @@ void set_client_surface(HWND hwnd, struct wayland_client_surface *new_client)
     wayland_win_data_release(data);
 }
 
+/***********************************************************************
+ *           wayland_gex_client_surface
+ *
+ * For gex's D3D shim (its d3d11.so, which presents a window's frames to a
+ * Wayland surface by id): the wl_surface id of the client surface showing
+ * the window, the one OpenGL and Vulkan draw to, made as they make it when
+ * the window has none. The surface made here is kept for the window's
+ * life. 0 if there is none.
+ */
+UINT32 wayland_gex_client_surface(HWND hwnd)
+{
+    struct wayland_client_surface *client = NULL;
+    struct wayland_win_data *data;
+    struct client_surface *made;
+    UINT32 id;
+
+    if ((data = wayland_win_data_get(hwnd)))
+    {
+        if ((client = data->client_surface)) client_surface_add_ref(&client->client);
+        wayland_win_data_release(data);
+    }
+    if (client)
+    {
+        id = wl_proxy_get_id((struct wl_proxy *)client->wl_surface);
+        client_surface_release(&client->client);
+        return id;
+    }
+
+    if (!(made = WAYLAND_CreateClientSurface(hwnd, 0))) return 0;
+    client = impl_from_client_surface(made);
+    set_client_surface(hwnd, client);
+    TRACE("hwnd=%p client=%s\n", hwnd, debugstr_client_surface(made));
+    return wl_proxy_get_id((struct wl_proxy *)client->wl_surface);
+}
+
 BOOL set_window_surface_contents(HWND hwnd, struct wayland_shm_buffer *shm_buffer, HRGN damage_region)
 {
     struct wayland_surface *wayland_surface;
