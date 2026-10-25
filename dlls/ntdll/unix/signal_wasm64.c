@@ -157,7 +157,8 @@ struct syscall_frame
     void                 *syscall_cfa;   /* 00a8 */
     DWORD                 syscall_id;    /* 00b0 */
     DWORD                 restore_flags; /* 00b4 */
-    DWORD                 align[2];      /* 00b8 */
+    DWORD                 xsave_lazy;    /* 00b8 xsave not filled yet: still in gex's context */
+    DWORD                 align;         /* 00bc */
     XSAVE_FORMAT          xsave;         /* 00c0 */
     DECLSPEC_ALIGN(64) XSAVE_AREA_HEADER xstate;    /* 02c0 */
 };
@@ -305,7 +306,7 @@ static void xsave_to_ctx( int ctx, const XSAVE_FORMAT *xs )
 
 /* The program's state, as a system call or a fault finds it, into the
  * frame. */
-static void ctx_to_frame( int ctx, struct syscall_frame *frame, ULONG64 rip, ULONG64 rsp )
+static void ctx_to_frame( int ctx, struct syscall_frame *frame, ULONG64 rip, ULONG64 rsp, BOOL lazy )
 {
     frame->restore_flags = 0;
     frame->rax = REG( R_RAX );
@@ -328,9 +329,28 @@ static void ctx_to_frame( int ctx, struct syscall_frame *frame, ULONG64 rip, ULO
     frame->eflags = get_eflags( ctx );
     frame->cs = cs64_sel;
     frame->ss = ds64_sel;
-    ctx_to_xsave( ctx, &frame->xsave );
+    /* A Unix call leaves the x87 and SSE state where it is, in gex's
+     * context, which nothing changes until guest code runs again: the Unix
+     * side's own system calls go through the integer registers only. It is
+     * copied when something reads the frame's (frame_xsave), not at every
+     * call: 400 bytes against the eighteen words above. */
+    frame->xsave_lazy = lazy;
+    if (!lazy) ctx_to_xsave( ctx, &frame->xsave );
     frame->xstate.Mask = XSTATE_MASK_LEGACY;
     frame->xstate.CompactionMask = 0;
+}
+
+/* The frame's x87 and SSE state, filled from this thread's context if the
+ * Unix call that made the frame left it there. Called by everything that
+ * reads frame->xsave before guest code may run again: the thread's own
+ * NtGetContextThread (which another thread's get or suspend also comes to,
+ * through SIGUSR1, and the APC and exception dispatchers use), and
+ * KeUserModeCallback before the callback changes the state. */
+static void frame_xsave( struct syscall_frame *frame )
+{
+    if (!frame->xsave_lazy) return;
+    ctx_to_xsave( cur_ctx(), &frame->xsave );
+    frame->xsave_lazy = 0;
 }
 
 /* And back, as the frame now says. */
@@ -473,6 +493,7 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
     {
         frame->xsave = context->FltSave;
         frame->xsave.MxCsr = context->MxCsr;
+        frame->xsave_lazy = 0;
         frame->xstate.Mask |= XSTATE_MASK_LEGACY;
     }
     if (flags & CONTEXT_XSTATE)
@@ -514,6 +535,7 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
         NTSTATUS ret = get_thread_context( handle, context, &self, IMAGE_FILE_MACHINE_AMD64 );
         if (ret || !self) return ret;
     }
+    if (needed_flags & (CONTEXT_FLOATING_POINT | CONTEXT_XSTATE)) frame_xsave( frame );
 
     if (needed_flags & CONTEXT_INTEGER)
     {
@@ -780,7 +802,7 @@ static void syscall_body( int ctx )
     UINT id = (UINT)REG( R_RAX ), i;
     ULONG64 ret;
 
-    ctx_to_frame( ctx, frame, *(const ULONG64 *)rsp, rsp + 8 );
+    ctx_to_frame( ctx, frame, *(const ULONG64 *)rsp, rsp + 8, FALSE );
     frame->syscall_id = id;
     args[0] = REG( R_R10 );
     args[1] = REG( R_RDX );
@@ -806,7 +828,7 @@ static void unix_call_body( int ctx )
     void *args = (void *)REG( R_R8 );
     NTSTATUS status;
 
-    ctx_to_frame( ctx, frame, *(const ULONG64 *)rsp, rsp + 8 );
+    ctx_to_frame( ctx, frame, *(const ULONG64 *)rsp, rsp + 8, TRUE );
     status = handle ? ((const unixlib_entry_t *)handle)[code]( args ) : STATUS_DLL_NOT_FOUND;
     frame = get_syscall_frame( data );
     frame->rax = status;
@@ -981,7 +1003,7 @@ static void __wine_gex_fault( int ctx, unsigned int code, ULONG64 addr, unsigned
     /* The fault is handled as x86-64's signal handlers handle one: the state
      * at the fault into a context, the record, and the exception dispatched
      * from the program's stack. A frame is borrowed for it. */
-    ctx_to_frame( ctx, frame, pc, REG( R_RSP ) );
+    ctx_to_frame( ctx, frame, pc, REG( R_RSP ), FALSE );
     memset( &xcontext, 0, sizeof(xcontext) );
     xcontext.c.ContextFlags = CONTEXT_FULL;
     NtGetContextThread( GetCurrentThread(), &xcontext.c );
@@ -1035,6 +1057,9 @@ NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_p
     void *saved_list = data->teb->Tib.ExceptionList;
 
     if ((char *)get_kernel_stack( data ) + min_kernel_stack > (char *)&frame) return STATUS_STACK_OVERFLOW;
+    /* The callback runs guest code, which changes the state a lazy frame
+     * still leaves in gex's context: copied first. */
+    frame_xsave( frame );
 
     stack->args              = stack->args_data;
     stack->len               = len;
