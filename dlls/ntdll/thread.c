@@ -35,7 +35,21 @@ WINE_DECLARE_DEBUG_CHANNEL(relay);
 WINE_DECLARE_DEBUG_CHANNEL(pid);
 WINE_DECLARE_DEBUG_CHANNEL(timestamp);
 
+#ifdef __wasm64__
+__attribute__((import_module("gex"), import_name("kuser_address")))
+extern unsigned int gex_kuser_address(void);
+
+/* Windows' 0x7ffe0000, or the low address gex folds that page's constant
+ * accesses to in a compact space (unix/virtual.c), asked once */
+struct _KUSER_SHARED_DATA *gex_user_shared_data(void)
+{
+    static struct _KUSER_SHARED_DATA *usd;
+    if (!usd) usd = (void *)(ULONG_PTR)gex_kuser_address();
+    return usd;
+}
+#else
 struct _KUSER_SHARED_DATA *user_shared_data = (void *)0x7ffe0000;
+#endif
 
 struct debug_info
 {

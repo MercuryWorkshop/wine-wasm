@@ -66,10 +66,11 @@ extern WORD native_machine;
 #endif
 #ifdef __wasm64__
 /* W64: the page after the USD holds the x86-64 stubs' dispatcher pointer
- * (0x7ffe1000) and the two entries the program's code calls into the Unix
- * side by (signal_wasm64.c) */
-#define W64_SYSCALL_ENTRY   0x7ffe1010
-#define W64_UNIX_CALL_ENTRY 0x7ffe1020
+ * (0x7ffe1000, or after the folded USD of a compact space: virtual.c) and
+ * the two entries the program's code calls into the Unix side by
+ * (signal_wasm64.c) */
+#define W64_SYSCALL_ENTRY   ((ULONG_PTR)user_shared_data + 0x1010)
+#define W64_UNIX_CALL_ENTRY ((ULONG_PTR)user_shared_data + 0x1020)
 #endif
 
 static const BOOL is_win64 = (sizeof(void *) > sizeof(int));

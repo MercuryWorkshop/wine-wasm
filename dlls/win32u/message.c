@@ -45,7 +45,22 @@ WINE_DECLARE_DEBUG_CHANNEL(relay);
 #define QS_HARDWARE     0x40000000
 #define QS_INTERNAL     (QS_DRIVER | QS_HARDWARE)
 
+#ifdef __wasm64__
+__attribute__((import_module("gex"), import_name("kuser_address")))
+extern unsigned int gex_kuser_address(void);
+
+/* Windows' 0x7ffe0000, or the low address gex folds that page's constant
+ * accesses to in a compact space (ntdll's unix/virtual.c), asked once */
+static const struct _KUSER_SHARED_DATA *gex_user_shared_data(void)
+{
+    static const struct _KUSER_SHARED_DATA *usd;
+    if (!usd) usd = (const void *)(ULONG_PTR)gex_kuser_address();
+    return usd;
+}
+#define user_shared_data gex_user_shared_data()
+#else
 static const struct _KUSER_SHARED_DATA *user_shared_data = (struct _KUSER_SHARED_DATA *)0x7ffe0000;
+#endif
 
 static const struct ratio no_dpi;
 

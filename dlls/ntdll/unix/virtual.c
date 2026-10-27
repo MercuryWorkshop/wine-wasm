@@ -220,6 +220,29 @@ static struct file_view *arm64ec_view;
 ULONG_PTR user_space_wow_limit = 0;
 struct _KUSER_SHARED_DATA *user_shared_data = (void *)0x7ffe0000;
 
+#ifdef W64_CODE_SPLIT
+/* Where gex has this process's x86-64 code read KUSER_SHARED_DATA:
+ * Windows' 0x7ffe0000, or, in a process of Wine's own programs that gex
+ * gives a compact space, the low address it folds that page's constant
+ * accesses to (and the entry page after it). */
+__attribute__((import_module("gex"), import_name("kuser_address")))
+extern unsigned int gex_kuser_address(void);
+
+/* The compact space: KUSER_SHARED_DATA low, nothing reserved or placed
+ * top-down near 2 GiB, views from gex's kernel bottom-up, so the memory
+ * reaches only as high as the process uses (every byte of a WebAssembly
+ * memory counts towards the browser tab's data, touched or not). */
+static BOOL gex_compact;
+
+/* The compact space's images that name no address gex pins (the native
+ * core's skeletons among them): top-down in the band's part for a game's
+ * DLLs, which Wine's own programs never load, below gex's window for the
+ * native core's data at the band's top. A data export's RVA is that data's
+ * offset from its skeleton's base, so the skeletons stay below the window. */
+static char * const gex_compact_images_lo = (char *)0x19000000;
+static char * const gex_compact_images_hi = (char *)0x1fdf0000;
+#endif
+
 /* TEB allocation blocks */
 static void *teb_block;
 static void **next_free_teb;
@@ -827,6 +850,16 @@ static void mmap_init( const struct preload_info *preload_info )
 #else
 
     if (preload_info) return;
+#ifdef W64_CODE_SPLIT
+    /* the compact space: only the space below gex's stack, inside the
+     * memory already and where executables sit (0x00400000), up to the
+     * folded KUSER_SHARED_DATA */
+    if (gex_compact)
+    {
+        reserve_area( (void *)0x00010000, (void *)user_shared_data );
+        return;
+    }
+#endif
     /* if we don't have a preloader, try to reserve the space now */
     reserve_area( (void *)0x000000010000, (void *)0x000068000000 );
     reserve_area( (void *)0x00007f000000, (void *)0x00007fff0000 );
@@ -2414,6 +2447,9 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
     assert( align_mask >= host_page_mask );
 
 #ifdef W64_CODE_SPLIT
+    /* the compact space: bottom-up whatever the caller asked (a top-down
+     * view sets the memory's size) */
+    if (gex_compact) top_down = 0;
     if (vprot & VPROT_EXEC)
     {
         if (base && w64_beyond_code_space( base, size ))
@@ -2482,6 +2518,28 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
         if (limit_high && (void *)limit_high < end) end = (char *)limit_high + 1;
 
 #ifdef W64_CODE_SPLIT
+        if (gex_compact && (vprot & SEC_IMAGE))
+        {
+            void *lo = max( start, (void *)gex_compact_images_lo ), *hi = min( end, (void *)gex_compact_images_hi );
+            if (lo < hi && (ptr = map_free_area( lo, hi, host_size, TRUE, unix_prot, align_mask )))
+            {
+                TRACE( "got image space %p-%p\n", ptr, (char *)ptr + size );
+                goto done;
+            }
+        }
+        /* the compact space: the kernel hands out the lowest free range of
+         * its arena; a limit the range misses (rare: a zero_bits or address
+         * requirement) falls back to searching between the views */
+        if (gex_compact && (ptr = anon_mmap_alloc( view_size, unix_prot )) != MAP_FAILED)
+        {
+            if ((char *)ptr >= (char *)start && (char *)ptr + view_size <= (char *)end)
+            {
+                ptr = unmap_extra_space( ptr, view_size, host_size, align_mask );
+                TRACE( "got mem with anon mmap %p-%p\n", ptr, (char *)ptr + size );
+                goto done;
+            }
+            munmap( ptr, view_size );
+        }
         if ((ptr = w64_outside_band( map_reserved_area, start, end, host_size, top_down, unix_prot, align_mask )))
 #else
         if ((ptr = map_reserved_area( start, end, host_size, top_down, unix_prot, align_mask )))
@@ -4008,6 +4066,11 @@ void virtual_init(void)
 #endif
 #else
     host_addr_space_limit = address_space_limit;
+#endif
+
+#ifdef W64_CODE_SPLIT
+    user_shared_data = (void *)(ULONG_PTR)gex_kuser_address();
+    gex_compact = user_shared_data != (void *)0x7ffe0000;
 #endif
 
     kernel_writewatch_init();
