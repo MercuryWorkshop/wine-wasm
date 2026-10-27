@@ -3624,6 +3624,11 @@ static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_inf
         base = wine_server_get_ptr( image_info->base );
         if ((ULONG_PTR)base != image_info->base) base = NULL;
     }
+#ifdef W64_CODE_SPLIT
+    /* the compact space: an image's own base or the server's above the
+     * band would set the memory's size; it is placed in the band instead */
+    if (gex_compact && (char *)base >= w64_band_hi) base = NULL;
+#endif
     if (base)
     {
         status = map_view( view_ret, base, size, alloc_type, vprot, limit_low, limit_high, 0 );
