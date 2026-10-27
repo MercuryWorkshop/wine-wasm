@@ -693,37 +693,22 @@ static int exec_server_child( void *arg )
 
 /* The Worker of a process that started the server cannot be handed the
  * server's memory (a busy Worker takes no messages), so it has no door: it
- * runs its program again as a child, which starts with one, and passes on
- * its exit (gex: `door_missing`). Not natively, nor in the single-thread
- * page (no doors there). */
+ * runs its program again in its place, with gex asked to start the exec in
+ * a new Worker and memory (`exec_fresh`), which gets one (gex:
+ * `door_missing`). Not natively, nor in the single-thread page (no doors
+ * there). */
 __attribute__((import_module("gex"), import_name("door_missing")))
 extern int gex_door_missing(void);
-
-struct relaunch { const char *path; int cwd_fd; };
-
-static int relaunch_child( void *arg )
-{
-    struct relaunch *r = arg;
-    if (r->cwd_fd != -1) fchdir( r->cwd_fd );
-    /* as it was run (the loader finds ntdll.so from its own path) */
-    if (strchr( main_argv[0], '/' )) execv( main_argv[0], main_argv );
-    execv( "/proc/self/exe", main_argv );
-    _exit( 127 );
-}
+__attribute__((import_module("gex"), import_name("exec_fresh")))
+extern void gex_exec_fresh(void);
 
 void wineserver_relaunch( int cwd_fd )
 {
-    const size_t stack_size = 64 * 1024;
-    struct relaunch r = { NULL, cwd_fd };
-    char *stack;
-    int status, image;
-    pid_t pid;
+    int image, here = -1;
 
     const char *door = getenv( "WINEGEX_DOOR" );
 
     if (!wineserver_started || (door && !strcmp( door, "0" )) || !gex_door_missing()) return;
-    stack = mmap( NULL, stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0 );
-    if (stack == MAP_FAILED) return;
     setenv( "WINEGEX_SERVER_STARTER", "1", 1 );
     /* The program named by its Unix path (a game started as `wine
      * /game/x.exe`): named to gex's kernel too, as spawn_process names a
@@ -732,19 +717,23 @@ void wineserver_relaunch( int cwd_fd )
      * kernel takes the variable out at the exec. */
     image = main_argv[1] && strchr( main_argv[1], '/' ) && !getenv( "WINEGEX_IMAGE" );
     if (image) setenv( "WINEGEX_IMAGE", main_argv[1], 1 );
-    pid = clone( relaunch_child, stack + stack_size, CLONE_VFORK | SIGCHLD, &r );
-    munmap( stack, stack_size );
+    if (cwd_fd != -1)
+    {
+        here = open( ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC );
+        fchdir( cwd_fd );
+    }
+    gex_exec_fresh();
+    /* as it was run (the loader finds ntdll.so from its own path) */
+    if (strchr( main_argv[0], '/' )) execv( main_argv[0], main_argv );
+    execv( "/proc/self/exe", main_argv );
+    /* carry on without doors */
+    if (here != -1)
+    {
+        fchdir( here );
+        close( here );
+    }
     unsetenv( "WINEGEX_SERVER_STARTER" );
     if (image) unsetenv( "WINEGEX_IMAGE" );
-    if (pid == -1) return;  /* carry on without doors */
-    while (waitpid( pid, &status, 0 ) == -1 && errno == EINTR);
-    if (WIFSIGNALED(status))
-    {
-        signal( WTERMSIG(status), SIG_DFL );
-        kill( getpid(), WTERMSIG(status) );
-        _exit( 128 + WTERMSIG(status) );
-    }
-    _exit( WIFEXITED(status) ? WEXITSTATUS(status) : 1 );
 }
 
 /* A relaunched process started the server (for wineserver_flush). Early,
