@@ -14,9 +14,11 @@
 
 /* The two entries on the page after the USD (dlls/ntdll/unix/unix_private.h):
  * a `ud2` each, which the Unix side's fault hook takes for a system call
- * and a Unix call. */
-#define GEXW_SYSCALL_ENTRY   0x7ffe1010ull
-#define GEXW_UNIX_CALL_ENTRY 0x7ffe1020ull
+ * and a Unix call. The USD is where gex places it (0x7ffe0000, or low in a
+ * compact space): __gexw_entry_page is the page after it. */
+extern unsigned long long __gexw_entry_page(void);
+#define GEXW_SYSCALL_ENTRY   (__gexw_entry_page() + 0x10)
+#define GEXW_UNIX_CALL_ENTRY (__gexw_entry_page() + 0x20)
 
 /* Per-thread state every native module shares, in TEB->SystemReserved1
  * (which 64-bit Wine leaves unused: it is 16-bit and WoW64 state):

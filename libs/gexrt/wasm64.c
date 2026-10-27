@@ -350,6 +350,15 @@ void gexw_set_entry_context(uint64_t);
 extern void longjmp( void *, int ) __attribute__((noreturn));
 
 __attribute__((import_module("gex"), import_name("unix_dispatcher"))) int gex_unix_dispatcher( int op, int idx );
+__attribute__((import_module("gex"), import_name("kuser_address"))) unsigned int gex_kuser_address(void);
+
+/* The page after KUSER_SHARED_DATA, asked once */
+unsigned long long __gexw_entry_page(void)
+{
+    static unsigned long long page;
+    if (!page) page = (unsigned long long)gex_kuser_address() + 0x1000;
+    return page;
+}
 
 /* the TEB (GS base) and its quadword at `off` */
 #define TEBQ(off) GQ( GEX_C64( GEX_CTX_TPIDRRO ) + (off) )
