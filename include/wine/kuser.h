@@ -4,7 +4,7 @@
  * One definition for ntdll (both sides), kernel32, kernelbase, win32u and
  * ntoskrnl. Windows has it at 0x7ffe0000; gex's W3 (wasm32) has it in the
  * low space Wine reserves below gex's stack, so a WebAssembly memory need
- * not reach 2 GiB (the address is gex's GEX_W3_KUSER, which ntdll's unix
+ * not reach 2 GiB (the address is gex's GEX_WINE32_KUSER, which ntdll's unix
  * side checks; i386 code that reads the Windows address by constant is
  * folded to this one by gex's translator).
  */
