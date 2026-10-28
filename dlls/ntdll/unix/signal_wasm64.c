@@ -1025,6 +1025,14 @@ static void __wine_gex_fault( int ctx, unsigned int code, ULONG64 addr, unsigned
         rec.NumberParameters = 1;
         break;
     }
+    /* The stack the exception is dispatched on is checked as x86-64's
+     * setup_raise_exception checks it: past its guard page, a stack
+     * overflow; on its last page, the thread ends. */
+    {
+        ULONG_PTR rsp = REG( R_RSP ) & ~(ULONG_PTR)15;
+        size_t stack_size = rsp - ((rsp - sizeof(struct exc_stack_layout) - xstate_size) & ~(ULONG_PTR)63);
+        virtual_setup_exception( data, (void *)rsp, stack_size, &rec );
+    }
     call_user_exception_dispatcher( data, &rec, &xcontext.c );
     frame_to_ctx( ctx, frame );
 }
