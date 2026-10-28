@@ -1566,6 +1566,21 @@ static void run_wineboot( WCHAR *env, SIZE_T size )
     }
 
     virtual_init_user_shared_data();
+#ifdef __wasm__
+    /* WINEGEX_NO_WINEBOOT: a game's eject, whose prefix holds what wineboot
+     * would make (its recording's hardware keys, gex-eject "wineboot":
+     * "skip") and which needs none of the programs it starts. The session
+     * is booted as soon as the shared data is filled; the event stays open
+     * for this process's life, so a later process finds it booted. */
+    {
+        const char *skip = getenv( "WINEGEX_NO_WINEBOOT" );
+        if (skip && *skip)
+        {
+            NtSetEvent( handles[0], NULL );
+            return;
+        }
+    }
+#endif
     env[size] = 0;
     params.Flags           = PROCESS_PARAMS_FLAG_NORMALIZED;
     params.Environment     = env;

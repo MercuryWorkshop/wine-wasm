@@ -1810,6 +1810,69 @@ static void usage( int status )
     exit( status );
 }
 
+/* WINEGEX_RECORD_HARDWARE: what this boot made that is not saved with the
+ * prefix (the volatile keys), as "[gex-record] reg ROOT\PATH|NAME|TYPE|HEX"
+ * lines on stderr, for an eject's recording (gex-eject "wineboot": "skip"
+ * writes them into its prefix, which then boots without wineboot) */
+static void record_key( HANDLE out, const char *root, HKEY parent, const WCHAR *path )
+{
+    static char line[2 * 16384 + 2048];
+    static BYTE data[16384];
+    WCHAR name[256], *sub;
+    char path8[1024], name8[512];
+    DWORD i, len, size, type, n, count = 0, err;
+    HKEY key;
+
+    if (RegOpenKeyExW( parent, path, 0, KEY_READ, &key )) return;
+    WideCharToMultiByte( CP_UTF8, 0, path, -1, path8, sizeof(path8), NULL, NULL );
+    for (i = 0;; i++)
+    {
+        len = ARRAY_SIZE(name);
+        size = sizeof(data);
+        if ((err = RegEnumValueW( key, i, name, &len, NULL, &type, data, &size )) == ERROR_MORE_DATA)
+        {
+            WINE_ERR( "%s: a value too large to record\n", debugstr_w(path) );
+            continue;
+        }
+        if (err) break;
+        count++;
+        WideCharToMultiByte( CP_UTF8, 0, name, -1, name8, sizeof(name8), NULL, NULL );
+        n = snprintf( line, sizeof(line), "[gex-record] reg %s\\%s|%s|%u|", root, path8, name8, (unsigned int)type );
+        for (DWORD j = 0; j < size && n + 3 < sizeof(line); j++) n += snprintf( line + n, sizeof(line) - n, "%02x", data[j] );
+        line[n++] = '\n';
+        WriteFile( out, line, n, &len, NULL );
+    }
+    /* a key with no values still has a line, so it is made */
+    if (!count)
+    {
+        n = snprintf( line, sizeof(line), "[gex-record] reg %s\\%s|||\n", root, path8 );
+        WriteFile( out, line, n, &len, NULL );
+    }
+    for (i = 0;; i++)
+    {
+        len = ARRAY_SIZE(name);
+        if (RegEnumKeyExW( key, i, name, &len, NULL, NULL, NULL, NULL )) break;
+        if (!(sub = malloc( (wcslen( path ) + len + 2) * sizeof(WCHAR) ))) break;
+        wcscpy( sub, path );
+        wcscat( sub, L"\\" );
+        wcscat( sub, name );
+        record_key( out, root, parent, sub );
+        free( sub );
+    }
+    RegCloseKey( key );
+}
+
+static void record_volatile_keys(void)
+{
+    const char *on = getenv( "WINEGEX_RECORD_HARDWARE" );
+    HANDLE out = GetStdHandle( STD_ERROR_HANDLE );
+
+    if (!on || !*on || !out || out == INVALID_HANDLE_VALUE) return;
+    record_key( out, "HKLM", HKEY_LOCAL_MACHINE, L"Hardware\\Description\\System" );
+    record_key( out, "HKLM", HKEY_LOCAL_MACHINE, L"System\\CurrentControlSet\\Control\\ComputerName\\ActiveComputerName" );
+    record_key( out, "HKCU", HKEY_CURRENT_USER, L"Volatile Environment" );
+}
+
 int __cdecl main( int argc, char *argv[] )
 {
     /* First, set the current directory to SystemRoot */
@@ -1939,6 +2002,7 @@ int __cdecl main( int argc, char *argv[] )
 
     WINE_TRACE("Operation done\n");
 
+    record_volatile_keys();
     SetEvent( event );
     return 0;
 }
