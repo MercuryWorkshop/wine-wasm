@@ -3014,11 +3014,24 @@ static NTSTATUS map_pe_header( void *ptr, size_t size, size_t map_size, int fd, 
 
 #ifdef _WIN64
 
+#if defined(__wasm64__) && defined(GEX_MEMORY64)
+/* The end of the space gex gives this process in a 64-bit memory, in
+ * 64 KiB units, or 0 to probe: images and stacks go top down from it, and
+ * the memory is as long as its highest mapping, so a program that needs
+ * less than gex's default top is given less. */
+__attribute__((import_module("gex"), import_name("space_top")))
+extern unsigned int gex_space_top(void);
+#endif
+
 /***********************************************************************
  *           get_host_addr_space_limit
  */
 static void *get_host_addr_space_limit(void)
 {
+#if defined(__wasm64__) && defined(GEX_MEMORY64)
+    UINT_PTR top = (UINT_PTR)gex_space_top() << 16;
+    if (top) return (void *)(top - (granularity_mask + 1));
+#endif
 #ifdef __APPLE__
     /* See MACH_VM_MAX_ADDRESS_RAW in xnu osfmk/mach/arm/vm_param.h */
     return (void *)0x7ffffe000000;
