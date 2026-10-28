@@ -1016,8 +1016,16 @@ static void __wine_gex_fault( int ctx, unsigned int code, unsigned int addr, uns
         NtSetContextThread( GetCurrentThread(), &xcontext.c );
         break;
     default:
+    {
+        /* The stack the exception is dispatched on is checked as i386's
+         * setup_raise_exception checks it: past its guard page, a stack
+         * overflow; on its last page, the thread ends. */
+        void *stack_ptr = (void *)(ULONG_PTR)frame->esp;
+        size_t stack_size = (ULONG_PTR)stack_ptr - (((ULONG_PTR)stack_ptr - sizeof(struct exc_stack_layout) - xstate_size) & ~(ULONG_PTR)63);
+        virtual_setup_exception( data, stack_ptr, stack_size, &rec );
         call_user_exception_dispatcher( data, &rec, &xcontext.c );
         break;
+    }
     }
     frame_to_ctx( ctx, frame );
 }
