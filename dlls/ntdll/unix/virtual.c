@@ -235,12 +235,14 @@ extern unsigned int gex_kuser_address(void);
 static BOOL gex_compact;
 
 /* The compact space's images that name no address gex pins (the native
- * core's skeletons among them): top-down in the band's part for a game's
- * DLLs, which Wine's own programs never load, below gex's window for the
- * native core's data at the band's top. A data export's RVA is that data's
- * offset from its skeleton's base, so the skeletons stay below the window. */
+ * core's skeletons among them): top-down at the bottom of the band's part
+ * for a game's DLLs, which Wine's own programs never load, just below gex's
+ * window for the native core's data (gex's winspace.rs
+ * WINE64_COMPACT_IMAGES, the same range), so that the memory reaches no
+ * higher than that. A data export's RVA is that data's offset from its
+ * skeleton's base, so the skeletons stay below the window. */
 static char * const gex_compact_images_lo = (char *)0x19000000;
-static char * const gex_compact_images_hi = (char *)0x1fdf0000;
+static char * const gex_compact_images_hi = (char *)0x195f0000;
 #endif
 
 /* TEB allocation blocks */
