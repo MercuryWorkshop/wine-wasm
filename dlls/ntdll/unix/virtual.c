@@ -3708,11 +3708,11 @@ static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size
     }
 
     if (!pe_mapping->image.map_addr &&
-        (pe_mapping->image.image_charact & IMAGE_FILE_DLL) &&
-        ((pe_mapping->image.image_flags & IMAGE_FLAGS_ImageDynamicallyRelocated)
-         /* a fixed-base DLL that can move goes where the prefix's dll-bases
-          * pins it, if it does (the same address in every process); at its
-          * own base otherwise */
+        (((pe_mapping->image.image_charact & IMAGE_FILE_DLL) &&
+          (pe_mapping->image.image_flags & IMAGE_FLAGS_ImageDynamicallyRelocated))
+         /* a fixed-base DLL or a program that can move goes where the
+          * prefix's dll-bases pins it, if it does (the same address in every
+          * run); at its own base otherwise */
          || !(pe_mapping->image.image_charact & IMAGE_FILE_RELOCS_STRIPPED)))
     {
         SERVER_START_REQ( get_image_map_address )

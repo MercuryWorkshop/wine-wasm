@@ -1340,7 +1340,8 @@ static client_ptr_t assign_map_address( struct mapping *mapping )
     struct addr_range *range = (mapping->image.base >> 32) ? &ranges64 : &ranges32;
     mem_size_t size = round_size( mapping->size, granularity_mask );
 
-    if (!(mapping->image.image_charact & IMAGE_FILE_DLL)) return 0;
+    /* a program gets its dll-bases pin, never a pool address */
+    if (!(mapping->image.image_charact & IMAGE_FILE_DLL)) return pinned_map_address( mapping );
 
     if ((ret = get_fd_map_address( mapping->fd ))) return ret;
 
@@ -1716,9 +1717,9 @@ DECL_HANDLER(get_image_map_address)
         if (!mapping->image.map_addr) mapping->image.map_addr = assign_map_address( mapping );
         reply->addr = mapping->image.map_addr;
     }
-    /* a fixed-base DLL gets its dll-bases pin, never a pool address (0: its
-     * own base) */
-    else if ((mapping->flags & SEC_IMAGE) && (mapping->image.image_charact & IMAGE_FILE_DLL))
+    /* a fixed-base DLL or a program gets its dll-bases pin, never a pool
+     * address (0: its own base) */
+    else if (mapping->flags & SEC_IMAGE)
     {
         if (!mapping->image.map_addr) mapping->image.map_addr = pinned_map_address( mapping );
         reply->addr = mapping->image.map_addr;
