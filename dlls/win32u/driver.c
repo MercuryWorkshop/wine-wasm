@@ -983,6 +983,18 @@ static BOOL load_desktop_driver( HWND hwnd )
     send_message( hwnd, WM_NULL, 0, 0 );
 
     guid_atom = HandleToULong( NtUserGetProp( hwnd, prop_nameW ));
+#ifdef __wasm__
+    if (!guid_atom && gex_no_desktop() && strlen( gex_no_desktop() ) < 64)
+    {
+        /* no desktop process names the driver (winstation.c gex_no_desktop) */
+        WCHAR name[64];
+        void *ret_ptr;
+        ULONG ret_len;
+        DWORD len = asciiz_to_unicode( name, gex_no_desktop() );  /* (bytes, the null included) */
+        TRACE( "trying driver %s (no desktop)\n", debugstr_w(name) );
+        return !KeUserModeCallback( NtUserLoadDriver, name, len, &ret_ptr, &ret_len );
+    }
+#endif
     memcpy( key, guid_key_prefixW, sizeof(guid_key_prefixW) );
     ptr = key + ARRAYSIZE(guid_key_prefixW);
     if (NtQueryInformationAtom( guid_atom, AtomBasicInformation, buf, sizeof(buf), NULL ))

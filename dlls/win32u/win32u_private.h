@@ -292,6 +292,10 @@ extern LRESULT destroy_window( HWND hwnd );
 extern BOOL get_client_rect( HWND hwnd, RECT *rect, struct ratio dpi );
 extern BOOL get_present_rect( HWND hwnd, RECT *rect, struct ratio dpi );
 extern HWND get_desktop_window(void);
+#ifdef __wasm__
+extern const char *gex_no_desktop(void);
+extern void gex_fit_desktop( HWND hwnd );
+#endif
 extern struct ratio get_dpi_for_window( HWND hwnd );
 extern HWND get_full_window_handle( HWND hwnd );
 extern HWND get_parent( HWND hwnd );

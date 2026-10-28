@@ -1185,6 +1185,44 @@ static BOOL desktop_up(void)
 }
 #endif
 
+#ifdef __wasm__
+/* gex: WINEGEX_NO_DESKTOP=DRIVER (an eject's knob, for a fullscreen game):
+ * no desktop process and no desktop thread. Every process takes the path
+ * services take, the server's desktop window, which no thread owns; each
+ * loads DRIVER as its display driver itself (load_desktop_driver), and the
+ * window is fitted to the screen here, as explorer's WM_DISPLAYCHANGE would
+ * (no thread receives messages for it). */
+const char *gex_no_desktop(void)
+{
+    static const char *driver = (const char *)-1;
+    if (driver == (const char *)-1)
+    {
+        driver = getenv( "WINEGEX_NO_DESKTOP" );
+        if (driver && !*driver) driver = NULL;
+    }
+    return driver;
+}
+
+void gex_fit_desktop( HWND hwnd )
+{
+    static const struct ratio no_dpi;
+    RECT rect = get_virtual_screen_rect( no_dpi, MDT_DEFAULT ), client;
+
+    if (!hwnd || IsRectEmpty( &rect )) return;
+    client = rect;
+    SERVER_START_REQ( set_window_pos )
+    {
+        req->handle    = wine_server_user_handle( hwnd );
+        req->previous  = 0;
+        req->swp_flags = SWP_NOZORDER | SWP_NOACTIVATE;
+        req->window    = wine_server_rectangle( rect );
+        req->client    = wine_server_rectangle( client );
+        wine_server_call( req );
+    }
+    SERVER_END_REQ;
+}
+#endif
+
 HWND get_desktop_window(void)
 {
     struct user_thread_info *thread_info = get_user_thread_info();
@@ -1194,11 +1232,20 @@ HWND get_desktop_window(void)
 
     /* don't create an actual explorer desktop window for services */
     is_service = is_service_process();
+#ifdef __wasm__
+    if (gex_no_desktop())
+    {
+        is_service = TRUE;
+        register_desktop_class();  /* (the server makes the window from this process's class) */
+    }
+#endif
+
+    unsigned int force_status;
 
     SERVER_START_REQ( get_desktop_window )
     {
         req->force = is_service;
-        if (!wine_server_call( req ))
+        if (!(force_status = wine_server_call( req )))
         {
             thread_info->top_window = wine_server_ptr_handle( reply->top_window );
             thread_info->msg_window = wine_server_ptr_handle( reply->msg_window );
@@ -1206,6 +1253,13 @@ HWND get_desktop_window(void)
     }
     SERVER_END_REQ;
 
+#ifdef __wasm__
+    if (!thread_info->top_window && gex_no_desktop())
+    {
+        ERR_(win)( "no desktop window for this thread (WINEGEX_NO_DESKTOP), status %x\n", force_status );
+        return 0;
+    }
+#endif
     if (!thread_info->top_window)
     {
         static const WCHAR appnameW[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s',
@@ -1374,6 +1428,9 @@ HWND get_desktop_window(void)
     }
     if (!thread_info->top_window) ERR_(win)( "failed to create desktop window\n" );
     else user_driver->pSetDesktopWindow( thread_info->top_window );
+#ifdef __wasm__
+    if (gex_no_desktop()) gex_fit_desktop( thread_info->top_window );
+#endif
 
     register_builtin_classes();
     return thread_info->top_window;
