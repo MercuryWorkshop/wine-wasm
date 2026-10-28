@@ -2931,6 +2931,10 @@ BOOL update_display_cache( BOOL force )
 {
     if (!lock_display_devices( force )) return FALSE;
     unlock_display_devices();
+#ifdef __wasm__
+    /* the screen as the devices now say (winstation.c gex_no_desktop) */
+    if (gex_no_desktop()) gex_fit_desktop( get_user_thread_info()->top_window );
+#endif
     return TRUE;
 }
 

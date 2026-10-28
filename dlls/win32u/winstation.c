@@ -1206,10 +1206,14 @@ const char *gex_no_desktop(void)
 void gex_fit_desktop( HWND hwnd )
 {
     static const struct ratio no_dpi;
-    RECT rect = get_virtual_screen_rect( no_dpi, MDT_DEFAULT ), client;
+    static RECT fitted;  /* (the last rectangle given: one request per change) */
+    RECT rect, client;
 
-    if (!hwnd || IsRectEmpty( &rect )) return;
-    client = rect;
+    if (!hwnd) return;
+    rect = get_virtual_screen_rect( no_dpi, MDT_DEFAULT );
+    if (IsRectEmpty( &rect ) || EqualRect( &rect, &fitted )) return;
+    TRACE_(win)( "fitting desktop %p to %s\n", hwnd, wine_dbgstr_rect( &rect ) );
+    fitted = client = rect;
     SERVER_START_REQ( set_window_pos )
     {
         req->handle    = wine_server_user_handle( hwnd );

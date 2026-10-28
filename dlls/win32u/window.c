@@ -564,6 +564,11 @@ WND *get_win_ptr( HWND hwnd )
     {
         if (is_desktop_window( hwnd )) win = WND_DESKTOP;
     }
+#ifdef __wasm__
+    /* a desktop window the server made for this process has its handle but
+     * no window here (winstation.c gex_no_desktop) */
+    else if (!win && gex_no_desktop() && is_desktop_window( hwnd )) win = WND_DESKTOP;
+#endif
     return win;
 }
 
