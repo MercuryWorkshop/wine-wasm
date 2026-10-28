@@ -4367,6 +4367,9 @@ static void display_mode_changed( BOOL broadcast )
         return;
     }
 
+#ifdef __wasm__
+    if (gex_no_desktop()) gex_fit_desktop( get_desktop_window() );  /* (no thread takes its WM_DISPLAYCHANGE) */
+#endif
     if (!broadcast)
         send_message( get_desktop_window(), WM_DISPLAYCHANGE, current_mode.dmBitsPerPel,
                       MAKELPARAM( current_mode.dmPelsWidth, current_mode.dmPelsHeight ) );
