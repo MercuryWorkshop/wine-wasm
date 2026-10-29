@@ -27,7 +27,7 @@
 #include "wine/gex/gexrt64.h"
 
 /* x86-64 registers in gex's context, numbered as x86 encodes them */
-enum { X_RAX, X_RCX, X_RDX, X_RBX, X_RSP, X_RBP, X_RSI, X_RDI, X_R8, X_R9, X_R10 };
+enum { X_RAX, X_RCX, X_RDX, X_RBX, X_RSP, X_RBP, X_RSI, X_RDI, X_R8, X_R9, X_R10, X_R14 = 14 };
 #define REG(r) GEX_C64( GEX_CTX_XN(r) )
 /* a guest quadword: below 4 GiB in the lowered flavour; anywhere in the
  * memory64 one (GEX_MEMORY64, wcc64 -mgex-memory64: a twin install's PE
@@ -406,9 +406,20 @@ int __gexw_entry_raw( int ctx, int depth, unsigned int need, unsigned long long 
 
 /* Whether the guest, at its stack pointer now, is above the call-out
  * `head` on the same stack: it has left the native frames that made it. */
+/* The guest's stack pointer on the stack the call-outs are on. In a WoW64
+ * thread's 32-bit code (GEX_CTX_CS neither 0, the process's own mode, nor
+ * 0x33) RSP is the 32-bit stack's; the 64-bit one's is in R14, where
+ * wow64cpu keeps it for as long as 32-bit code runs (as the Unix side's
+ * exception_stack reads it). */
+static inline uint64_t callout_rsp( int ctx )
+{
+    uint32_t cs = GEX_C32( GEX_CTX_CS );
+    return cs && cs != 0x33 ? REG( X_R14 ) : REG( X_RSP );
+}
+
 static int left_callout( int ctx, uint64_t teb, uint64_t head )
 {
-    uint64_t pad, rsp = REG( X_RSP );
+    uint64_t pad, rsp = callout_rsp( ctx );
 
     if (!teb || !head) return 0;
     pad = ((const struct gexw_callout *)(uintptr_t)head)->pad_rsp;
@@ -475,7 +486,7 @@ int __gexw_entry( int ctx, int depth, unsigned int need, unsigned long long ret,
     teb = GEX_C64( GEX_CTX_TPIDRRO );
     if (teb && stack == GQ( teb + TEB_STACK_BASE ))
     {
-        rsp = REG( X_RSP );
+        rsp = callout_rsp( ctx );
         while (head && ((const struct gexw_callout *)(uintptr_t)head)->pad_rsp <= rsp)
             head = ((const struct gexw_callout *)(uintptr_t)head)->prev;
         GQ( teb + GEXW_TEB_CALLOUTS ) = head;
