@@ -82,6 +82,17 @@ enum { R_RAX, R_RCX, R_RDX, R_RBX, R_RSP, R_RBP, R_RSI, R_RDI, R_R8, R_R9, R_R10
  * between cs32_sel and cs64_sel on a far transfer */
 static const WORD cs32_sel = 0x23, cs64_sel = 0x33, ds64_sel = 0x2b, fs32_sel = 0x53;
 
+/* The thread's code segment in gex's context: 0 is the process's default
+ * (64-bit here), 0x23 (or i386's 0x1b) a WoW64 thread in 32-bit code. */
+#ifndef GEX_CTX_CS
+#define GEX_CTX_CS 376u
+#endif
+static inline WORD ctx_cs( int ctx )
+{
+    UINT cs = GEX_C32( GEX_CTX_CS );
+    return (cs == cs32_sel || cs == 0x1b) ? cs32_sel : cs64_sel;
+}
+
 struct machine_frame
 {
     ULONG64 rip;
@@ -329,7 +340,7 @@ static void ctx_to_frame( int ctx, struct syscall_frame *frame, ULONG64 rip, ULO
     frame->rip = rip;
     frame->rsp = rsp;
     frame->eflags = get_eflags( ctx );
-    frame->cs = cs64_sel;
+    frame->cs = ctx_cs( ctx );
     frame->ss = ds64_sel;
     /* A Unix call leaves the x87 and SSE state where it is, in gex's
      * context, which nothing changes until guest code runs again: the Unix
@@ -378,6 +389,7 @@ static void frame_to_ctx( int ctx, const struct syscall_frame *frame )
     if (frame->restore_flags & (CONTEXT_FLOATING_POINT | CONTEXT_XSTATE))
         xsave_to_ctx( ctx, &frame->xsave );
     GEX_C64( GEX_CTX_PC ) = frame->rip;
+    GEX_C32( GEX_CTX_CS ) = frame->cs == cs32_sel ? cs32_sel : 0;
 }
 
 
@@ -493,6 +505,8 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
         frame->rsp    = context->Rsp;
         frame->rip    = context->Rip;
         frame->eflags = context->EFlags;
+        /* only a WoW64 thread has a 32-bit code segment to go back to */
+        frame->cs     = (is_wow64() && (context->SegCs == cs32_sel || context->SegCs == 0x1b)) ? cs32_sel : cs64_sel;
     }
     if (flags & CONTEXT_FLOATING_POINT)
     {
@@ -566,7 +580,7 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
         context->Rsp    = frame->rsp;
         context->Rip    = frame->rip;
         context->EFlags = frame->eflags;
-        context->SegCs  = cs64_sel;
+        context->SegCs  = frame->cs == cs32_sel ? cs32_sel : cs64_sel;
         context->SegSs  = ds64_sel;
         context->ContextFlags |= CONTEXT_CONTROL;
     }
@@ -857,6 +871,7 @@ NTSTATUS call_user_apc_dispatcher( CONTEXT *context, unsigned int flags, ULONG_P
     frame->rbp = stack->context.Rbp;
     frame->rsp = (ULONG64)stack;
     frame->rip = (ULONG64)pKiUserApcDispatcher;
+    frame->cs  = cs64_sel;
     frame->restore_flags |= CONTEXT_CONTROL;
     return status;
 }
@@ -868,6 +883,7 @@ NTSTATUS call_user_apc_dispatcher( CONTEXT *context, unsigned int flags, ULONG_P
 void call_raise_user_exception_dispatcher( struct thread_data *data )
 {
     get_syscall_frame(data)->rip = (UINT64)pKiRaiseUserExceptionDispatcher;
+    get_syscall_frame(data)->cs = cs64_sel;
 }
 
 
@@ -900,7 +916,10 @@ NTSTATUS call_user_exception_dispatcher( struct thread_data *data, EXCEPTION_REC
     stack->machine_frame.rsp = stack->context.Rsp;
     frame->rbp = stack->context.Rbp;
     frame->rsp = (ULONG64)stack;
+    /* (64-bit, even for a fault in a WoW64 thread's 32-bit code: wow64's
+     * Wow64PrepareForException takes it to the 32-bit side, as on x86-64) */
     frame->rip = (ULONG64)pKiUserExceptionDispatcher;
+    frame->cs  = cs64_sel;
     frame->restore_flags |= CONTEXT_CONTROL;
     return status;
 }
@@ -1230,6 +1249,7 @@ NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_p
     struct callback_return ret = { 0 };
     int ctx = cur_ctx();
     ULONG64 saved_rsp = REG( R_RSP ), saved_pc = GEX_C64( GEX_CTX_PC );
+    UINT saved_cs = GEX_C32( GEX_CTX_CS );
     void *saved_list = data->teb->Tib.ExceptionList;
 
     if ((char *)get_kernel_stack( data ) + min_kernel_stack > (char *)&frame) return STATUS_STACK_OVERFLOW;
@@ -1254,6 +1274,7 @@ NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_p
     /* the callback dispatcher is jumped to with the stack layout at RSP,
      * and never returns (NtCallbackReturn ends it) */
     REG( R_RSP ) = rsp;
+    GEX_C32( GEX_CTX_CS ) = 0;  /* the dispatcher is 64-bit */
     ret.rsp = rsp;
     GEX_C64( GEX_CTX_LAST_TARGET ) = (ULONG64)pKiUserCallbackDispatcher;
     gex_call_out( ctx, (int64_t)(ULONG_PTR)pKiUserCallbackDispatcher, GEX_RETURN_PAD, rsp );
@@ -1262,6 +1283,7 @@ NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_p
     data->teb->Tib.ExceptionList = saved_list;
     REG( R_RSP ) = saved_rsp;
     GEX_C64( GEX_CTX_PC ) = saved_pc;
+    GEX_C32( GEX_CTX_CS ) = saved_cs;
     if (!ret.done) return STATUS_INTERNAL_ERROR;
     *ret_ptr = ret.ret_ptr;
     *ret_len = ret.ret_len;
@@ -1381,7 +1403,8 @@ static void sc_to_context( const struct gex_x86_64_sigcontext *sc, CONTEXT *cont
     context->R8  = sc->r8;  context->R9  = sc->r9;  context->R10 = sc->r10; context->R11 = sc->r11;
     context->R12 = sc->r12; context->R13 = sc->r13; context->R14 = sc->r14; context->R15 = sc->r15;
     context->Rip = sc->rip; context->EFlags = sc->eflags;
-    context->SegCs = cs64_sel; context->SegSs = ds64_sel; context->SegDs = ds64_sel;
+    context->SegCs = (sc->cs == cs32_sel || sc->cs == 0x1b) ? cs32_sel : cs64_sel;
+    context->SegSs = ds64_sel; context->SegDs = ds64_sel;
     context->SegEs = ds64_sel; context->SegFs = sc->fs; context->SegGs = ds64_sel;
 }
 
@@ -1400,6 +1423,7 @@ static void context_to_sc( const CONTEXT *context, struct gex_x86_64_sigcontext 
     {
         sc->rbp = context->Rbp; sc->rsp = context->Rsp; sc->rip = context->Rip;
         sc->eflags = context->EFlags;
+        sc->cs = (is_wow64() && context->SegCs == cs32_sel) ? cs32_sel : cs64_sel;
     }
 }
 
@@ -1421,6 +1445,9 @@ static void signal_wait_suspend( void *ucontext )
         ctx_to_xsave( guest_signal_ctx, &context.FltSave );
         context.MxCsr = context.FltSave.MxCsr;
         context.ContextFlags |= CONTEXT_FLOATING_POINT | CONTEXT_EXCEPTION_REPORTING;
+        /* a WoW64 thread in 64-bit code (wow64cpu, a system call's thunk):
+         * its 32-bit state is the CPU area's (cf. x86-64's) */
+        if (is_wow64() && context.SegCs == cs64_sel) context.ContextFlags |= CONTEXT_EXCEPTION_ACTIVE;
         wait_suspend( &context );
         context_to_sc( &context, &uc->sc );
         if ((context.ContextFlags & CONTEXT_FLOATING_POINT & ~CONTEXT_AMD64))
