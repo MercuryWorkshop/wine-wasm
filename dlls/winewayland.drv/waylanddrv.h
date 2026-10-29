@@ -72,6 +72,16 @@ enum wayland_window_message
     WM_WAYLAND_CONFIGURE,
     WM_WAYLAND_SET_FOREGROUND,
     WM_WAYLAND_KEY,
+    WM_WAYLAND_DND,
+};
+
+/* WM_WAYLAND_DND's wparam: what the data device heard of a drag. */
+enum wayland_dnd_event
+{
+    WAYLAND_DND_ENTER,
+    WAYLAND_DND_MOTION,
+    WAYLAND_DND_DROP,
+    WAYLAND_DND_LEAVE,
 };
 
 enum wayland_surface_config_state
@@ -163,6 +173,12 @@ struct wayland_data_device
             struct wl_data_offer *clipboard_wl_data_offer;
         };
     };
+    /* A drag over one of our surfaces (wl_data_device enter to leave or
+     * drop): its offer, the enter's serial, the window under it and where. */
+    struct wl_data_offer *dnd_wl_data_offer;
+    uint32_t dnd_serial;
+    HWND dnd_hwnd;
+    POINT dnd_point;
     pthread_mutex_t mutex;
 };
 
@@ -370,6 +386,7 @@ RECT map_rect_to_surface(struct wayland_surface *surface, RECT rect);
 POINT map_point_to_surface(struct wayland_surface *surface, POINT point);
 RECT map_rect_from_surface(struct wayland_surface *surface, RECT rect);
 POINT map_point_from_surface(struct wayland_surface *surface, POINT point);
+BOOL wayland_surface_point_to_screen(HWND hwnd, wl_fixed_t sx, wl_fixed_t sy, BOOL clamp, POINT *out);
 void wayland_client_surface_attach(struct wayland_client_surface *client, HWND toplevel, const RECT *rect);
 void wayland_surface_ensure_contents(struct wayland_surface *surface);
 void wayland_surface_set_title(struct wayland_surface *surface, LPCWSTR title);
@@ -457,6 +474,7 @@ void wayland_text_input_deinit(void);
  */
 
 void wayland_data_device_init(void);
+void wayland_dnd_message(HWND hwnd, WPARAM event, LPARAM lparam);
 
 /**********************************************************************
  *          Helpers
