@@ -39,7 +39,7 @@
 #include "winternl.h"
 #include "crt_init.h"
 
-#ifdef __wasm32__
+#ifdef __wasm__
 /* wasm: clang names a two-parameter main __main_argc_argv and a
  * parameterless one __original_main; only a three-parameter one is main
  * (a call of the wrong type would trap) */
@@ -74,7 +74,7 @@ int __cdecl mainCRTStartup(void)
     _set_app_type(get_nt_header()->OptionalHeader.Subsystem == IMAGE_SUBSYSTEM_WINDOWS_GUI ? _crt_gui_app : _crt_console_app);
     do_global_ctors();
 
-#ifdef __wasm32__
+#ifdef __wasm__
     if (__main_argc_argv) ret = __main_argc_argv(argc, argv);
     else if (__original_main) ret = __original_main();
     else ret = main3(argc, argv, env);
