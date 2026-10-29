@@ -50,12 +50,18 @@ static inline StdProxyImpl *impl_from_proxy_obj( void *iface )
     return CONTAINING_RECORD(iface, StdProxyImpl, PVtbl);
 }
 
+#ifdef __wasm64__
+#define ObjectStublessClient3 stubless_thunks_code
+#define STUBLESS_ENTRY_SIZE 16
+#else
 extern void ObjectStublessClient3(void);
 extern void ObjectStublessClient4(void);
+#define STUBLESS_ENTRY_SIZE ((char *)ObjectStublessClient4 - (char *)ObjectStublessClient3)
+#endif
 
 BOOL fill_stubless_table( IUnknownVtbl *vtbl, DWORD num )
 {
-    size_t entry_size = (char *)ObjectStublessClient4 - (char *)ObjectStublessClient3;
+    size_t entry_size = STUBLESS_ENTRY_SIZE;
     const void **entry = (const void **)(vtbl + 1);
     DWORD i;
 

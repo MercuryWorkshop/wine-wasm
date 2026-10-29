@@ -51,6 +51,7 @@
 
 #include "rpc_binding.h"
 #include "rpc_server.h"
+#include "cpsf.h"
 
 #include "wine/debug.h"
 
@@ -119,6 +120,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 
     switch (fdwReason) {
     case DLL_PROCESS_ATTACH:
+#ifdef __wasm64__
+        init_thunks();
+#endif
         break;
 
     case DLL_THREAD_DETACH:
