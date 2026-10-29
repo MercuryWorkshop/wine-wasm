@@ -2110,6 +2110,19 @@ static void periodic_save( void *arg )
 static void set_periodic_save_timer(void)
 {
     if (save_timeout_user) remove_timeout_user( save_timeout_user );
+    save_timeout_user = NULL;
+#ifdef __wasm32__
+    /* gex: WINEGEX_NO_REGSAVE, set by a page that keeps none of the prefix
+     * past the visit: no periodic saves. Each wrote the whole changed branch
+     * while every request waited (35 ms for a game's registry, an audio
+     * underrun every 30 s), for files nothing reads again. A save that is
+     * asked for (RegFlushKey) and the one when the server exits stay: a
+     * later server of the same visit loads what this one changed. */
+    {
+        const char *off = getenv( "WINEGEX_NO_REGSAVE" );
+        if (off && *off && strcmp( off, "0" )) return;
+    }
+#endif
     save_timeout_user = add_timeout_user( save_period, periodic_save, NULL );
 }
 
