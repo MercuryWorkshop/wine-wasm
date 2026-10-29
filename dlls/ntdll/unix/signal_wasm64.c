@@ -888,6 +888,32 @@ void call_raise_user_exception_dispatcher( struct thread_data *data )
 
 
 /***********************************************************************
+ *           exception_stack
+ *
+ * The stack an exception in this context is dispatched on: its own, or for
+ * a WoW64 thread's 32-bit code the thread's 64-bit stack, which nothing
+ * dispatched writes below the 32-bit stack pointer (wow64's
+ * Wow64PrepareForException builds the 32-bit side's frame there itself).
+ * In 32-bit code wow64cpu keeps the 64-bit stack pointer in r14 (its far
+ * jumps exchange it with rsp), as its BTCpuResetToConsistentState reads it.
+ * 0 when that is not inside the thread's 64-bit stack.
+ */
+static ULONG64 exception_stack( const CONTEXT *context )
+{
+    TEB *teb = NtCurrentTeb();
+
+    if (context->SegCs != cs32_sel) return context->Rsp;
+    if (context->R14 <= (ULONG_PTR)teb->DeallocationStack || context->R14 > (ULONG_PTR)teb->Tib.StackBase)
+    {
+        ERR( "fault in 32-bit code at %08lx, esp %08lx: r14 %p is not in the 64-bit stack %p-%p\n",
+             (long)context->Rip, (long)context->Rsp, (void *)context->R14, teb->DeallocationStack, teb->Tib.StackBase );
+        return 0;
+    }
+    return context->R14;
+}
+
+
+/***********************************************************************
  *           call_user_exception_dispatcher
  */
 NTSTATUS call_user_exception_dispatcher( struct thread_data *data, EXCEPTION_RECORD *rec, CONTEXT *context )
@@ -895,9 +921,11 @@ NTSTATUS call_user_exception_dispatcher( struct thread_data *data, EXCEPTION_REC
     struct syscall_frame *frame = get_syscall_frame( data );
     struct exc_stack_layout *stack;
     NTSTATUS status = NtSetContextThread( GetCurrentThread(), context );
+    ULONG64 rsp = exception_stack( context );
 
     if (status) return status;
-    stack = (struct exc_stack_layout *)((context->Rsp - sizeof(*stack) - xstate_size) & ~(ULONG_PTR)63);
+    if (!rsp) abort_thread( STATUS_ACCESS_VIOLATION );
+    stack = (struct exc_stack_layout *)((rsp - sizeof(*stack) - xstate_size) & ~(ULONG_PTR)63);
     memmove( &stack->context, context, sizeof(*context) );
 
     if ((context->ContextFlags & CONTEXT_XSTATE) == CONTEXT_XSTATE)
@@ -1212,11 +1240,14 @@ static void __wine_gex_fault( int ctx, unsigned int code, ULONG64 addr, unsigned
         rec.NumberParameters = 1;
         break;
     }
-    /* The stack the exception is dispatched on is checked as x86-64's
-     * setup_raise_exception checks it: past its guard page, a stack
-     * overflow; on its last page, the thread ends. */
+    /* The stack the exception is dispatched on (the 64-bit one for a WoW64
+     * thread's 32-bit code) is checked as x86-64's setup_raise_exception
+     * checks it: past its guard page, a stack overflow; on its last page,
+     * the thread ends. */
     {
-        ULONG_PTR rsp = REG( R_RSP ) & ~(ULONG_PTR)15;
+        ULONG_PTR rsp = exception_stack( &xcontext.c ) & ~(ULONG_PTR)15;
+
+        if (!rsp) abort_thread( STATUS_ACCESS_VIOLATION );
         size_t stack_size = rsp - ((rsp - sizeof(struct exc_stack_layout) - xstate_size) & ~(ULONG_PTR)63);
         virtual_setup_exception( data, (void *)rsp, stack_size, &rec );
     }
