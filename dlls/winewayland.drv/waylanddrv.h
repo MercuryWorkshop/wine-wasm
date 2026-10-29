@@ -359,6 +359,8 @@ BOOL wayland_process_init(void);
 
 BOOL wayland_output_create(uint32_t id, uint32_t version);
 void wayland_output_destroy(struct wayland_output *output);
+void wayland_fit_virtual_desktop(void);
+void wayland_fit_virtual_desktop_post(HWND hwnd);
 void wayland_output_use_xdg_extension(struct wayland_output *output);
 
 /**********************************************************************
