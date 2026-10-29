@@ -265,6 +265,66 @@ static void wayland_add_device_modes(const struct gdi_device_manager *device_man
     free(modes);
 }
 
+/* (gex) WINEGEX_FIT_DESKTOP=1: a virtual desktop (explorer /desktop=NAME) takes the
+ * size of the primary output when it starts and whenever the output changes, so a
+ * page's desktop and its taskbar follow the page. */
+static BOOL fit_desktop_enabled(void)
+{
+    static int fit = -1;
+
+    if (fit < 0)
+    {
+        const char *e = getenv("WINEGEX_FIT_DESKTOP");
+        fit = e && e[0] == '1';
+    }
+    return fit;
+}
+
+/* The desktop window was first placed: ask for one fit once explorer has set up its
+ * display settings, which it does before it reads its messages. */
+void wayland_fit_virtual_desktop_post(HWND hwnd)
+{
+    static BOOL posted;
+    DWORD pid = 0;
+
+    if (posted || !fit_desktop_enabled()) return;
+    NtUserGetWindowThread(hwnd, &pid);
+    if (pid != GetCurrentProcessId()) return;
+    posted = TRUE;
+    NtUserPostMessage(hwnd, WM_WAYLAND_INIT_DISPLAY_DEVICES, 0, 0);
+}
+
+/* Called in the desktop process, after its display devices were updated: the
+ * output's size is then one of the virtual desktop's modes. */
+void wayland_fit_virtual_desktop(void)
+{
+    DEVMODEW mode = {.dmSize = sizeof(mode)};
+    USEROBJECTFLAGS flags = {0};
+    struct wayland_output *output;
+    LONG ret;
+
+    if (!fit_desktop_enabled()) return;
+    if (!NtUserGetObjectInformation(NtUserGetThreadDesktop(GetCurrentThreadId()), UOI_FLAGS,
+                                    &flags, sizeof(flags), NULL) ||
+        !(flags.dwFlags & DF_WINE_VIRTUAL_DESKTOP))
+        return;
+
+    pthread_mutex_lock(&process_wayland.output_mutex);
+    wl_list_for_each(output, &process_wayland.output_list, link)
+    {
+        if (!output->current.current_mode) continue;
+        mode.dmPelsWidth = output->current.current_mode->width;
+        mode.dmPelsHeight = output->current.current_mode->height;
+        break;
+    }
+    pthread_mutex_unlock(&process_wayland.output_mutex);
+    if (!mode.dmPelsWidth || !mode.dmPelsHeight) return;
+
+    mode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+    ret = NtUserChangeDisplaySettings(NULL, &mode, NULL, 0, NULL);
+    TRACE("virtual desktop to %ux%u: %d\n", (UINT)mode.dmPelsWidth, (UINT)mode.dmPelsHeight, (int)ret);
+}
+
 /***********************************************************************
  *      UpdateDisplayDevices (WAYLAND.@)
  */

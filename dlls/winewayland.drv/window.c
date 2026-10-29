@@ -457,6 +457,8 @@ void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UIN
 
     TRACE("hwnd %p new_rects %s after %p flags %08x\n", hwnd, debugstr_window_rects(new_rects), insert_after, swp_flags);
 
+    if (hwnd == NtUserGetDesktopWindow()) wayland_fit_virtual_desktop_post(hwnd);
+
     /* Get the managed state with win_data unlocked, as is_window_managed
      * may need to query win_data information about other HWNDs and thus
      * acquire the lock itself internally. */
@@ -640,6 +642,7 @@ LRESULT WAYLAND_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
     case WM_WAYLAND_INIT_DISPLAY_DEVICES:
         NtUserCallNoParam(NtUserCallNoParam_DisplayModeChanged);
+        wayland_fit_virtual_desktop();
         return 0;
     case WM_WAYLAND_CONFIGURE:
         wayland_configure_window(hwnd);
