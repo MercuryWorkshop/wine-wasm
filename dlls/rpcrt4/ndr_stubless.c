@@ -1039,6 +1039,20 @@ __ASM_GLOBAL_FUNC( NdrClientCall2,
                    "addq $0x28,%rsp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset -0x28\n\t")
                    "ret" )
+#elif defined(__wasm64__)
+/* Win64 passes every variadic argument in an 8-byte slot, and so do this
+ * module's callers (widl writes their arguments as slots): the variadic
+ * buffer is the x86-64 argument stack the format strings describe. */
+CLIENT_CALL_RETURN WINAPIV NdrClientCall2( PMIDL_STUB_DESC desc, PFORMAT_STRING format, ... )
+{
+    CLIENT_CALL_RETURN ret;
+    va_list args;
+
+    va_start( args, format );
+    ret.Simple = NdrpClientCall2( desc, format, (void **)args, FALSE );
+    va_end( args );
+    return ret;
+}
 #elif defined(__i386__)
 __ASM_GLOBAL_FUNC( NdrClientCall2,
                    "pushl %ebp\n\t"
@@ -1116,7 +1130,7 @@ LONG_PTR WINAPI ndr_stubless_client_call( unsigned int index, void **args, void 
             const NDR_PROC_HEADER_EXTS *ext = (const NDR_PROC_HEADER_EXTS *)(hdr + 1);
             if (ext->Size > sizeof(*ext))
             {
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(__wasm64__)
                 unsigned short fpu_mask = *(unsigned short *)(ext + 1);
                 for (int i = 0; i < 4; i++, fpu_mask >>= 2) if (fpu_mask & 3) args[i] = fpu_regs[i];
 #else
@@ -1873,6 +1887,17 @@ __ASM_GLOBAL_FUNC( NdrAsyncClientCall,
                    "addq $0x28,%rsp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset -0x28\n\t")
                    "ret" )
+#elif defined(__wasm64__)
+CLIENT_CALL_RETURN WINAPIV NdrAsyncClientCall( PMIDL_STUB_DESC desc, PFORMAT_STRING format, ... )
+{
+    CLIENT_CALL_RETURN ret;
+    va_list args;
+
+    va_start( args, format );
+    ret.Simple = ndr_async_client_call( desc, format, (void **)args );
+    va_end( args );
+    return ret;
+}
 #elif defined(__i386__)
 __ASM_GLOBAL_FUNC( NdrAsyncClientCall,
                    "pushl %ebp\n\t"
@@ -2235,6 +2260,17 @@ __ASM_GLOBAL_FUNC( NdrClientCall3,
                    "addq $0x28,%rsp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset -0x28\n\t")
                    "ret" )
+#elif defined(__wasm64__)
+CLIENT_CALL_RETURN WINAPIV NdrClientCall3( MIDL_STUBLESS_PROXY_INFO *info, ULONG proc, void *retval, ... )
+{
+    CLIENT_CALL_RETURN ret;
+    va_list args;
+
+    va_start( args, retval );
+    ret.Simple = ndr64_client_call( info, proc, retval, (void **)args );
+    va_end( args );
+    return ret;
+}
 #endif
 
 LONG_PTR CDECL ndr64_async_client_call( MIDL_STUBLESS_PROXY_INFO *info,
@@ -2307,4 +2343,15 @@ __ASM_GLOBAL_FUNC( Ndr64AsyncClientCall,
                    "addq $0x28,%rsp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset -0x28\n\t")
                    "ret" )
+#elif defined(__wasm64__)
+CLIENT_CALL_RETURN WINAPIV Ndr64AsyncClientCall( MIDL_STUBLESS_PROXY_INFO *info, ULONG proc, void *retval, ... )
+{
+    CLIENT_CALL_RETURN ret;
+    va_list args;
+
+    va_start( args, retval );
+    ret.Simple = ndr64_async_client_call( info, proc, retval, (void **)args, NULL );
+    va_end( args );
+    return ret;
+}
 #endif

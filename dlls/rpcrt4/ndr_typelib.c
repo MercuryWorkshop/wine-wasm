@@ -887,7 +887,7 @@ static unsigned int get_stack_size(ITypeInfo *typeinfo, TYPEDESC *desc, unsigned
 #endif
     if (byval)
     {
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(__wasm64__)
         byval = (size == 1 || size == 2 || size == 4 || size == 8);
 #elif defined __aarch64__
         byval = (size <= 16);
@@ -1262,7 +1262,7 @@ static void write_proc_func_header(ITypeInfo *typeinfo, FUNCDESC *desc,
     WRITE_SHORT(proc, *proclen, 0);  /* ClientCorrHint */
     WRITE_SHORT(proc, *proclen, 0);  /* ServerCorrHint */
     WRITE_SHORT(proc, *proclen, 0);  /* NotifyIndex */
-#elif defined __x86_64__
+#elif defined(__x86_64__) || defined(__wasm64__)
     {
         unsigned short float_mask = 0;
 

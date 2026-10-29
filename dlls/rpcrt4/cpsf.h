@@ -79,6 +79,12 @@ struct delegating_vtbl
     const void *methods[NB_THUNK_ENTRIES - 3];
 };
 
+#ifdef __wasm64__
+extern struct delegating_vtbl delegating_vtbl;
+extern const unsigned char *stubless_thunks_code;
+void init_thunks(void);
+#else
 extern const struct delegating_vtbl delegating_vtbl;
+#endif
 
 #endif  /* __WINE_CPSF_H */

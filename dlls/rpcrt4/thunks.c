@@ -101,6 +101,8 @@
     T(992) T(993) T(994) T(995) T(996) T(997) T(998) T(999) T(1000) T(1001) T(1002) T(1003) T(1004) T(1005) T(1006) T(1007) \
     T(1008) T(1009) T(1010) T(1011) T(1012) T(1013) T(1014) T(1015) T(1016) T(1017) T(1018) T(1019) T(1020) T(1021) T(1022) T(1023)
 
+#ifndef __wasm64__
+
 #ifdef __i386__
 
 __ASM_GLOBAL_FUNC( call_stubless_func,
@@ -292,6 +294,8 @@ __ASM_GLOBAL_FUNC( vtbl_thunks, ALL_THUNK_ENTRIES )
 
 #undef T
 
+#endif  /* __wasm64__ */
+
 static HRESULT WINAPI delegating_QueryInterface(IUnknown *pUnk, REFIID iid, void **ppv)
 {
     *ppv = pUnk;
@@ -308,6 +312,8 @@ static ULONG WINAPI delegating_Release(IUnknown *pUnk)
     return 1;
 }
 
+#ifndef __wasm64__
+
 #define T(num) extern void NdrProxyForwardingFunction##num(void);
 ALL_THUNK_ENTRIES
 #undef T
@@ -321,6 +327,8 @@ const struct delegating_vtbl delegating_vtbl =
 #undef T
     }
 };
+
+#endif  /* __wasm64__ */
 
 
 #if defined(__aarch64__) || defined(__arm__)
@@ -513,4 +521,99 @@ __ASM_GLOBAL_FUNC( call_server_func,
                    "ldp x19, x20, [sp, #0x10]\n\t"
                    "ldp x29, x30, [sp], #0x20\n\t"
                    "ret" )
+#elif defined __wasm64__
+
+/* Native code under gex (64-bit Wine as wasm). The guest is x86-64, and
+ * both kinds of thunk are x86-64 code written at load, as the assembly
+ * above would be: a caller of a proxy method may be x86-64 code or native
+ * code, and native code calls a function pointer that is not a
+ * function-table index as guest code (the ICALL pass), with its arguments
+ * in Win64's slots. The stubless thunks end in ndr_stubless_client_call
+ * (native), whose address as a guest address is its entry thunk;
+ * call_server_func's routine may be either kind too. */
+
+#include <string.h>
+#include "winternl.h"
+#include "wine/gex/runtime.h"
+
+#define THUNK_SIZE 16
+
+extern LONG_PTR WINAPI ndr_stubless_client_call( unsigned int index, void **args, void **fpu_regs );
+
+const unsigned char *stubless_thunks_code;  /* ObjectStublessClient3 */
+struct delegating_vtbl delegating_vtbl =
+{
+    { delegating_QueryInterface, delegating_AddRef, delegating_Release },
+};
+
+static const unsigned char call_stubless_code[] =
+{
+    0x48, 0x83, 0xec, 0x38,                     /* subq $0x38,%rsp */
+    0x48, 0x89, 0x4c, 0x24, 0x40,               /* movq %rcx,0x40(%rsp) */
+    0x48, 0x89, 0x54, 0x24, 0x48,               /* movq %rdx,0x48(%rsp) */
+    0x4c, 0x89, 0x44, 0x24, 0x50,               /* movq %r8,0x50(%rsp) */
+    0x4c, 0x89, 0x4c, 0x24, 0x58,               /* movq %r9,0x58(%rsp) */
+    0x48, 0x8d, 0x54, 0x24, 0x40,               /* leaq 0x40(%rsp),%rdx (args) */
+    0x66, 0x0f, 0xd6, 0x4c, 0x24, 0x20,         /* movq %xmm1,0x20(%rsp) */
+    0x66, 0x0f, 0xd6, 0x54, 0x24, 0x28,         /* movq %xmm2,0x28(%rsp) */
+    0x66, 0x0f, 0xd6, 0x5c, 0x24, 0x30,         /* movq %xmm3,0x30(%rsp) */
+    0x4c, 0x8d, 0x44, 0x24, 0x18,               /* leaq 0x18(%rsp),%r8 (fpu_regs) */
+    0x44, 0x89, 0xd1,                           /* movl %r10d,%ecx (index) */
+    0xff, 0x15, 0x05, 0x00, 0x00, 0x00,         /* call *target(%rip) */
+    0x48, 0x83, 0xc4, 0x38,                     /* addq $0x38,%rsp */
+    0xc3,                                       /* ret */
+    /* target: the address of ndr_stubless_client_call, 8 bytes */
+};
+
+void init_thunks(void)
+{
+    SIZE_T common = (sizeof(call_stubless_code) + 8 + THUNK_SIZE - 1) & ~(THUNK_SIZE - 1);
+    SIZE_T count = NB_THUNK_ENTRIES - 3, size = common + 2 * count * THUNK_SIZE;
+    unsigned char *code, *p;
+    ULONG64 target = (ULONG_PTR)ndr_stubless_client_call;
+    DWORD old, i;
+
+    MEM_ADDRESS_REQUIREMENTS req = { .LowestStartingAddress = (void *)0x400000,
+                                     .HighestEndingAddress = (void *)0x7ffeffff };
+    MEM_EXTENDED_PARAMETER param = { .Type = MemExtendedParameterAddressRequirements, .Pointer = &req };
+
+    /* in gex's code space, 4 MiB to 2 GiB less 64 KiB: above its floor
+     * for function-table indices */
+    code = NULL;
+    if (NtAllocateVirtualMemoryEx( GetCurrentProcess(), (void **)&code, &size, MEM_COMMIT | MEM_RESERVE,
+                                   PAGE_READWRITE, &param, 1 )) return;
+    memset( code, 0xcc, size );
+    memcpy( code, call_stubless_code, sizeof(call_stubless_code) );
+    memcpy( code + sizeof(call_stubless_code), &target, sizeof(target) );
+
+    /* ObjectStublessClientN: movl $N,%r10d; jmp call_stubless */
+    for (i = 0, p = code + common; i < count; i++, p += THUNK_SIZE)
+    {
+        int rel = code - (p + 11);
+        p[0] = 0x41; p[1] = 0xba;
+        *(DWORD *)(p + 2) = i + 3;
+        p[6] = 0xe9;
+        memcpy( p + 7, &rel, sizeof(rel) );
+    }
+    stubless_thunks_code = code + common;
+
+    /* NdrProxyForwardingFunctionN: movq 0x20(%rcx),%rcx; movq (%rcx),%rax;
+     * jmp *8*N(%rax) */
+    for (i = 0; i < count; i++, p += THUNK_SIZE)
+    {
+        p[0] = 0x48; p[1] = 0x8b; p[2] = 0x49; p[3] = 0x20;
+        p[4] = 0x48; p[5] = 0x8b; p[6] = 0x01;
+        p[7] = 0xff; p[8] = 0xa0;
+        *(DWORD *)(p + 9) = 8 * (i + 3);
+        delegating_vtbl.methods[i] = p;
+    }
+    VirtualProtect( code, size, PAGE_EXECUTE_READ, &old );
+}
+
+LONG_PTR __cdecl call_server_func( SERVER_ROUTINE func, unsigned char *args, unsigned int stack_size,
+                                   const NDR_PROC_PARTIAL_OIF_HEADER *header )
+{
+    return __gexw_guest_call64( (ULONG_PTR)func, (const unsigned long long *)args, stack_size / 8, 0 );
+}
+
 #endif

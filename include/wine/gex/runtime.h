@@ -60,6 +60,14 @@ static inline int __gexw_is_native( const void *f )
  * status word, 2 MXCSR. `set`: write `v`; the value (old, or read) back. */
 unsigned int __gexw_guest_fpu( unsigned int which, unsigned int set, unsigned int v );
 
+/* Call the function at guest address `target` (x86-64 code, or a native
+ * function's entry thunk at its function-table index) with `n` Win64
+ * argument slots, each in its register and on the stack alike: RAX back,
+ * or XMM0's low 64 bits when `fp`. For a call whose signature is known
+ * only at run time. */
+unsigned long long __gexw_guest_call64( unsigned long long target, const unsigned long long *slots,
+                                        unsigned int n, unsigned int fp );
+
 static inline int __gexw_is_native( const void *f )
 {
     return (unsigned long long)f < GEXW_ICALL_FLOOR;
