@@ -30,6 +30,7 @@
 #include <unistd.h>
 
 #include "waylanddrv.h"
+#include "shlobj.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(clipboard);
@@ -660,24 +661,275 @@ static void data_device_data_offer(void *data, struct wl_data_device *wl_data_de
     wayland_data_offer_create(wl_data_offer);
 }
 
+/**********************************************************************
+ *          Drag and drop onto our windows
+ *
+ * The data device's events arrive on the thread that reads the display. A
+ * drag's Win32 side (user32's IDropTarget calls and its WM_DROPFILES
+ * fallback, through NtUserDragDropCall as winex11 and winemac make them)
+ * runs on the thread of the window under it, so every event becomes a
+ * WM_WAYLAND_DND posted there, with the drag's state in the data device.
+ * Only file drags are taken: a text/uri-list offer, as CF_HDROP.
+ */
+
+#define URI_LIST_MIME_TYPE "text/uri-list"
+
+/* A text/uri-list URI as a DOS path, or NULL. Only local file:// URIs. */
+static WCHAR *uri_to_dos(const char *encoded, size_t len)
+{
+    WCHAR *ret = NULL;
+    char *uri, *path;
+    size_t i, j = 0;
+
+    if (!(uri = malloc(len + 1))) return NULL;
+    for (i = 0; i < len; i++)
+    {
+        if (encoded[i] == '%' && i + 2 < len && isxdigit(encoded[i + 1]) && isxdigit(encoded[i + 2]))
+        {
+            char hex[3] = {encoded[i + 1], encoded[i + 2], 0};
+            uri[j++] = strtoul(hex, NULL, 16);
+            i += 2;
+        }
+        else uri[j++] = encoded[i];
+    }
+    uri[j] = 0;
+
+    path = NULL;
+    if (!strncmp(uri, "file:///", 8)) path = uri + 7;
+    else if (!strncmp(uri, "file://localhost/", 17)) path = uri + 16;
+    else if (!strncmp(uri, "file:/", 6) && uri[6] != '/') path = uri + 5;
+    if (path) ntdll_get_dos_file_name(path, &ret, FILE_OPEN);
+    else WARN("not a local file URI: %s\n", debugstr_a(uri));
+    free(uri);
+    return ret;
+}
+
+/* A text/uri-list (lines ending in CRLF, or LF; # starts a comment) as a
+ * CF_HDROP's DROPFILES. */
+static DROPFILES *uri_list_to_drop_files(const char *list, size_t size, size_t *ret_size)
+{
+    size_t capacity = 4096, total = 0, at = 0;
+    DROPFILES *drop;
+    WCHAR *out, *path, *tmp;
+
+    if (!(out = malloc(capacity * sizeof(WCHAR)))) return NULL;
+    while (at < size)
+    {
+        size_t end = at, len;
+        while (end < size && list[end] != '\n' && list[end] != '\r') end++;
+        len = end - at;
+        if (len && list[at] != '#' && (path = uri_to_dos(list + at, len)))
+        {
+            size_t n = wcslen(path) + 1;
+            TRACE("%s -> %s\n", debugstr_an(list + at, len), debugstr_w(path));
+            if (total + n + 1 > capacity)
+            {
+                capacity = 2 * capacity + n;
+                if (!(tmp = realloc(out, capacity * sizeof(WCHAR))))
+                {
+                    free(path);
+                    break;
+                }
+                out = tmp;
+            }
+            memcpy(out + total, path, n * sizeof(WCHAR));
+            total += n;
+            free(path);
+        }
+        at = end;
+        while (at < size && (list[at] == '\n' || list[at] == '\r')) at++;
+    }
+    if (!total)
+    {
+        free(out);
+        return NULL;
+    }
+    out[total++] = 0;
+    *ret_size = sizeof(*drop) + total * sizeof(WCHAR);
+    if ((drop = malloc(*ret_size)))
+    {
+        drop->pFiles = sizeof(*drop);
+        drop->pt.x = drop->pt.y = 0;
+        drop->fNC = FALSE;
+        drop->fWide = TRUE;
+        memcpy(drop + 1, out, total * sizeof(WCHAR));
+    }
+    free(out);
+    return drop;
+}
+
+/* The drag's formats, for WINE_DRAG_DROP_ENTER: its files as CF_HDROP. */
+static struct format_entry *dnd_import_offer(struct wl_data_offer *wl_data_offer, size_t *ret_size)
+{
+    struct wayland_data_offer *data_offer = wl_data_offer_get_user_data(wl_data_offer);
+    struct format_entry *entry = NULL;
+    DROPFILES *drop = NULL;
+    size_t size = 0, drop_size = 0;
+    void *list;
+    int fd;
+
+    if (!data_offer || !string_array_contains(&data_offer->types, URI_LIST_MIME_TYPE)) return NULL;
+    if ((fd = wayland_data_offer_get_import_fd(data_offer, URI_LIST_MIME_TYPE)) < 0) return NULL;
+    if ((list = read_all(fd, &size)))
+    {
+        drop = uri_list_to_drop_files(list, size, &drop_size);
+        free(list);
+    }
+    close(fd);
+    if (!drop) return NULL;
+
+    *ret_size = (FIELD_OFFSET(struct format_entry, data[drop_size]) + 7) & ~7;
+    if ((entry = calloc(1, *ret_size)))
+    {
+        entry->format = CF_HDROP;
+        entry->size = drop_size;
+        memcpy(entry->data, drop, drop_size);
+    }
+    free(drop);
+    return entry;
+}
+
+/* Each event goes to the window the drag entered, with the drag's offer:
+ * every message about one offer is in one thread's queue, in order, and the
+ * drop or leave that ends it, posted last, frees it there. */
+static void dnd_post(HWND hwnd, enum wayland_dnd_event event, struct wl_data_offer *wl_data_offer)
+{
+    if (!NtUserPostMessage(hwnd, WM_WAYLAND_DND, event, (LPARAM)wl_data_offer) &&
+        (event == WAYLAND_DND_DROP || event == WAYLAND_DND_LEAVE))
+        wayland_data_offer_destroy(wl_data_offer_get_user_data(wl_data_offer));
+}
+
+/* The drag ends (a drop or a leave): its offer goes with the message. */
+static void dnd_end(struct wayland_data_device *data_device, enum wayland_dnd_event event)
+{
+    struct wl_data_offer *wl_data_offer;
+    HWND hwnd;
+
+    pthread_mutex_lock(&data_device->mutex);
+    wl_data_offer = data_device->dnd_wl_data_offer;
+    hwnd = data_device->dnd_hwnd;
+    data_device->dnd_wl_data_offer = NULL;
+    data_device->dnd_hwnd = NULL;
+    pthread_mutex_unlock(&data_device->mutex);
+    TRACE("hwnd %p, event %u, offer %p\n", hwnd, event, wl_data_offer);
+    if (wl_data_offer) dnd_post(hwnd, event, wl_data_offer);
+}
+
 static void data_device_enter(void *data, struct wl_data_device *wl_data_device,
                               uint32_t serial, struct wl_surface *wl_surface,
                               wl_fixed_t x_w, wl_fixed_t y_w,
                               struct wl_data_offer *wl_data_offer)
 {
+    struct wayland_data_device *data_device = data;
+    HWND hwnd = NULL;
+    POINT point = {0};
+
+    /* An enter without a leave first: that drag is over. */
+    dnd_end(data_device, WAYLAND_DND_LEAVE);
+    if (!wl_data_offer) return;
+
+    /* The wl_surface's user data is its window, fixed for its lifetime. */
+    if (wl_surface && (hwnd = wl_surface_get_user_data(wl_surface)) &&
+        !wayland_surface_point_to_screen(hwnd, x_w, y_w, FALSE, &point))
+        hwnd = NULL;
+    TRACE("hwnd %p, serial %u, offer %p, point %s\n", hwnd, serial, wl_data_offer,
+          wine_dbgstr_point(&point));
+    if (!hwnd)
+    {
+        wayland_data_offer_destroy(wl_data_offer_get_user_data(wl_data_offer));
+        return;
+    }
+
+    pthread_mutex_lock(&data_device->mutex);
+    data_device->dnd_wl_data_offer = wl_data_offer;
+    data_device->dnd_serial = serial;
+    data_device->dnd_hwnd = hwnd;
+    data_device->dnd_point = point;
+    pthread_mutex_unlock(&data_device->mutex);
+    dnd_post(hwnd, WAYLAND_DND_ENTER, wl_data_offer);
 }
 
 static void data_device_leave(void *data, struct wl_data_device *wl_data_device)
 {
+    dnd_end(data, WAYLAND_DND_LEAVE);
 }
 
 static void data_device_motion(void *data, struct wl_data_device *wl_data_device,
                                uint32_t time, wl_fixed_t x_w, wl_fixed_t y_w)
 {
+    struct wayland_data_device *data_device = data;
+    struct wl_data_offer *wl_data_offer;
+    POINT point;
+    HWND hwnd;
+
+    pthread_mutex_lock(&data_device->mutex);
+    hwnd = data_device->dnd_hwnd;
+    wl_data_offer = data_device->dnd_wl_data_offer;
+    pthread_mutex_unlock(&data_device->mutex);
+    if (!wl_data_offer || !wayland_surface_point_to_screen(hwnd, x_w, y_w, FALSE, &point)) return;
+
+    pthread_mutex_lock(&data_device->mutex);
+    if (data_device->dnd_wl_data_offer == wl_data_offer) data_device->dnd_point = point;
+    pthread_mutex_unlock(&data_device->mutex);
+    dnd_post(hwnd, WAYLAND_DND_MOTION, wl_data_offer);
 }
 
 static void data_device_drop(void *data, struct wl_data_device *wl_data_device)
 {
+    dnd_end(data, WAYLAND_DND_DROP);
+}
+
+/* WM_WAYLAND_DND, on the thread of the window the drag entered. */
+void wayland_dnd_message(HWND hwnd, WPARAM event, LPARAM lparam)
+{
+    struct wayland_data_device *data_device = &process_wayland.data_device;
+    struct wl_data_offer *wl_data_offer = (struct wl_data_offer *)lparam;
+    struct format_entry *entries;
+    size_t size = 0;
+    uint32_t serial;
+    DWORD effect;
+    POINT point;
+
+    pthread_mutex_lock(&data_device->mutex);
+    serial = data_device->dnd_serial;
+    point = data_device->dnd_point;
+    pthread_mutex_unlock(&data_device->mutex);
+
+    TRACE("hwnd %p, event %u, offer %p, point %s\n", hwnd, (UINT)event, wl_data_offer,
+          wine_dbgstr_point(&point));
+    if (!wl_data_offer) return;
+
+    switch (event)
+    {
+    case WAYLAND_DND_ENTER:
+        if (!(entries = dnd_import_offer(wl_data_offer, &size)))
+        {
+            wl_data_offer_accept(wl_data_offer, serial, NULL);
+            break;
+        }
+        NtUserMessageCall(0, WINE_DRAG_DROP_ENTER, size, (LPARAM)entries, NULL, NtUserDragDropCall, FALSE);
+        free(entries);
+        /* fall through */
+    case WAYLAND_DND_MOTION:
+        effect = NtUserMessageCall(hwnd, WINE_DRAG_DROP_DRAG, MAKELONG(point.x, point.y), DROPEFFECT_COPY,
+                                   NULL, NtUserDragDropCall, FALSE);
+        TRACE("effect %#x\n", (UINT)effect);
+        wl_data_offer_accept(wl_data_offer, serial, effect != DROPEFFECT_NONE ? URI_LIST_MIME_TYPE : NULL);
+        break;
+    case WAYLAND_DND_DROP:
+        effect = NtUserMessageCall(hwnd, WINE_DRAG_DROP_DROP, 0, 0, NULL, NtUserDragDropCall, FALSE);
+        TRACE("dropped, effect %#x\n", (UINT)effect);
+        if (wl_data_offer_get_version(wl_data_offer) >= WL_DATA_OFFER_FINISH_SINCE_VERSION &&
+            effect != DROPEFFECT_NONE)
+            wl_data_offer_finish(wl_data_offer);
+        wayland_data_offer_destroy(wl_data_offer_get_user_data(wl_data_offer));
+        break;
+    case WAYLAND_DND_LEAVE:
+        NtUserMessageCall(0, WINE_DRAG_DROP_LEAVE, 0, 0, NULL, NtUserDragDropCall, FALSE);
+        wayland_data_offer_destroy(wl_data_offer_get_user_data(wl_data_offer));
+        break;
+    }
+    wl_display_flush(process_wayland.wl_display);
 }
 
 static void data_device_selection(void *data, struct wl_data_device *wl_data_device,

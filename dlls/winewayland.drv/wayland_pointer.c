@@ -123,21 +123,20 @@ static HWND wayland_pointer_get_focused_hwnd(void)
     return hwnd;
 }
 
-static void pointer_handle_motion_internal(wl_fixed_t sx, wl_fixed_t sy)
+/* A point on hwnd's surface, in screen coordinates; with clamp, kept inside
+ * the window (see below). Also where a drag over the surface is (data device). */
+BOOL wayland_surface_point_to_screen(HWND hwnd, wl_fixed_t sx, wl_fixed_t sy, BOOL clamp, POINT *out)
 {
-    INPUT input = {0};
     RECT *window_rect;
-    HWND hwnd;
     POINT screen = { wl_fixed_to_double(sx), wl_fixed_to_double(sy) };
     struct wayland_surface *surface;
     struct wayland_win_data *data;
 
-    if (!(hwnd = wayland_pointer_get_focused_hwnd())) return;
-    if (!(data = wayland_win_data_get(hwnd))) return;
+    if (!(data = wayland_win_data_get(hwnd))) return FALSE;
     if (!(surface = data->wayland_surface))
     {
         wayland_win_data_release(data);
-        return;
+        return FALSE;
     }
 
     window_rect = &surface->window.rect;
@@ -171,7 +170,7 @@ static void pointer_handle_motion_internal(wl_fixed_t sx, wl_fixed_t sy)
          * slightly outside the target window, so bring them within bounds.
          * Not under a compositor that places windows: Win32 runs the move
          * and size loops there (see above). */
-        if (!process_wayland.gex_window_placement_manager_v1)
+        if (clamp && !process_wayland.gex_window_placement_manager_v1)
         {
             if (screen.x >= window_rect->right) screen.x = window_rect->right - 1;
             else if (screen.x < window_rect->left) screen.x = window_rect->left;
@@ -181,6 +180,18 @@ static void pointer_handle_motion_internal(wl_fixed_t sx, wl_fixed_t sy)
     }
 
     wayland_win_data_release(data);
+    *out = screen;
+    return TRUE;
+}
+
+static void pointer_handle_motion_internal(wl_fixed_t sx, wl_fixed_t sy)
+{
+    INPUT input = {0};
+    HWND hwnd;
+    POINT screen;
+
+    if (!(hwnd = wayland_pointer_get_focused_hwnd())) return;
+    if (!wayland_surface_point_to_screen(hwnd, sx, sy, TRUE, &screen)) return;
 
     input.type = INPUT_MOUSE;
     input.mi.dx = screen.x;
