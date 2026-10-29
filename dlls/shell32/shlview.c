@@ -1623,9 +1623,38 @@ static LRESULT ShellView_OnNotify(IShellViewImpl * This, UINT CtlID, LPNMHDR lpn
 * ShellView_OnChange()
 */
 
+/* Whether pidl is this view's folder (child FALSE) or an item directly in it (child
+ * TRUE): the view is told of changes anywhere under its folder. path gets pidl's path. */
+static BOOL shellview_in_folder(IShellViewImpl *This, LPCITEMIDLIST pidl, BOOL child, WCHAR *path)
+{
+    WCHAR folder[MAX_PATH], parent[MAX_PATH];
+    IPersistFolder2 *persist;
+    LPITEMIDLIST current;
+    BOOL ret = FALSE;
+
+    if (!SHGetPathFromIDListW(pidl, path)) return FALSE;
+    if (FAILED(IShellFolder_QueryInterface(This->pSFParent, &IID_IPersistFolder2, (void **)&persist)))
+        return FALSE;
+    if (SUCCEEDED(IPersistFolder2_GetCurFolder(persist, &current)))
+    {
+        if (SHGetPathFromIDListW(current, folder))
+        {
+            lstrcpynW(parent, path, MAX_PATH);
+            if (child) PathRemoveFileSpecW(parent);
+            PathRemoveBackslashW(parent);
+            PathRemoveBackslashW(folder);
+            ret = !lstrcmpiW(parent, folder);
+        }
+        ILFree(current);
+    }
+    IPersistFolder2_Release(persist);
+    return ret;
+}
+
 static LRESULT ShellView_OnChange(IShellViewImpl * This, const LPCITEMIDLIST *pidls, LONG event)
 {
-    LPCITEMIDLIST pidl;
+    WCHAR path[MAX_PATH];
+    LPITEMIDLIST pidl, full;
     BOOL ret = TRUE;
 
     TRACE("(%p)->(%p, %p, 0x%08lx)\n", This, pidls[0], pidls[1], event);
@@ -1634,8 +1663,21 @@ static LRESULT ShellView_OnChange(IShellViewImpl * This, const LPCITEMIDLIST *pi
     {
         case SHCNE_MKDIR:
         case SHCNE_CREATE:
-            pidl = ILClone(ILFindLastID(pidls[0]));
-            shellview_add_item(This, pidl);
+            /* Only what is created in this folder, as the folder names it (a
+             * notification's pidl from a path does not say it is a folder). */
+            if (!shellview_in_folder(This, pidls[0], TRUE, path) ||
+                FAILED(SHParseDisplayName(path, NULL, &full, 0, NULL)))
+                break;
+            pidl = ILClone(ILFindLastID(full));
+            ILFree(full);
+            if (pidl && LV_FindItemByPidl(This, pidl) == -1)
+                shellview_add_item(This, pidl);
+            else
+                ILFree(pidl);
+            break;
+        case SHCNE_UPDATEDIR:
+            if (shellview_in_folder(This, pidls[0], FALSE, path))
+                IShellView3_Refresh(&This->IShellView3_iface);
             break;
         case SHCNE_RMDIR:
         case SHCNE_DELETE:
@@ -2367,9 +2409,12 @@ static HRESULT drag_notify_subitem(IShellViewImpl *This, DWORD grfKeyState, POIN
     This->iDragOverItem = lResult;
     if (lResult == -1) {
         /* We are not above one of the listview's subitems. Bind to the parent folder's
-         * DropTarget interface. */
-        hr = IShellFolder_QueryInterface(This->pSFParent, &IID_IDropTarget, 
-                                         (LPVOID*)&This->pCurDropTarget);
+         * DropTarget interface: its background's (CreateViewObject), else its own. */
+        hr = IShellFolder_CreateViewObject(This->pSFParent, This->hWnd, &IID_IDropTarget,
+                                           (LPVOID*)&This->pCurDropTarget);
+        if (FAILED(hr))
+            hr = IShellFolder_QueryInterface(This->pSFParent, &IID_IDropTarget,
+                                             (LPVOID*)&This->pCurDropTarget);
     } else {
         /* Query the relative PIDL of the shellfolder object represented by the currently
          * dragged over listview-item ... */

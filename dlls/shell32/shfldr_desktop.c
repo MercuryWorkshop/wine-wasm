@@ -413,8 +413,22 @@ static HRESULT WINAPI ISF_Desktop_fnCreateViewObject (IShellFolder2 * iface,
 
     if (IsEqualIID (riid, &IID_IDropTarget))
     {
-        WARN ("IDropTarget not implemented\n");
+        /* What is dropped on the desktop goes into the user's Desktop folder. */
+        LPITEMIDLIST pidl;
+        IShellFolder *folder;
+
         hr = E_NOTIMPL;
+        if (This->sPathTarget && SUCCEEDED(SHILCreateFromPathW(This->sPathTarget, &pidl, NULL)))
+        {
+            if (!_ILIsDesktop(pidl) &&
+                SUCCEEDED(hr = IShellFolder2_BindToObject(iface, pidl, NULL, &IID_IShellFolder, (void **)&folder)))
+            {
+                hr = IShellFolder_CreateViewObject(folder, hwndOwner, riid, ppvOut);
+                IShellFolder_Release(folder);
+            }
+            ILFree(pidl);
+        }
+        if (FAILED(hr)) WARN ("no drop target for %s: %#lx\n", debugstr_w(This->sPathTarget), hr);
     }
     else if (IsEqualIID (riid, &IID_IContextMenu))
     {
