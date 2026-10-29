@@ -1809,8 +1809,14 @@ static void init_supported_machines(void)
 #ifdef __wasm32__
     /* W64 (gex docs/wine-native-x64.md): the same wineserver serves 64-bit
      * native Wine, whose x86-64 programs run on gex; a win64 prefix is
-     * AMD64 only (no WoW64 yet) */
-    else if (prefix_type == PREFIX_64BIT) supported_machines[count++] = IMAGE_FILE_MACHINE_AMD64;
+     * AMD64, and with WINEGEX_WOW64 set I386 too: i386 programs then run
+     * as WoW64 in a 64-bit process (wow64.dll over gex's CPU DLL) */
+    else if (prefix_type == PREFIX_64BIT)
+    {
+        const char *wow = getenv( "WINEGEX_WOW64" );
+        supported_machines[count++] = IMAGE_FILE_MACHINE_AMD64;
+        if (wow && *wow && strcmp( wow, "0" )) supported_machines[count++] = IMAGE_FILE_MACHINE_I386;
+    }
 #endif
 #elif defined(__x86_64__)
     if (prefix_type == PREFIX_64BIT) supported_machines[count++] = IMAGE_FILE_MACHINE_AMD64;

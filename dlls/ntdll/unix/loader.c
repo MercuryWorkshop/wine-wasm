@@ -436,6 +436,12 @@ char *get_alternate_wineloader( WORD machine )
     {
         if (force_wow64) return NULL;
         if (machine != get_alt_machine( current_machine )) return NULL;
+#ifdef __wasm64__
+        /* gex: a session whose server takes i386 (WINEGEX_WOW64) runs it
+         * as WoW64 in this loader, never in a 32-bit Wine's beside it */
+        for (unsigned int i = 0; i < supported_machines_count; i++)
+            if (supported_machines[i] == machine) return NULL;
+#endif
     }
     else
     {
