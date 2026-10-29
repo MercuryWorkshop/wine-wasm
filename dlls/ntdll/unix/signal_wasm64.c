@@ -78,7 +78,9 @@ enum { R_RAX, R_RCX, R_RDX, R_RBX, R_RSP, R_RBP, R_RSI, R_RDI, R_R8, R_R9, R_R10
  * NATIVE_RETURN_PAD): a call-out that waits for it is a native caller's */
 #define GEX_RETURN_PAD 0x3ffff1
 
-static const WORD cs64_sel = 0x33, ds64_sel = 0x2b;
+/* as x86-64 Windows' (and signal_x86_64.c's): gex switches code segments
+ * between cs32_sel and cs64_sel on a far transfer */
+static const WORD cs32_sel = 0x23, cs64_sel = 0x33, ds64_sel = 0x2b, fs32_sel = 0x53;
 
 struct machine_frame
 {
@@ -404,11 +406,14 @@ void *get_native_context( CONTEXT *context )
 /***********************************************************************
  *              get_wow_context
  *
- * No wow64 in W64 (docs/wine-native-x64.md §3).
+ * WoW64 (a session with WINEGEX_WOW64): as on x86-64, the 32-bit context
+ * of a thread in 64-bit code is wow64cpu's CPU area; gex switches the
+ * code segment, as the hardware does.
  */
 void *get_wow_context( CONTEXT *context )
 {
-    return NULL;
+    if (context->SegCs != cs64_sel) return NULL;
+    return get_cpu_area( get_thread_data(), IMAGE_FILE_MACHINE_I386 );
 }
 
 
@@ -627,10 +632,99 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
 
 /***********************************************************************
  *              set_thread_wow64_context
+ *
+ * As x86-64's: the integer and control registers in wow64cpu's CPU area,
+ * the x87 and SSE state in the frame (one register file for both modes),
+ * another thread's through the server.
  */
 NTSTATUS set_thread_wow64_context( HANDLE handle, const void *ctx, ULONG size )
 {
-    return STATUS_INVALID_INFO_CLASS;
+    BOOL self = (handle == GetCurrentThread());
+    struct thread_data *data = get_thread_data();
+    struct syscall_frame *frame = get_syscall_frame( data );
+    struct amd64_thread_data *amd64_data = amd64_thread_data( data );
+    const I386_CONTEXT *context = ctx;
+    I386_CONTEXT *wow_frame;
+    DWORD flags = context->ContextFlags & ~CONTEXT_i386;
+
+    if (size != sizeof(I386_CONTEXT)) return STATUS_INFO_LENGTH_MISMATCH;
+    if (self && !frame) return STATUS_ACCESS_DENIED;
+
+    /* debug registers require a server call */
+    if (self && (flags & CONTEXT_I386_DEBUG_REGISTERS))
+        self = (amd64_data->dr0 == context->Dr0 && amd64_data->dr1 == context->Dr1 &&
+                amd64_data->dr2 == context->Dr2 && amd64_data->dr3 == context->Dr3 &&
+                amd64_data->dr6 == context->Dr6 && amd64_data->dr7 == context->Dr7);
+
+    if (!self)
+    {
+        NTSTATUS ret = set_thread_context( handle, context, &self, IMAGE_FILE_MACHINE_I386 );
+        if (ret || !self) return ret;
+        if (flags & CONTEXT_I386_DEBUG_REGISTERS)
+        {
+            amd64_data->dr0 = context->Dr0;
+            amd64_data->dr1 = context->Dr1;
+            amd64_data->dr2 = context->Dr2;
+            amd64_data->dr3 = context->Dr3;
+            amd64_data->dr6 = context->Dr6;
+            amd64_data->dr7 = context->Dr7;
+        }
+        if (!(flags & ~CONTEXT_I386_DEBUG_REGISTERS)) return ret;
+    }
+
+    if (!(wow_frame = get_cpu_area( data, IMAGE_FILE_MACHINE_I386 ))) return STATUS_INVALID_PARAMETER;
+
+    if (flags & CONTEXT_I386_INTEGER)
+    {
+        wow_frame->Eax = context->Eax;
+        wow_frame->Ebx = context->Ebx;
+        wow_frame->Ecx = context->Ecx;
+        wow_frame->Edx = context->Edx;
+        wow_frame->Esi = context->Esi;
+        wow_frame->Edi = context->Edi;
+    }
+    if (flags & CONTEXT_I386_CONTROL)
+    {
+        WOW64_CPURESERVED *cpu = data->teb->TlsSlots[WOW64_TLS_CPURESERVED];
+
+        wow_frame->Esp    = context->Esp;
+        wow_frame->Ebp    = context->Ebp;
+        wow_frame->Eip    = context->Eip;
+        wow_frame->EFlags = context->EFlags;
+        wow_frame->SegCs  = context->SegCs;
+        wow_frame->SegSs  = context->SegSs;
+        cpu->Flags |= WOW64_CPURESERVED_FLAG_RESET_STATE;
+    }
+    if (flags & CONTEXT_I386_SEGMENTS)
+    {
+        wow_frame->SegDs = ds64_sel;
+        wow_frame->SegEs = ds64_sel;
+        wow_frame->SegFs = amd64_data->fs;
+        wow_frame->SegGs = ds64_sel;
+    }
+    if (flags & CONTEXT_I386_DEBUG_REGISTERS)
+    {
+        wow_frame->Dr0 = context->Dr0;
+        wow_frame->Dr1 = context->Dr1;
+        wow_frame->Dr2 = context->Dr2;
+        wow_frame->Dr3 = context->Dr3;
+        wow_frame->Dr6 = context->Dr6;
+        wow_frame->Dr7 = context->Dr7;
+    }
+    if (flags & CONTEXT_I386_EXTENDED_REGISTERS)
+    {
+        frame_xsave( frame );
+        memcpy( &frame->xsave, context->ExtendedRegisters, sizeof(frame->xsave) );
+        frame->restore_flags |= CONTEXT_FLOATING_POINT;
+    }
+    else if (flags & CONTEXT_I386_FLOATING_POINT)
+    {
+        frame_xsave( frame );
+        fpu_to_fpux( &frame->xsave, &context->FloatSave );
+        frame->restore_flags |= CONTEXT_FLOATING_POINT;
+    }
+    /* FIXME: CONTEXT_I386_XSTATE (gex keeps no AVX state for 32-bit code) */
+    return STATUS_SUCCESS;
 }
 
 
@@ -639,7 +733,81 @@ NTSTATUS set_thread_wow64_context( HANDLE handle, const void *ctx, ULONG size )
  */
 NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size )
 {
-    return STATUS_INVALID_INFO_CLASS;
+    DWORD needed_flags;
+    struct thread_data *data = get_thread_data();
+    struct syscall_frame *frame = get_syscall_frame( data );
+    struct amd64_thread_data *amd64_data = amd64_thread_data( data );
+    I386_CONTEXT *wow_frame, *context = ctx;
+    BOOL self = (handle == GetCurrentThread());
+
+    if (size != sizeof(I386_CONTEXT)) return STATUS_INFO_LENGTH_MISMATCH;
+    if (self && !frame) return STATUS_ACCESS_DENIED;
+
+    needed_flags = context->ContextFlags & ~CONTEXT_i386;
+
+    /* debug registers require a server call */
+    if (needed_flags & CONTEXT_I386_DEBUG_REGISTERS) self = FALSE;
+
+    if (!self)
+    {
+        NTSTATUS ret = get_thread_context( handle, context, &self, IMAGE_FILE_MACHINE_I386 );
+        if (ret || !self) return ret;
+        if (needed_flags & CONTEXT_I386_DEBUG_REGISTERS)
+        {
+            amd64_data->dr0 = context->Dr0;
+            amd64_data->dr1 = context->Dr1;
+            amd64_data->dr2 = context->Dr2;
+            amd64_data->dr3 = context->Dr3;
+            amd64_data->dr6 = context->Dr6;
+            amd64_data->dr7 = context->Dr7;
+        }
+        if (!(needed_flags & ~CONTEXT_I386_DEBUG_REGISTERS)) return ret;
+    }
+
+    if (!(wow_frame = get_cpu_area( data, IMAGE_FILE_MACHINE_I386 ))) return STATUS_INVALID_PARAMETER;
+
+    if (needed_flags & CONTEXT_I386_INTEGER)
+    {
+        context->Eax = wow_frame->Eax;
+        context->Ebx = wow_frame->Ebx;
+        context->Ecx = wow_frame->Ecx;
+        context->Edx = wow_frame->Edx;
+        context->Esi = wow_frame->Esi;
+        context->Edi = wow_frame->Edi;
+        context->ContextFlags |= CONTEXT_I386_INTEGER;
+    }
+    if (needed_flags & CONTEXT_I386_CONTROL)
+    {
+        context->Esp    = wow_frame->Esp;
+        context->Ebp    = wow_frame->Ebp;
+        context->Eip    = wow_frame->Eip;
+        context->EFlags = wow_frame->EFlags;
+        context->SegCs  = LOWORD(wow_frame->SegCs);
+        context->SegSs  = LOWORD(wow_frame->SegSs);
+        context->ContextFlags |= CONTEXT_I386_CONTROL;
+    }
+    if (needed_flags & CONTEXT_I386_SEGMENTS)
+    {
+        context->SegDs = ds64_sel;
+        context->SegEs = ds64_sel;
+        context->SegFs = amd64_data->fs;
+        context->SegGs = ds64_sel;
+        context->ContextFlags |= CONTEXT_I386_SEGMENTS;
+    }
+    if (needed_flags & (CONTEXT_I386_EXTENDED_REGISTERS | CONTEXT_I386_FLOATING_POINT)) frame_xsave( frame );
+    if (needed_flags & CONTEXT_I386_EXTENDED_REGISTERS)
+    {
+        memcpy( context->ExtendedRegisters, &frame->xsave, sizeof(context->ExtendedRegisters) );
+        context->ContextFlags |= CONTEXT_I386_EXTENDED_REGISTERS;
+    }
+    if (needed_flags & CONTEXT_I386_FLOATING_POINT)
+    {
+        fpux_to_fpu( &context->FloatSave, &frame->xsave );
+        context->ContextFlags |= CONTEXT_I386_FLOATING_POINT;
+    }
+    /* FIXME: CONTEXT_I386_XSTATE */
+    set_context_exception_reporting_flags( &context->ContextFlags, CONTEXT_SERVICE_ACTIVE );
+    return STATUS_SUCCESS;
 }
 
 
@@ -1367,6 +1535,7 @@ void signal_start_thread( PRTL_THREAD_START_ROUTINE entry, void *arg, TEB *teb )
     struct amd64_thread_data *thread_data = (struct amd64_thread_data *)tdata->cpu_data;
     struct syscall_frame *frame;
     CONTEXT *cctx, context = { 0 };
+    I386_CONTEXT *wow_context;
     int ctx = cur_ctx();
 
     if (!tdata->syscall_frame)
@@ -1376,8 +1545,14 @@ void signal_start_thread( PRTL_THREAD_START_ROUTINE entry, void *arg, TEB *teb )
     frame->syscall_cfa = NULL;
     frame->prev_frame = NULL;
 
-    /* the program's view of the TEB: %gs's base */
+    /* the program's view of the TEB: %gs's base; and in a WoW64 thread
+     * %fs's is TEB32, which only its 32-bit code reads */
     GEX_C64( GEX_CTX_TPIDRRO ) = (ULONG_PTR)teb;
+    if (teb->WowTebOffset)
+    {
+        thread_data->fs = fs32_sel;
+        GEX_C64( GEX_CTX_TPIDR ) = (ULONG_PTR)get_wow_teb( teb );
+    }
 
     context.ContextFlags = CONTEXT_ALL | CONTEXT_EXCEPTION_REPORTING | CONTEXT_EXCEPTION_ACTIVE;
     context.Rcx    = (ULONG_PTR)entry;
@@ -1393,6 +1568,26 @@ void signal_start_thread( PRTL_THREAD_START_ROUTINE entry, void *arg, TEB *teb )
     context.EFlags = 0x200;
     context.FltSave.ControlWord = 0x27f;
     context.FltSave.MxCsr = context.MxCsr = 0x1f80;
+
+    /* a WoW64 thread (cf. x86-64's): wow64cpu enters the 32-bit side
+     * from this context with a far transfer to cs32_sel */
+    if ((wow_context = get_cpu_area( data, IMAGE_FILE_MACHINE_I386 )))
+    {
+        wow_context->ContextFlags = CONTEXT_I386_ALL;
+        wow_context->Eax = (ULONG_PTR)entry;
+        wow_context->Ebx = (arg == peb ? (ULONG_PTR)wow_peb : (ULONG_PTR)arg);
+        wow_context->Esp = get_wow_teb( teb )->Tib.StackBase - 16;
+        wow_context->Eip = pLdrSystemDllInitBlock->pRtlUserThreadStart;
+        wow_context->SegCs = cs32_sel;
+        wow_context->SegDs = ds64_sel;
+        wow_context->SegEs = ds64_sel;
+        wow_context->SegFs = thread_data->fs;
+        wow_context->SegGs = ds64_sel;
+        wow_context->SegSs = ds64_sel;
+        wow_context->EFlags = 0x202;
+        wow_context->FloatSave.ControlWord = context.FltSave.ControlWord;
+        *(XSAVE_FORMAT *)wow_context->ExtendedRegisters = context.FltSave;
+    }
 
     if (data->suspend) wait_suspend( &context );
 
