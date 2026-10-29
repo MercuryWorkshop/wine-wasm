@@ -897,19 +897,27 @@ void call_raise_user_exception_dispatcher( struct thread_data *data )
  * In 32-bit code wow64cpu keeps the 64-bit stack pointer in r14 (its far
  * jumps exchange it with rsp), as its BTCpuResetToConsistentState reads it.
  * 0 when that is not inside the thread's 64-bit stack.
+ *
+ * Wow64PrepareForException, seeing a 32-bit SegCs, takes the frame to be on
+ * the 32-bit stack and copies it, from its own stack pointer up to the end
+ * of the context, to just below r14 with a forward `rep movsq`. So the frame
+ * goes a gap below r14 that the copy cannot reach from it: the frame and its
+ * xstate, and what KiUserExceptionDispatcher and the copy's caller push.
  */
+#define WOW64_DISPATCH_GAP (sizeof(struct exc_stack_layout) + xstate_size + 0x200)
+
 static ULONG64 exception_stack( const CONTEXT *context )
 {
     TEB *teb = NtCurrentTeb();
 
     if (context->SegCs != cs32_sel) return context->Rsp;
-    if (context->R14 <= (ULONG_PTR)teb->DeallocationStack || context->R14 > (ULONG_PTR)teb->Tib.StackBase)
+    if (context->R14 - WOW64_DISPATCH_GAP <= (ULONG_PTR)teb->DeallocationStack || context->R14 > (ULONG_PTR)teb->Tib.StackBase)
     {
         ERR( "fault in 32-bit code at %08lx, esp %08lx: r14 %p is not in the 64-bit stack %p-%p\n",
              (long)context->Rip, (long)context->Rsp, (void *)context->R14, teb->DeallocationStack, teb->Tib.StackBase );
         return 0;
     }
-    return context->R14;
+    return context->R14 - WOW64_DISPATCH_GAP;
 }
 
 
