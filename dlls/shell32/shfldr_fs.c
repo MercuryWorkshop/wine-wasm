@@ -68,6 +68,7 @@ typedef struct {
 
     LPITEMIDLIST pidlRoot; /* absolute pidl */
     DWORD drop_effects_mask;
+    BOOL drop_hdrop;       /* the dragged data is files from outside the shell (CF_HDROP only) */
 } IGenericSFImpl;
 
 static UINT cfShellIDList;
@@ -1650,6 +1651,71 @@ static ULONG WINAPI ISFDropTarget_Release(IDropTarget *iface)
 #define HIDA_GetPIDLFolder(pida) (LPCITEMIDLIST)(((LPBYTE)pida)+(pida)->aoffset[0])
 #define HIDA_GetPIDLItem(pida, i) (LPCITEMIDLIST)(((LPBYTE)pida)+(pida)->aoffset[i+1])
 
+/* The effect of a drop with the keys in key_state: one this folder supports and the
+ * source allows. Files from outside the shell are copied unless a key asks to move
+ * them, as a drop from another drive is. */
+static DWORD drop_effect(const IGenericSFImpl *This, DWORD key_state, DWORD allowed)
+{
+    DWORD effect = KeyStateToDropEffect(key_state);
+
+    if (This->drop_hdrop && !(key_state & (MK_CONTROL|MK_SHIFT))) effect = DROPEFFECT_COPY;
+    effect &= This->drop_effects_mask & allowed;
+    if (!effect && This->drop_hdrop) effect = This->drop_effects_mask & allowed & DROPEFFECT_COPY;
+    return effect;
+}
+
+/* A name in dir for src that nothing has: its own, else "name - Copy.ext",
+ * then "name - Copy (2).ext" and on. */
+static BOOL drop_destination(const WCHAR *dir, const WCHAR *src, WCHAR *dst)
+{
+    const WCHAR *name = PathFindFileNameW(src);
+    DWORD attrs = GetFileAttributesW(src);
+    const WCHAR *ext = (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY))
+        ? name + lstrlenW(name) : PathFindExtensionW(name);
+    WCHAR stem[MAX_PATH], leaf[MAX_PATH];
+    int n;
+
+    lstrcpynW(stem, name, min(ext - name + 1, MAX_PATH));
+    for (n = 1; n < 1000; n++)
+    {
+        if (n == 1) lstrcpynW(leaf, name, MAX_PATH);
+        else if (n == 2) swprintf(leaf, MAX_PATH, L"%s - Copy%s", stem, ext);
+        else swprintf(leaf, MAX_PATH, L"%s - Copy (%d)%s", stem, n - 1, ext);
+        if (!PathCombineW(dst, dir, leaf)) return FALSE;
+        if (GetFileAttributesW(dst) == INVALID_FILE_ATTRIBUTES) return TRUE;
+    }
+    return FALSE;
+}
+
+/* Copies (or, for DROPEFFECT_MOVE, moves) the files of drop into the folder, each
+ * under a name nothing there has, and has the folder's views show them. */
+static HRESULT drop_files(IGenericSFImpl *This, HDROP drop, DWORD effect)
+{
+    UINT i, count = DragQueryFileW(drop, ~0u, NULL, 0);
+    HRESULT hr = S_OK;
+
+    if (!This->sPathTarget) return E_FAIL;
+    for (i = 0; i < count; i++)
+    {
+        WCHAR from[MAX_PATH + 1] = {0}, to[MAX_PATH + 1] = {0};
+        SHFILEOPSTRUCTW op = {0};
+
+        if (!DragQueryFileW(drop, i, from, MAX_PATH) || !drop_destination(This->sPathTarget, from, to))
+        {
+            hr = E_FAIL;
+            continue;
+        }
+        TRACE("%s %s to %s\n", effect == DROPEFFECT_MOVE ? "moving" : "copying", debugstr_w(from), debugstr_w(to));
+        op.wFunc = effect == DROPEFFECT_MOVE ? FO_MOVE : FO_COPY;
+        op.pFrom = from;
+        op.pTo = to;
+        op.fFlags = FOF_NOCONFIRMATION | FOF_NOCONFIRMMKDIR;
+        if (SHFileOperationW(&op) || op.fAnyOperationsAborted) hr = E_FAIL;
+    }
+    SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATHW, This->sPathTarget, NULL);
+    return hr;
+}
+
 static HRESULT WINAPI
 ISFDropTarget_DragEnter (IDropTarget * iface, IDataObject * pDataObject,
                          DWORD dwKeyState, POINTL pt, DWORD * pdwEffect)
@@ -1668,6 +1734,7 @@ ISFDropTarget_DragEnter (IDropTarget * iface, IDataObject * pDataObject,
      * can't drop on file objects. And the 'move' drop effect is only supported, if the source
      * folder is not identical to the target folder. */
     This->drop_effects_mask = DROPEFFECT_NONE;
+    This->drop_hdrop = FALSE;
     InitFormatEtc(format, cfShellIDList, TYMED_HGLOBAL);
     if (_ILIsFolder(ILFindLastID(This->pidlRoot)) && /* Only drop to folders, not to files */
         SUCCEEDED(IDataObject_GetData(pDataObject, &format, &medium))) /* Only ShellIDList format */
@@ -1681,8 +1748,18 @@ ISFDropTarget_DragEnter (IDropTarget * iface, IDataObject * pDataObject,
             GlobalUnlock(medium.hGlobal);
         }
     }
+    else if (This->sPathTarget && _ILIsFolder(ILFindLastID(This->pidlRoot)))
+    {
+        /* Files from outside the shell (another program's drag, the host's): copied or moved. */
+        InitFormatEtc(format, CF_HDROP, TYMED_HGLOBAL);
+        if (IDataObject_QueryGetData(pDataObject, &format) == S_OK)
+        {
+            This->drop_effects_mask = DROPEFFECT_COPY|DROPEFFECT_MOVE;
+            This->drop_hdrop = TRUE;
+        }
+    }
 
-    *pdwEffect = KeyStateToDropEffect(dwKeyState) & This->drop_effects_mask;
+    *pdwEffect = drop_effect(This, dwKeyState, *pdwEffect);
 
     return S_OK;
 }
@@ -1698,7 +1775,7 @@ ISFDropTarget_DragOver (IDropTarget * iface, DWORD dwKeyState, POINTL pt,
     if (!pdwEffect)
         return E_INVALIDARG;
 
-    *pdwEffect = KeyStateToDropEffect(dwKeyState) & This->drop_effects_mask;
+    *pdwEffect = drop_effect(This, dwKeyState, *pdwEffect);
 
     return S_OK;
 }
@@ -1710,6 +1787,7 @@ static HRESULT WINAPI ISFDropTarget_DragLeave (IDropTarget * iface)
     TRACE("(%p)\n", This);
 
     This->drop_effects_mask = DROPEFFECT_NONE;
+    This->drop_hdrop = FALSE;
     return S_OK;
 }
 
@@ -1724,6 +1802,21 @@ ISFDropTarget_Drop (IDropTarget * iface, IDataObject * pDataObject,
 
     TRACE("(%p)->(%p %ld {.x=%ld, .y=%ld} %p) semi-stub\n",
         This, pDataObject, dwKeyState, pt.x, pt.y, pdwEffect);
+
+    if (This->drop_hdrop)
+    {
+        DWORD effect = *pdwEffect & (DROPEFFECT_COPY|DROPEFFECT_MOVE);
+
+        This->drop_hdrop = FALSE;
+        if (!effect) return E_FAIL;
+        if (effect != DROPEFFECT_MOVE) effect = DROPEFFECT_COPY;
+        InitFormatEtc(format, CF_HDROP, TYMED_HGLOBAL);
+        if (FAILED(hr = IDataObject_GetData(pDataObject, &format, &medium))) return hr;
+        hr = drop_files(This, medium.hGlobal, effect);
+        ReleaseStgMedium(&medium);
+        *pdwEffect = SUCCEEDED(hr) ? effect : DROPEFFECT_NONE;
+        return hr;
+    }
 
     InitFormatEtc(format, cfShellIDList, TYMED_HGLOBAL);
     hr = IDataObject_GetData(pDataObject, &format, &medium);
