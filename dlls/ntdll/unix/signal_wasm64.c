@@ -1288,7 +1288,7 @@ NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_p
     struct callback_return ret = { 0 };
     int ctx = cur_ctx();
     ULONG64 saved_rsp = REG( R_RSP ), saved_pc = GEX_C64( GEX_CTX_PC );
-    UINT saved_cs = GEX_C32( GEX_CTX_CS );
+    UINT saved_cs = GEX_C32( GEX_CTX_CS ), i;
     void *saved_list = data->teb->Tib.ExceptionList;
 
     if ((char *)get_kernel_stack( data ) + min_kernel_stack > (char *)&frame) return STATUS_STACK_OVERFLOW;
@@ -1323,6 +1323,14 @@ NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_p
     REG( R_RSP ) = saved_rsp;
     GEX_C64( GEX_CTX_PC ) = saved_pc;
     GEX_C32( GEX_CTX_CS ) = saved_cs;
+    /* xmm6-15 and the MXCSR are the callee's to keep, and a callback that
+     * ends by an unwind, or breaks the convention, leaves its own: the
+     * caller's come back from the frame (frame_xsave above), as x86-64's
+     * system call return restores these and no more of the x87 and SSE
+     * state when nothing asked for the whole. */
+    for (i = 6; i < 16; i++)
+        memcpy( GEX_CTXP( ctx ) + GEX_CTX_VN(i), &frame->xsave.XmmRegisters[i], 16 );
+    GEX_C32( GEX_CTX_MXCSR ) = frame->xsave.MxCsr;
     if (!ret.done) return STATUS_INTERNAL_ERROR;
     *ret_ptr = ret.ret_ptr;
     *ret_len = ret.ret_len;
