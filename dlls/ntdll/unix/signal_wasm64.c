@@ -84,9 +84,6 @@ static const WORD cs32_sel = 0x23, cs64_sel = 0x33, ds64_sel = 0x2b, fs32_sel = 
 
 /* The thread's code segment in gex's context: 0 is the process's default
  * (64-bit here), 0x23 (or i386's 0x1b) a WoW64 thread in 32-bit code. */
-#ifndef GEX_CTX_CS
-#define GEX_CTX_CS 376u
-#endif
 static inline WORD ctx_cs( int ctx )
 {
     UINT cs = GEX_C32( GEX_CTX_CS );

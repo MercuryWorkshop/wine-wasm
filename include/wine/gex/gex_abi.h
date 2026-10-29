@@ -21,7 +21,7 @@
 #define GEX_CACHE_OP_NEST_EXIT_SAMPLE 13
 #define GEX_CACHE_OP_LOW_ACCESS 11
 #define GEX_GUEST_FLOOR 0x300000u
-#define GEX_W3_KUSER 0x4ff0000u
+#define GEX_WINE32_KUSER 0x4ff0000u
 #define GEX_SPLIT_LOCK 0xfff80u
 #define GEX_PATCHED_PAGES 0xef000u
 #define GEX_NEST_EXITS 0xfff00u
@@ -57,6 +57,7 @@ __asm__(".section .custom_section.gex.abi,\"\",@\n.int32 2\n.section .text,\"\",
 #define GEX_CTX_TID 336u
 #define GEX_CTX_LAST_TARGET 352u
 #define GEX_CTX_LAST_SOURCE 368u
+#define GEX_CTX_CS 376u
 #define GEX_CTX_LAST_SYSCALL 360u
 #define GEX_CTX_V 384u
 #define GEX_CTX_X87 896u
@@ -110,6 +111,7 @@ __attribute__((import_module("gex"), import_name("safepoint"))) void gex_safepoi
 __attribute__((import_module("gex"), import_name("icall_note"))) void gex_icall_note(int ctx, int64_t ret, int64_t target);
 __attribute__((import_module("gex"), import_name("lookup"))) int32_t gex_lookup(int ctx, int64_t addr);
 __attribute__((import_module("gex"), import_name("x87"))) int64_t gex_x87(int ctx, int32_t op, int64_t a_sig, int32_t a_se, int64_t b_sig, int32_t b_se, int32_t cw);
+__attribute__((import_module("gex"), import_name("mx"))) int64_t gex_mx(int ctx, int32_t code, int64_t a, int64_t b, int32_t mx);
 /* Tail-called with ctx.LAST_TARGET holding the target; the splice replaces
    it with tier-1's dispatch path. */
 __attribute__((import_module("gexc"), import_name("dispatch"))) void gexc_dispatch(int ctx);
@@ -198,7 +200,7 @@ GEX_INLINE uint64_t gex_fma64(int ctx, uint64_t ab, uint64_t bb_, uint64_t cb, u
     return (uint64_t)gex_fma(ctx, (int64_t)ab, (int64_t)bb_, (int64_t)cb, (int32_t)dbl);
 }
 
-/* The function table (docs/merge-plan.md §9.8.1). A unit is linked
+/* The function table. A unit is linked
    position-independent, so its function pointers are indices into the
    process's table, and a call through one is `call_indirect` on it. The
    index for a guest address comes from the probe cache: the entry's low
@@ -224,6 +226,17 @@ GEX_INLINE uint32_t gex_ftab_idx(uint64_t t) {
    load must not be hoisted out of a loop that neither stores nor calls (a
    spin-wait on a flag another thread sets). A compiler-only fence: no code. */
 #define GEX_BACKEDGE() __atomic_signal_fence(__ATOMIC_SEQ_CST)
+
+/* x86 orders every load after the loads before it and every store after
+   the accesses before it (TSO), and other threads' code relies on it
+   (seqlocks, published pointers). The guest's plain scalar loads and stores
+   are therefore volatile: the C compiler keeps them in program order and
+   neither merges, caches nor drops one. Bulk and vector accesses, which
+   are not volatile, sit between two compiler-only fences instead: no code,
+   and no other guest access moves across them. On an x86 host the wasm
+   engine keeps memory accesses in that order. */
+#define GEX_ORDER() __atomic_signal_fence(__ATOMIC_SEQ_CST)
+#define GEX_VLOAD(e) __extension__({ GEX_ORDER(); v128_t gex_vl_ = (e); GEX_ORDER(); gex_vl_; })
 
 /* Old value of a compare-and-swap, at each width. */
 #define GEX_CAS(T, p, e, r) __sync_val_compare_and_swap((T *)(p), (e), (r))
@@ -587,5 +600,47 @@ GEX_INLINE uint32_t gex_x87_compare(int ctx, uint32_t quiet, uint64_t asig, uint
         return lt ? 1u << 8 : eq ? 1u << 14 : 0;
     }
     return (uint32_t)gex_x87_slow(ctx, 0x300 | (int32_t)quiet, asig, ase, bsig, bse, 0x37f);
+}
+/* The function tier's slow path of Expr::Mx (an SSE operation under a
+ * MXCSR rounding control other than to nearest): the gex.mx import, which
+ * computes it exactly (gex_f80::sse::op), as tier-1's `emit_mx` calls it --
+ * once for a scalar, once per lane, lanes past `n` zero.
+ *
+ * Out of line (GEX_MX_SLOW), so an operation's slow path is one call in
+ * the C, however many lanes. The emitter tests the rounding control once
+ * for a run of operations and computes the run either way: as the
+ * operations' own C or as these calls.
+ *
+ * `f`, a vector operation's shape: bits 0-3 the lanes `n`, bit 4 an 8-byte
+ * operand lane, bit 5 an 8-byte result lane.
+ *
+ * Included from gex_abi.h, after the imports. */
+
+#define GEX_MX_SLOW static __attribute__((noinline, unused))
+
+GEX_MX_SLOW uint64_t gex_mx_s(int ctx, int32_t code, uint64_t a, uint64_t b, uint32_t mx) {
+    return (uint64_t)gex_mx(ctx, code, (int64_t)a, (int64_t)b, (int32_t)mx);
+}
+
+/* Lane `k` (a constant) of `v`, 8 bytes wide when `w8`, as the import's operand. */
+#define GEX_MX_IN(v, k, w8) \
+    (!(w8) ? (uint64_t)(uint32_t)wasm_i32x4_extract_lane(v, k) : (uint64_t)wasm_i64x2_extract_lane(v, (k) & 1))
+
+/* An absent `b` is all zero. */
+GEX_MX_SLOW v128_t gex_mx_v(int ctx, int32_t code, v128_t a, v128_t b, uint32_t f, uint32_t mx) {
+    int in8 = (f & 16u) != 0, out8 = (f & 32u) != 0;
+    uint32_t n = f & 15u;
+    v128_t r = wasm_i64x2_const(0, 0);
+#define GEX_MX_LANE(k)                                                                                    \
+    if ((k) < n) {                                                                                        \
+        uint64_t x = (uint64_t)gex_mx(ctx, code, (int64_t)GEX_MX_IN(a, k, in8), (int64_t)GEX_MX_IN(b, k, in8), (int32_t)mx); \
+        r = !out8 ? wasm_i32x4_replace_lane(r, k, (int32_t)x) : wasm_i64x2_replace_lane(r, (k) & 1, (int64_t)x); \
+    }
+    GEX_MX_LANE(0)
+    GEX_MX_LANE(1)
+    GEX_MX_LANE(2)
+    GEX_MX_LANE(3)
+#undef GEX_MX_LANE
+    return r;
 }
 #endif
