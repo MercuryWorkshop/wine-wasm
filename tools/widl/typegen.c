@@ -5229,6 +5229,49 @@ error:
     error("Invalid endpoint syntax '%s'\n", endpoint->str);
 }
 
+/* An argument of NdrClientCall2 on wasm64 (Wine as native code under gex):
+ * the callee reads its variadic buffer as x86-64's argument stack, where
+ * every argument has an 8-byte slot and a struct that is not 1, 2, 4 or 8
+ * bytes is passed by reference, so each argument is written as one. */
+static void write_wasm64_slot_arg( FILE *file, const var_t *arg )
+{
+    const type_t *type = arg->declspec.type;
+    unsigned int size;
+
+    switch (type_get_type( type ))
+    {
+    case TYPE_BASIC:
+        switch (type_basic_get_type( type ))
+        {
+        case TYPE_BASIC_FLOAT:   /* promoted to double */
+        case TYPE_BASIC_DOUBLE:
+            fprintf( file, "%s", arg->name );
+            return;
+        default:
+            fprintf( file, "(LONG_PTR)%s", arg->name );
+            return;
+        }
+    case TYPE_ENUM:
+        fprintf( file, "(LONG_PTR)%s", arg->name );
+        return;
+    case TYPE_STRUCT:
+    case TYPE_ENCAPSULATED_UNION:
+    case TYPE_UNION:
+        size = type_memsize( type );
+        switch (size)
+        {
+        case 1: fprintf( file, "(ULONG_PTR)*(const unsigned char *)&%s", arg->name ); return;
+        case 2: fprintf( file, "(ULONG_PTR)*(const unsigned short *)&%s", arg->name ); return;
+        case 4: fprintf( file, "(ULONG_PTR)*(const unsigned int *)&%s", arg->name ); return;
+        case 8: fprintf( file, "*(const ULONG_PTR *)&%s", arg->name ); return;
+        default: fprintf( file, "&%s", arg->name ); return;
+        }
+    default:
+        fprintf( file, "%s", arg->name );
+        return;
+    }
+}
+
 void write_client_call_routine( FILE *file, const type_t *iface, const var_t *func,
                                 const char *prefix, unsigned int proc_offset )
 {
@@ -5265,7 +5308,14 @@ void write_client_call_routine( FILE *file, const type_t *iface, const var_t *fu
         if (is_object( iface )) fprintf( file, ",\n%*sThis", len, "" );
         if (args)
             LIST_FOR_EACH_ENTRY( arg, args, const var_t, entry )
-                fprintf( file, ",\n%*s%s", len, "", arg->name );
+            {
+                if (target.cpu == CPU_WASM64)
+                {
+                    fprintf( file, ",\n%*s", len, "" );
+                    write_wasm64_slot_arg( file, arg );
+                }
+                else fprintf( file, ",\n%*s%s", len, "", arg->name );
+            }
     }
     else
     {
