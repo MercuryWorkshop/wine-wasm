@@ -26,6 +26,7 @@
 #define COBJMACROS
 
 #include <stdarg.h>
+#include <string.h>
 
 #include "windef.h"
 #include "wine/asm.h"
@@ -183,5 +184,26 @@ __ASM_GLOBAL_FUNC( call_float_method,
                    "b " __ASM_NAME("call_method") )
 __ASM_GLOBAL_FUNC( call_double_method,
                    "b " __ASM_NAME("call_method") )
+
+#elif defined __wasm64__
+
+/* Native code under gex (64-bit Wine as wasm): the method may be x86-64 code or native
+ * code, called with Win64's argument slots either way (a native method's
+ * guest address is its entry thunk). */
+
+#include "wine/gex/runtime.h"
+
+DWORD_PTR CDECL call_method( void *func, int nb_args, const DWORD_PTR *args )
+{
+    return __gexw_guest_call64( (ULONG_PTR)func, (const unsigned long long *)args, nb_args, 0 );
+}
+
+double CDECL call_double_method( void *func, int nb_args, const DWORD_PTR *args )
+{
+    unsigned long long r = __gexw_guest_call64( (ULONG_PTR)func, (const unsigned long long *)args, nb_args, 1 );
+    double d;
+    memcpy( &d, &r, sizeof(d) );
+    return d;
+}
 
 #endif
