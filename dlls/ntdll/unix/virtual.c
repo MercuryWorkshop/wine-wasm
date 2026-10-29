@@ -4844,6 +4844,13 @@ NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR limit_low, UL
     if (size < 1024 * 1024) size = 1024 * 1024;  /* Xlib needs a large stack */
     size = ROUND_SIZE( 0, size, granularity_mask );
 
+#ifdef W64_CODE_SPLIT
+    /* a WoW64 thread's 64-bit stack asks for 4 GiB and up, out of its
+     * 32-bit code's reach; the whole space is below that here, so it goes
+     * anywhere, as the thread data does */
+    if (limit_low >= (ULONG_PTR)host_addr_space_limit) limit_low = 0;
+#endif
+
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
 
     status = map_view( &view, NULL, size, 0, VPROT_READ | VPROT_WRITE | VPROT_COMMITTED,
