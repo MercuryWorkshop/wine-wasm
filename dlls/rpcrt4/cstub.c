@@ -293,7 +293,17 @@ HRESULT WINAPI CStdStubBuffer_Invoke(LPRPCSTUBBUFFER iface,
   __TRY
   {
     if (header->pDispatchTable)
-      header->pDispatchTable[pMsg->iMethod](iface, pChannel, (PRPC_MESSAGE)pMsg, &dwPhase);
+    {
+      PRPC_STUB_FUNCTION func = header->pDispatchTable[pMsg->iMethod];
+#ifdef __wasm__
+      /* the tables hold NdrStubCall2, which returns a LONG, cast to this
+       * void type: a native call must name the function's own type */
+      if (func == (PRPC_STUB_FUNCTION)NdrStubCall2)
+        NdrStubCall2(iface, pChannel, (PRPC_MESSAGE)pMsg, &dwPhase);
+      else
+#endif
+      func(iface, pChannel, (PRPC_MESSAGE)pMsg, &dwPhase);
+    }
     else /* pure interpreted */
       NdrStubCall2(iface, pChannel, (PRPC_MESSAGE)pMsg, &dwPhase);
   }
