@@ -37,6 +37,7 @@
 #include "windef.h"
 #include "winbase.h"
 #include "winternl.h"
+#include "winuser.h"
 #include "crt_init.h"
 
 #ifdef __wasm__
@@ -46,6 +47,35 @@
 int __cdecl main3(int argc, char **argv, char **env) __asm__("main") __attribute__((weak));
 int __cdecl __main_argc_argv(int argc, char **argv) __attribute__((weak));
 int __cdecl __original_main(void) __attribute__((weak));
+/* a weak reference pulls no archive member, so crt_winmain's main never
+ * comes in for a WinMain program: call WinMain here (crt_winmain.c) */
+int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) __attribute__((weak));
+
+static int call_winmain(void)
+{
+    STARTUPINFOA info;
+    char *cmdline = GetCommandLineA();
+    int bcount = 0;
+    BOOL in_quotes = FALSE;
+
+    while (*cmdline)
+    {
+        if ((*cmdline == '\t' || *cmdline == ' ') && !in_quotes) break;
+        else if (*cmdline == '\\') bcount++;
+        else if (*cmdline == '\"')
+        {
+            if (!(bcount & 1)) in_quotes = !in_quotes;
+            bcount = 0;
+        }
+        else bcount = 0;
+        cmdline++;
+    }
+    while (*cmdline == '\t' || *cmdline == ' ') cmdline++;
+
+    GetStartupInfoA( &info );
+    if (!(info.dwFlags & STARTF_USESHOWWINDOW)) info.wShowWindow = SW_SHOWNORMAL;
+    return WinMain( GetModuleHandleA(0), 0, cmdline, info.wShowWindow );
+}
 #else
 int __cdecl main(int argc, char **argv, char **env);
 #endif
@@ -77,6 +107,7 @@ int __cdecl mainCRTStartup(void)
 #ifdef __wasm__
     if (__main_argc_argv) ret = __main_argc_argv(argc, argv);
     else if (__original_main) ret = __original_main();
+    else if (WinMain) ret = call_winmain();
     else ret = main3(argc, argv, env);
 #else
     ret = main(argc, argv, env);
