@@ -147,6 +147,12 @@ const char *output_adapter64( const ORDDEF *odp, const char *wasm_sig )
     unsigned int j, k = 0, nfixed, n = count++;
     int sret_reg = 0, sret_mem = 0, fmt = -1, wide = 0, va_list_param = -1;
 
+    /* longjmp and the setjmps are compiler builtins whose prototype a
+     * declaration here may not change (ntoskrnl exports a longjmp it does
+     * not define: clang's backend failed on the guessed one) */
+    if (!str && (!strcmp( link, "longjmp" ) || !strcmp( link, "setjmp" ) ||
+                 !strcmp( link, "_setjmp" ) || !strcmp( link, "_setjmpex" )))
+        return NULL;
     if (!parse_sig64( str ? str : wasm_sig, &s )) return NULL;
     if (s.ret.k == 'X') return NULL;
     sret_reg = s.ret.k == 's' && small_struct( s.ret.size );
@@ -204,7 +210,8 @@ const char *output_adapter64( const ORDDEF *odp, const char *wasm_sig )
     for (j = 0; j < nfixed; j++)
     {
         if (j) output( ", " );
-        if ((int)j == va_list_param) output( "buf" );
+        /* (as the declaration has it: a forward's parameters are words) */
+        if ((int)j == va_list_param) output( "(%s)(unsigned long long)buf", c_type64( &s.params[j] ));
         else output_arg64( &s.params[j], k + j );
     }
     if (s.varargs) output( "%sbuf", nfixed ? ", " : "" );
