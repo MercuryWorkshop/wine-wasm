@@ -6423,7 +6423,7 @@ static HRESULT WINAPI ITypeInfo_fnGetIDsOfNames( ITypeInfo2 *iface,
 }
 
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
 
 extern LONGLONG call_method( void *func, int nb_args, const DWORD *args, int *stack_offset );
 extern double call_double_method( void *func, int nb_args, const DWORD *args, int *stack_offset );

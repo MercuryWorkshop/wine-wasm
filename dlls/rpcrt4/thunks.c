@@ -101,7 +101,7 @@
     T(992) T(993) T(994) T(995) T(996) T(997) T(998) T(999) T(1000) T(1001) T(1002) T(1003) T(1004) T(1005) T(1006) T(1007) \
     T(1008) T(1009) T(1010) T(1011) T(1012) T(1013) T(1014) T(1015) T(1016) T(1017) T(1018) T(1019) T(1020) T(1021) T(1022) T(1023)
 
-#ifndef __wasm64__
+#ifndef __wasm__
 
 #ifdef __i386__
 
@@ -294,7 +294,7 @@ __ASM_GLOBAL_FUNC( vtbl_thunks, ALL_THUNK_ENTRIES )
 
 #undef T
 
-#endif  /* __wasm64__ */
+#endif  /* __wasm__ */
 
 static HRESULT WINAPI delegating_QueryInterface(IUnknown *pUnk, REFIID iid, void **ppv)
 {
@@ -312,7 +312,7 @@ static ULONG WINAPI delegating_Release(IUnknown *pUnk)
     return 1;
 }
 
-#ifndef __wasm64__
+#ifndef __wasm__
 
 #define T(num) extern void NdrProxyForwardingFunction##num(void);
 ALL_THUNK_ENTRIES
@@ -328,7 +328,7 @@ const struct delegating_vtbl delegating_vtbl =
     }
 };
 
-#endif  /* __wasm64__ */
+#endif  /* __wasm__ */
 
 
 #if defined(__aarch64__) || defined(__arm__)
@@ -614,6 +614,114 @@ LONG_PTR __cdecl call_server_func( SERVER_ROUTINE func, unsigned char *args, uns
                                    const NDR_PROC_PARTIAL_OIF_HEADER *header )
 {
     return __gexw_guest_call64( (ULONG_PTR)func, (const unsigned long long *)args, stack_size / 8, 0 );
+}
+
+#elif defined __wasm32__
+
+/* Native code under gex (Wine as wasm32, serving i386 programs): the
+ * wasm64 scheme with i386 thunks. They only forward: the stubless ones into
+ * the native client call (its entry thunk, which pops its arguments as
+ * stdcall), which says how many bytes of arguments to pop as the method's
+ * stdcall return, and the forwarding ones to the server object's method. */
+
+#include <string.h>
+#include "winternl.h"
+#include "wine/gex/runtime.h"
+
+#define THUNK_SIZE 16
+#define FORWARD_SIZE 24
+
+extern LONG_PTR WINAPI ndr_stubless_client_call( unsigned int index, void **args, void **fpu_regs );
+
+const unsigned char *stubless_thunks_code;  /* ObjectStublessClient3 */
+struct delegating_vtbl delegating_vtbl =
+{
+    { delegating_QueryInterface, delegating_AddRef, delegating_Release },
+};
+
+/* The method's arguments at `args` (This first), and the bytes of them its
+ * caller pushed, as the format says (i386's call_stubless_func reads the
+ * same field). */
+static LONG_PTR WINAPI stubless_client_call( unsigned int index, void **args, unsigned int *size )
+{
+    void **this = args[0];
+    const void **vtbl = *this;
+    const MIDL_STUBLESS_PROXY_INFO *info = vtbl[-2];
+    const unsigned char *format = info->ProcFormatString + info->FormatStringOffset[index];
+    const NDR_PROC_HEADER *proc = (const NDR_PROC_HEADER *)format;
+
+    *size = (proc->Oi_flags & Oi_HAS_RPCFLAGS) ? ((const NDR_PROC_HEADER_RPC *)format)->stack_size
+                                                : proc->stack_size;
+    return ndr_stubless_client_call( index, args, NULL );
+}
+
+static const unsigned char call_stubless_code[] =
+{
+    0x8d, 0x54, 0x24, 0x04,             /* leal 4(%esp),%edx (args) */
+    0x6a, 0x00,                         /* pushl $0 (size) */
+    0x89, 0xe1,                         /* movl %esp,%ecx */
+    0x51,                               /* pushl %ecx */
+    0x52,                               /* pushl %edx */
+    0x50,                               /* pushl %eax (index) */
+    0xff, 0x15, 0, 0, 0, 0,             /* call *target */
+    0x5a,                               /* popl %edx (size) */
+    0x8b, 0x0c, 0x24,                   /* movl (%esp),%ecx (return address) */
+    0x01, 0xd4,                         /* addl %edx,%esp */
+    0xff, 0xe1,                         /* jmp *%ecx */
+    /* target: the address of stubless_client_call, 4 bytes */
+};
+
+void init_thunks(void)
+{
+    SIZE_T common = (sizeof(call_stubless_code) + 4 + THUNK_SIZE - 1) & ~(THUNK_SIZE - 1);
+    SIZE_T count = NB_THUNK_ENTRIES - 3, size = common + count * (THUNK_SIZE + FORWARD_SIZE);
+    unsigned char *code, *p;
+    DWORD target = (ULONG_PTR)stubless_client_call, slot, old, i;
+
+    MEM_ADDRESS_REQUIREMENTS req = { .LowestStartingAddress = (void *)0x400000,
+                                     .HighestEndingAddress = (void *)0x7ffeffff };
+    MEM_EXTENDED_PARAMETER param = { .Type = MemExtendedParameterAddressRequirements, .Pointer = &req };
+
+    /* in gex's code space, above its floor for function-table indices */
+    code = NULL;
+    if (NtAllocateVirtualMemoryEx( GetCurrentProcess(), (void **)&code, &size, MEM_COMMIT | MEM_RESERVE,
+                                   PAGE_READWRITE, &param, 1 )) return;
+    memset( code, 0xcc, size );
+    memcpy( code, call_stubless_code, sizeof(call_stubless_code) );
+    slot = (ULONG_PTR)code + sizeof(call_stubless_code);
+    memcpy( code + 13, &slot, sizeof(slot) );
+    memcpy( code + sizeof(call_stubless_code), &target, sizeof(target) );
+
+    /* ObjectStublessClientN: movl $N,%eax; jmp call_stubless */
+    for (i = 0, p = code + common; i < count; i++, p += THUNK_SIZE)
+    {
+        int rel = code - (p + 10);
+        p[0] = 0xb8;
+        *(DWORD *)(p + 1) = i + 3;
+        p[5] = 0xe9;
+        memcpy( p + 6, &rel, sizeof(rel) );
+    }
+    stubless_thunks_code = code + common;
+
+    /* NdrProxyForwardingFunctionN: movl 4(%esp),%eax; movl 0x10(%eax),%eax;
+     * movl %eax,4(%esp); movl (%eax),%eax; jmp *4*N(%eax) */
+    for (i = 0; i < count; i++, p += FORWARD_SIZE)
+    {
+        static const unsigned char fwd[] = { 0x8b, 0x44, 0x24, 0x04, 0x8b, 0x40, 0x10, 0x89, 0x44, 0x24, 0x04,
+                                             0x8b, 0x00, 0xff, 0xa0 };
+        memcpy( p, fwd, sizeof(fwd) );
+        *(DWORD *)(p + sizeof(fwd)) = 4 * (i + 3);
+        delegating_vtbl.methods[i] = p;
+    }
+    VirtualProtect( code, size, PAGE_EXECUTE_READ, &old );
+}
+
+/* The server routine with its i386 arguments, as guest code: an i386
+ * routine, or a native one through its entry thunk; cdecl or stdcall alike. */
+LONG_PTR __cdecl call_server_func( SERVER_ROUTINE func, unsigned char *args, unsigned int stack_size,
+                                   const NDR_PROC_PARTIAL_OIF_HEADER *header )
+{
+    return (LONG_PTR)__gexw_guest_call( (ULONG_PTR)func, (const unsigned int *)args, stack_size / 4 );
 }
 
 #endif

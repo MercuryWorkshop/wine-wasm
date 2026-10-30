@@ -206,4 +206,27 @@ double CDECL call_double_method( void *func, int nb_args, const DWORD_PTR *args 
     return d;
 }
 
+#elif defined __wasm32__
+
+/* Native code under gex (Wine as wasm32, serving i386 programs): the method
+ * may be i386 code or native code, called with i386's stack arguments
+ * either way (a native method's guest address is its entry thunk), cdecl or
+ * stdcall alike. The guest's stack is put back after the call, so a callee
+ * popping the wrong size is not seen. */
+
+#include "wine/gex/runtime.h"
+
+LONGLONG call_method( void *func, int nb_args, const DWORD *args, int *stack_offset )
+{
+    *stack_offset = 0;
+    return __gexw_guest_call( (ULONG_PTR)func, (const unsigned int *)args, nb_args );
+}
+
+double call_double_method( void *func, int nb_args, const DWORD *args, int *stack_offset )
+{
+    *stack_offset = 0;
+    __gexw_guest_call( (ULONG_PTR)func, (const unsigned int *)args, nb_args );
+    return __gexw_x87_pop();  /* i386 returns floating point in ST0 */
+}
+
 #endif

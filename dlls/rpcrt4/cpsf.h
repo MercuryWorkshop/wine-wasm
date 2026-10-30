@@ -79,7 +79,7 @@ struct delegating_vtbl
     const void *methods[NB_THUNK_ENTRIES - 3];
 };
 
-#ifdef __wasm64__
+#ifdef __wasm__
 extern struct delegating_vtbl delegating_vtbl;
 extern const unsigned char *stubless_thunks_code;
 void init_thunks(void);

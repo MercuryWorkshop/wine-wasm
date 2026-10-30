@@ -488,7 +488,7 @@ void client_do_args( PMIDL_STUB_MESSAGE pStubMsg, PFORMAT_STRING pFormat, enum s
         unsigned char *pArg = pStubMsg->StackTop + params[i].stack_offset;
         PFORMAT_STRING pTypeFormat = (PFORMAT_STRING)&pStubMsg->StubDesc->pFormatTypes[params[i].u.type_offset];
 
-#ifndef __i386__  /* floats are passed as doubles through varargs functions */
+#if !defined(__i386__) && !defined(__wasm32__)  /* floats are passed as doubles through varargs functions */
         float f;
 
         if (params[i].attr.IsBasetype &&
@@ -1053,6 +1053,21 @@ CLIENT_CALL_RETURN WINAPIV NdrClientCall2( PMIDL_STUB_DESC desc, PFORMAT_STRING 
     va_end( args );
     return ret;
 }
+#elif defined(__wasm32__)
+/* As i386's: the variadic argument is a pointer to the arguments, in the
+ * i386 stack layout the format strings describe (widl's wasm32 client stubs
+ * pass one, as its i386 ones do, and an i386 program's call has its
+ * pointer in the guest stack winebuild's adapter hands over). */
+CLIENT_CALL_RETURN WINAPIV NdrClientCall2( PMIDL_STUB_DESC desc, PFORMAT_STRING format, ... )
+{
+    CLIENT_CALL_RETURN ret;
+    va_list args;
+
+    va_start( args, format );
+    ret.Simple = NdrpClientCall2( desc, format, va_arg( args, void ** ), FALSE );
+    va_end( args );
+    return ret;
+}
 #elif defined(__i386__)
 __ASM_GLOBAL_FUNC( NdrClientCall2,
                    "pushl %ebp\n\t"
@@ -1133,6 +1148,8 @@ LONG_PTR WINAPI ndr_stubless_client_call( unsigned int index, void **args, void 
 #if defined(__x86_64__) || defined(__wasm64__)
                 unsigned short fpu_mask = *(unsigned short *)(ext + 1);
                 for (int i = 0; i < 4; i++, fpu_mask >>= 2) if (fpu_mask & 3) args[i] = fpu_regs[i];
+#elif defined(__wasm32__)
+                /* (the i386 stack has every argument: no float registers) */
 #else
                 stack_top = args_regs_to_stack( args, fpu_regs, hdr );
 #endif
@@ -1895,6 +1912,18 @@ CLIENT_CALL_RETURN WINAPIV NdrAsyncClientCall( PMIDL_STUB_DESC desc, PFORMAT_STR
 
     va_start( args, format );
     ret.Simple = ndr_async_client_call( desc, format, (void **)args );
+    va_end( args );
+    return ret;
+}
+#elif defined(__wasm32__)
+/* (NdrClientCall2's arguments) */
+CLIENT_CALL_RETURN WINAPIV NdrAsyncClientCall( PMIDL_STUB_DESC desc, PFORMAT_STRING format, ... )
+{
+    CLIENT_CALL_RETURN ret;
+    va_list args;
+
+    va_start( args, format );
+    ret.Simple = ndr_async_client_call( desc, format, va_arg( args, void ** ) );
     va_end( args );
     return ret;
 }

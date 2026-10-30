@@ -50,7 +50,7 @@ static inline StdProxyImpl *impl_from_proxy_obj( void *iface )
     return CONTAINING_RECORD(iface, StdProxyImpl, PVtbl);
 }
 
-#ifdef __wasm64__
+#ifdef __wasm__
 #define ObjectStublessClient3 stubless_thunks_code
 #define STUBLESS_ENTRY_SIZE 16
 #else
