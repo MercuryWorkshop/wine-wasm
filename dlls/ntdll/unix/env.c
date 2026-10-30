@@ -1618,6 +1618,9 @@ wait:
     timeout.QuadPart = (ULONGLONG)5 * 60 * 1000 * -10000;
     if (NtWaitForMultipleObjects( count, handles, WaitAny, FALSE, &timeout ) == WAIT_TIMEOUT)
         ERR( "boot event wait timed out\n" );
+#ifdef __wasm__
+    virtual_publish_user_shared_data();
+#endif
     while (count) NtClose( handles[--count] );
 }
 

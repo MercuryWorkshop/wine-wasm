@@ -4890,7 +4890,11 @@ static const WCHAR shared_data_nameW[] = {'\\','K','e','r','n','e','l','O','b','
 /* gex door calls (docs/wineserver-kernel.md §6.2): the USD is a page of the
  * server's memory, which no process can map; each copies it at start
  * (usd_copy), and the first boot's fill is written back to it (usd_publish).
- * Both return the bytes copied, or -1 without a door session. */
+ * Both return the bytes copied, or -1 without a door session. usd_copy
+ * returns -2 when it copied a page no process has published a fill to (the
+ * process that filled the session had no door: a program started before the
+ * server published its door): only the server's own fields are good there,
+ * the fill is in the mapping. */
 __attribute__((import_module("gex"), import_name("usd_copy")))
 extern int gex_usd_copy( gex_addr_t dst, unsigned int size );
 __attribute__((import_module("gex"), import_name("usd_publish")))
@@ -4938,6 +4942,65 @@ static void *usd_clock_thread( void *arg )
 }
 #endif
 
+#ifdef __wasm__
+/* the fields the server keeps in its page, over a fill taken elsewhere */
+static void usd_keep_server_fields( KUSER_SHARED_DATA *dst, const KUSER_SHARED_DATA *server )
+{
+    dst->InterruptTime = server->InterruptTime;
+    dst->SystemTime    = server->SystemTime;
+    dst->TickCount     = server->TickCount;
+    dst->TimeZoneBias  = server->TimeZoneBias;
+    dst->TimeZoneId    = server->TimeZoneId;
+}
+
+/* the USD as the mapping holds it (the session's fill, once booted) */
+static BOOL usd_read_mapping( void *dst )
+{
+    UNICODE_STRING name_str = RTL_CONSTANT_STRING( shared_data_nameW );
+    OBJECT_ATTRIBUTES attr = { sizeof(attr), 0, &name_str };
+    HANDLE section;
+    int fd, needs_close;
+    BOOL ret = FALSE;
+
+    if (NtOpenSection( &section, SECTION_MAP_READ, &attr )) return FALSE;
+    if (!server_get_unix_fd( section, 0, &fd, &needs_close, NULL, NULL ))
+    {
+        ret = pread( fd, dst, sizeof(KUSER_SHARED_DATA), 0 ) == sizeof(KUSER_SHARED_DATA);
+        if (needs_close) close( fd );
+    }
+    NtClose( section );
+    return ret;
+}
+
+/***********************************************************************
+ *           virtual_publish_user_shared_data
+ *
+ * Once the session is booted: when the server's page still has no fill (the
+ * process that filled the session had no door), publish the mapping's, so
+ * that the server's page and every process after this one have it; and take
+ * it into this process's own page, copied before the fill.
+ */
+void virtual_publish_user_shared_data(void)
+{
+    KUSER_SHARED_DATA *server = malloc( page_size ), *fill = malloc( sizeof(*fill) );
+    KUSER_SHARED_DATA *mine = (KUSER_SHARED_DATA *)user_shared_data;
+
+    if (server && fill && gex_usd_copy( GEX_ADDR(server), page_size ) == -2 && usd_read_mapping( fill ))
+    {
+        KSYSTEM_TIME it = mine->InterruptTime, st = mine->SystemTime, tc = mine->TickCount;
+
+        usd_keep_server_fields( fill, server );
+        gex_usd_publish( GEX_ADDR(fill), sizeof(*fill) );
+        memcpy( mine, fill, sizeof(*fill) );
+        mine->InterruptTime = it;
+        mine->SystemTime = st;
+        mine->TickCount = tc;
+    }
+    free( fill );
+    free( server );
+}
+#endif
+
 /***********************************************************************
  *           virtual_map_user_shared_data
  */
@@ -4976,8 +5039,24 @@ void virtual_map_user_shared_data(void)
         {
             /* the server's own page if there is a door; else what the
              * mapping held (the file, which the server's writes never reach) */
-            if (gex_usd_copy( GEX_ADDR(copy), page_size ) != page_size)
+            int got = gex_usd_copy( GEX_ADDR(copy), page_size );
+
+            if (got != page_size)
+            {
+                KUSER_SHARED_DATA server;
+
+                if (got == -2) memcpy( &server, copy, sizeof(server) );
                 memcpy( copy, (void *)user_shared_data, page_size );
+                if (got == -2)
+                {
+                    /* the server's page has no fill: the mapping's, with the
+                     * server's clocks. A process another one created starts
+                     * after the session's fill, which it publishes for the
+                     * server's page and the processes after it. */
+                    usd_keep_server_fields( copy, &server );
+                    if (startup_info_size) gex_usd_publish( GEX_ADDR(copy), sizeof(server) );
+                }
+            }
             if (mmap( user_shared_data, page_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0 ) == user_shared_data)
             {
                 memcpy( (void *)user_shared_data, copy, page_size );
