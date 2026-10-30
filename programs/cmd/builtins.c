@@ -3750,7 +3750,8 @@ BOOL WCMD_print_volume_information(const WCHAR *path)
     else
         WCMD_output(WCMD_LoadMessage(WCMD_VOLUMENOLABEL), path[0]);
 
-    WCMD_output(WCMD_LoadMessage(WCMD_VOLUMESERIALNO), HIWORD(serial), LOWORD(serial));
+    /* FormatMessage takes each insert pointer-sized; a wasm va_list packs ints in 4 bytes */
+    WCMD_output(WCMD_LoadMessage(WCMD_VOLUMESERIALNO), (DWORD_PTR)HIWORD(serial), (DWORD_PTR)LOWORD(serial));
     return TRUE;
 }
 

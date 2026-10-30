@@ -323,7 +323,7 @@ static const printenv_t * const all_printenv[] = {&env_x86, &env_x64, &env_ia64,
 
 #if defined(__i386__) || defined(__wasm32__)  /* wasm32 serves i386 programs */
 #define env_arch env_x86
-#elif defined __x86_64__
+#elif defined(__x86_64__) || defined(__wasm64__)  /* wasm64 serves x86-64 programs */
 #define env_arch env_x64
 #elif defined __arm__
 #define env_arch env_arm

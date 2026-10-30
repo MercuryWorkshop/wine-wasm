@@ -2574,6 +2574,10 @@ ALL_SYSCALL_STUBS
 
 /* (the stubs are in syscall_wasm32.c, which sees no C declarations) */
 
+#elif defined(__wasm64__)
+
+/* (the stubs are in syscall_stubs_wasm64.c, generated with each one's type) */
+
 #else /*  __arm64ec__ */
 
 #ifdef _WIN64

@@ -844,6 +844,21 @@ uint32_t __gexw_syscall64( uint32_t id, const uint64_t *w, uint32_t n )
     return ret;
 }
 
+/* As __gexw_syscall64, with the whole of RAX: win32u's calls that return
+ * a handle or a pointer. */
+uint64_t __gexw_syscall64q( uint32_t id, const uint64_t *w, uint32_t n )
+{
+    int ctx = cur_ctx();
+    uint64_t sp0 = REG( X_RSP ), pc0 = GEX_C64( GEX_CTX_PC ), sp, ret;
+
+    sp = syscall_enter( ctx, id, w, n );
+    after_call( ctx, sp + 8 );
+    ret = REG( X_RAX );
+    REG( X_RSP ) = sp0;
+    GEX_C64( GEX_CTX_PC ) = pc0;
+    return ret;
+}
+
 /* A system call that loads a new guest state (NtContinue, NtSetContextThread
  * on the thread itself): when it does, every native frame up to the
  * innermost entry from the guest goes, and the guest carries on from it. */
