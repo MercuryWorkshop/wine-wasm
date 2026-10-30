@@ -65,6 +65,7 @@
 #include "wine/exception.h"
 #include "wine/debug.h"
 #include "wine/gex/gexrt64.h"
+#include "wine/gex/runtime.h"
 #include "ntsyscalls.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
@@ -495,6 +496,10 @@ static int ki_user_exception_dispatcher( int ctx, int depth, unsigned int need, 
     CONTEXT *context = (CONTEXT *)(ULONG_PTR)rsp;
 
     gexw_set_entry_context( rsp );
+    /* as x86-64's: a WoW64 thread's fault in 32-bit code made a 64-bit one
+     * first (wow64cpu's BTCpuResetToConsistentState) */
+    if (pWow64PrepareForException)
+        pWow64PrepareForException( (EXCEPTION_RECORD *)(ULONG_PTR)(rsp + 0x4f0), context );
     prune_callouts( context->Rsp );
     dispatch_exception( (EXCEPTION_RECORD *)(ULONG_PTR)(rsp + 0x4f0), context );
     return 0;  /* dispatch_exception does not return */
@@ -526,7 +531,13 @@ static int ki_user_apc_dispatcher( int ctx, int depth, unsigned int need, unsign
     PNTAPCFUNC func = (PNTAPCFUNC)(ULONG_PTR)context->P4Home;
 
     gexw_set_entry_context( rsp );
-    func( context->P1Home, context->P2Home, context->P3Home );
+    /* x86-64 code also gets the context, as x86-64's dispatcher leaves it in
+     * R9 (wow64's Wow64ApcRoutine takes it) */
+    if (!__gexw_is_native( func ))
+        ((void (WINAPI *)( ULONG_PTR, ULONG_PTR, ULONG_PTR, CONTEXT * ))func)( context->P1Home, context->P2Home,
+                                                                             context->P3Home, context );
+    else
+        func( context->P1Home, context->P2Home, context->P3Home );
     NtContinueEx( context, (KCONTINUE_ARGUMENT *)(ULONG_PTR)(rsp + 0x4f0) );
     return 0;
 }

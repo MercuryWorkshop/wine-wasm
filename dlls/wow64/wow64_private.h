@@ -110,9 +110,17 @@ static inline SIZE_T *size_32to64( SIZE_T *size, ULONG *size32 )
     return size;
 }
 
+#ifdef __wasm64__
+extern void *wow64_apc_routine;
+#endif
+
 static inline void *apc_32to64( ULONG func )
 {
+#ifdef __wasm64__
+    return func ? wow64_apc_routine : NULL;
+#else
     return func ? Wow64ApcRoutine : NULL;
+#endif
 }
 
 static inline void *apc_param_32to64( ULONG func, ULONG context )

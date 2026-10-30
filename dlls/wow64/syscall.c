@@ -1030,6 +1030,15 @@ static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **contex
 
     LdrGetDllHandle( NULL, 0, &str, &module );
     GET_PTR( LdrSystemDllInitBlock );
+#ifdef __wasm64__
+    {
+        UNICODE_STRING self = RTL_CONSTANT_STRING( L"wow64.dll" );
+        HMODULE wow64;
+
+        LdrGetDllHandle( NULL, 0, &self, &wow64 );
+        wow64_apc_routine = RtlFindExportedRoutineByName( wow64, "Wow64ApcRoutine" );
+    }
+#endif
 
     module = load_64bit_module( get_cpu_dll_name() );
     GET_PTR( BTCpuGetBopCode );
@@ -1360,6 +1369,13 @@ void * WINAPI Wow64AllocateTemp( SIZE_T size )
     return mem->data;
 }
 
+
+#ifdef __wasm64__
+/* the APC function wow64 queues for 32-bit APCs: its export's address,
+ * which ntdll's KiUserApcDispatcher calls as x86-64 code, the context its
+ * fourth argument (a native function's own address is called with three) */
+void *wow64_apc_routine = NULL;
+#endif
 
 /**********************************************************************
  *           Wow64ApcRoutine  (wow64.@)

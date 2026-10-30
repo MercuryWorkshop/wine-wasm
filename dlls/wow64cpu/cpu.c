@@ -436,6 +436,9 @@ void WINAPI BTCpuSimulate(void)
     for (;;)
     {
         cpu_area()->Flags &= ~WOW64_CPURESERVED_FLAG_RESET_STATE;
+        /* native 32-bit code's calls into 64-bit code run below these frames
+         * (and run32's) */
+        *(ULONG64 *)((char *)NtCurrentTeb() + GEXW_TEB_WOW64_SP) = (gexw_get_sp() - 0x1000) & ~(ULONG64)15;
         call_32to64( ctx, stops[__gexw_run32( ctx, stops )] );
     }
 }
@@ -449,8 +452,12 @@ void WINAPI BTCpuSimulate(void)
  * thread is to go on elsewhere (an APC, NtContinue): the gex context is then
  * the area's, to be run until it is back at the marker.
  */
-ULONG64 WINAPI __wine_gex_syscall32( ULONG id, ULONG args, ULONG esp )
+struct syscall32_params { ULONG id, args, esp; };
+
+static ULONG64 syscall32( void *arg )
 {
+    const struct syscall32_params *p = arg;
+    ULONG id = p->id, args = p->args, esp = p->esp;
     I386_CONTEXT *ctx = cpu_context();
     NTSTATUS status;
     BOOL moved;
@@ -462,10 +469,32 @@ ULONG64 WINAPI __wine_gex_syscall32( ULONG id, ULONG args, ULONG esp )
     ctx->SegSs = ss32_sel;
     cpu_area()->Flags &= ~WOW64_CPURESERVED_FLAG_RESET_STATE;
     status = Wow64SystemServiceEx( id, ULongToPtr( args ));
+    /* as upstream's thunk: the status is the context's EAX, also when the
+     * context was reset (NtContinue back to this call after an APC) */
+    ctx->Eax = status;
     moved = ctx->Eip != WOW64_RETURN_MARK || ctx->Esp != esp ||
             (cpu_area()->Flags & WOW64_CPURESERVED_FLAG_RESET_STATE);
     if (moved) __gexw_i386_to_ctx( ctx );
     return (ULONG)status | ((ULONG64)moved << 32);
+}
+
+/* the C stack native 64-bit code called from 32-bit code runs on: the
+ * 64-bit stack, below the innermost BTCpuSimulate */
+static ULONG64 on_64bit_stack( ULONG64 (*fn)( void * ), void *arg )
+{
+    ULONG64 sp = *(ULONG64 *)((char *)NtCurrentTeb() + GEXW_TEB_WOW64_SP), ret;
+    unsigned int cs = __gexw_mode64_enter();
+
+    ret = sp ? __gexw_call_on_stack( sp, fn, arg ) : fn( arg );
+    __gexw_mode64_leave( cs );
+    return ret;
+}
+
+ULONG64 WINAPI __wine_gex_syscall32( ULONG id, ULONG args, ULONG esp )
+{
+    struct syscall32_params p = { id, args, esp };
+
+    return on_64bit_stack( syscall32, &p );
 }
 
 /**********************************************************************
@@ -474,8 +503,13 @@ ULONG64 WINAPI __wine_gex_syscall32( ULONG id, ULONG args, ULONG esp )
  * A Unix call of native 32-bit code, its arguments at the 32-bit address
  * ARGS: as unix_call_32to64 makes it (the same wasm type in both modules).
  */
-NTSTATUS WINAPI __wine_gex_unix_call32( ULONG64 handle, ULONG code, ULONG args )
+struct unix_call32_params { ULONG64 handle; ULONG code, args; };
+
+static ULONG64 unix_call32( void *arg )
 {
+    const struct unix_call32_params *p = arg;
+    ULONG64 handle = p->handle;
+    ULONG code = p->code, args = p->args;
     I386_CONTEXT *ctx = cpu_context();
     ULONG eip = ctx->Eip, esp = ctx->Esp;
     NTSTATUS status;
@@ -491,7 +525,14 @@ NTSTATUS WINAPI __wine_gex_unix_call32( ULONG64 handle, ULONG code, ULONG args )
              code, wine_dbgstr_longlong( handle ), eip, ctx->Eip, esp, ctx->Esp );
         __builtin_trap();
     }
-    return status;
+    return (ULONG)status;
+}
+
+NTSTATUS WINAPI __wine_gex_unix_call32( ULONG64 handle, ULONG code, ULONG args )
+{
+    struct unix_call32_params p = { handle, code, args };
+
+    return (NTSTATUS)on_64bit_stack( unix_call32, &p );
 }
 
 /**********************************************************************
@@ -595,7 +636,15 @@ NTSTATUS WINAPI BTCpuResetToConsistentState( EXCEPTION_POINTERS *ptrs )
     wow_context.EFlags &= ~(0x100|0x40000);
     BTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &wow_context );
 
-#ifndef __wasm64__  /* gex raises it from the 64-bit frame that ran the 32-bit code */
+#ifdef __wasm64__
+    /* as if the 32-bit code had returned to gex's return pad, on the 64-bit
+     * stack (R14 while 32-bit code runs): the unwinder goes on from there
+     * to the native frames that ran it (cpu_simulate's __TRY) */
+    context->Rip = GEXW_RETURN_PAD;
+    context->SegCs = cs64_sel;
+    context->Rsp = context->R14;
+    context->SegSs = ds64_sel;
+#else
     /* fixup context to pretend that we jumped to 64-bit mode */
     context->Rip = (ULONG64)syscall_32to64;
     context->SegCs = cs64_sel;
