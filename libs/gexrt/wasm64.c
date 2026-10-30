@@ -625,6 +625,135 @@ void __gexw_far_longjmp( void *buf, int val, uint64_t frame )
     __gexw_throw_unwind();
 }
 
+/* ---- WoW64: 32-bit code run from native wow64cpu ---- */
+
+/* The I386_CONTEXT fields gex's context holds for 32-bit code (winnt.h's
+ * layout; no Windows headers here). */
+#define I386_SEG_FS  0x90
+#define I386_EDI     0x9c
+#define I386_ESI     0xa0
+#define I386_EBX     0xa4
+#define I386_EDX     0xa8
+#define I386_ECX     0xac
+#define I386_EAX     0xb0
+#define I386_EBP     0xb4
+#define I386_EIP     0xb8
+#define I386_SEG_CS  0xbc
+#define I386_EFLAGS  0xc0
+#define I386_ESP     0xc4
+#define I386_D(area, off) (*(volatile uint32_t *)((char *)(area) + (off)))
+
+/* wow64's 32-bit code selector, and the one the process's own code runs
+ * under (gex's ctx::CS reads 0 as that) */
+#define GEXW_CS32 0x23u
+
+static uint32_t eflags_of( int ctx )
+{
+    uint32_t f = 0x202;  /* IF, and bit 1 */
+    if (GEX_C8( GEX_CTX_CF )) f |= 0x001;
+    if (GEX_C8( GEX_CTX_PF )) f |= 0x004;
+    if (GEX_C8( GEX_CTX_AF )) f |= 0x010;
+    if (GEX_C8( GEX_CTX_ZF )) f |= 0x040;
+    if (GEX_C8( GEX_CTX_NF )) f |= 0x080;
+    if (GEX_C8( GEX_CTX_DF )) f |= 0x400;
+    if (GEX_C8( GEX_CTX_VF )) f |= 0x800;
+    return f;
+}
+
+static void set_eflags_of( int ctx, uint32_t f )
+{
+    GEX_C8( GEX_CTX_CF ) = !!(f & 0x001);
+    GEX_C8( GEX_CTX_PF ) = !!(f & 0x004);
+    GEX_C8( GEX_CTX_AF ) = !!(f & 0x010);
+    GEX_C8( GEX_CTX_ZF ) = !!(f & 0x040);
+    GEX_C8( GEX_CTX_NF ) = !!(f & 0x080);
+    GEX_C8( GEX_CTX_DF ) = !!(f & 0x400);
+    GEX_C8( GEX_CTX_VF ) = !!(f & 0x800);
+}
+
+/* The 32-bit registers, EIP and EFLAGS of the context into AREA. The x87
+ * and SSE registers are one register file for both modes (as on x86-64,
+ * where the CPU area holds none of them while 32-bit code runs). */
+void __gexw_ctx_to_i386( void *area )
+{
+    int ctx = cur_ctx();
+
+    I386_D( area, I386_EAX ) = (uint32_t)REG( X_RAX );
+    I386_D( area, I386_ECX ) = (uint32_t)REG( X_RCX );
+    I386_D( area, I386_EDX ) = (uint32_t)REG( X_RDX );
+    I386_D( area, I386_EBX ) = (uint32_t)REG( X_RBX );
+    I386_D( area, I386_ESP ) = (uint32_t)REG( X_RSP );
+    I386_D( area, I386_EBP ) = (uint32_t)REG( X_RBP );
+    I386_D( area, I386_ESI ) = (uint32_t)REG( X_RSI );
+    I386_D( area, I386_EDI ) = (uint32_t)REG( X_RDI );
+    I386_D( area, I386_EIP ) = (uint32_t)GEX_C64( GEX_CTX_PC );
+    I386_D( area, I386_EFLAGS ) = eflags_of( ctx );
+    I386_D( area, I386_SEG_CS ) = GEXW_CS32;
+}
+
+/* AREA's into the context, which then runs in 32-bit code (CS 0x23). FS's
+ * base is the thread's TEB32 already (the Unix side sets it at the
+ * thread's start), and the other selectors are flat. */
+void __gexw_i386_to_ctx( const void *area )
+{
+    int ctx = cur_ctx();
+
+    REG( X_RAX ) = I386_D( area, I386_EAX );
+    REG( X_RCX ) = I386_D( area, I386_ECX );
+    REG( X_RDX ) = I386_D( area, I386_EDX );
+    REG( X_RBX ) = I386_D( area, I386_EBX );
+    REG( X_RSP ) = I386_D( area, I386_ESP );
+    REG( X_RBP ) = I386_D( area, I386_EBP );
+    REG( X_RSI ) = I386_D( area, I386_ESI );
+    REG( X_RDI ) = I386_D( area, I386_EDI );
+    GEX_C64( GEX_CTX_PC ) = I386_D( area, I386_EIP );
+    GEX_C64( GEX_CTX_LAST_TARGET ) = I386_D( area, I386_EIP );
+    set_eflags_of( ctx, I386_D( area, I386_EFLAGS ));
+    GEX_C32( GEX_CTX_CS ) = GEXW_CS32;
+}
+
+/* Run AREA's 32-bit state until it reaches STOPS[0] or STOPS[1] (WoW64's
+ * system call and unix call stops, WOW64_STOP_SYSCALL and WOW64_STOP_UNIX:
+ * the pair gex knows): under a call-out waiting for the first, which gex
+ * ends at either with the stack wherever the 32-bit code has it
+ * (tramp::returns_at). Returns the index of the stop reached. In
+ * the meantime R14 holds the 64-bit stack pointer, where gex looks for the
+ * native frames' stack while 32-bit code runs (and where x86-64's
+ * wow64cpu keeps it). Back in 64-bit code, the registers Win64 has its
+ * callee keep are as they were (32-bit code clears the upper halves of
+ * RBX, RBP, RSI and RDI, and may write XMM6 and XMM7). When the call-out
+ * is abandoned (the guest went on to an outer call-out's state), every
+ * native frame up to the innermost entry goes, as after any call-out. */
+unsigned int __gexw_run32( void *area, const unsigned int stops[2] )
+{
+    int ctx = cur_ctx();
+    uint64_t rsp = REG( X_RSP ), r14 = REG( X_R14 ), pc = GEX_C64( GEX_CTX_PC );
+    uint64_t rbx = REG( X_RBX ), rbp = REG( X_RBP ), rsi = REG( X_RSI ), rdi = REG( X_RDI );
+    uint64_t xmm[4] = { GEX_C64( GEX_CTX_VN( 6 )), GEX_C64( GEX_CTX_VN( 6 ) + 8 ),
+                        GEX_C64( GEX_CTX_VN( 7 )), GEX_C64( GEX_CTX_VN( 7 ) + 8 ) };
+    uint32_t cs = GEX_C32( GEX_CTX_CS ), stop;
+
+    __gexw_i386_to_ctx( area );
+    REG( X_R14 ) = rsp;
+    if (!gex_call_out( ctx, (int64_t)I386_D( area, I386_EIP ), (int64_t)stops[0], 0 ))
+        __gexw_throw_unwind();
+    stop = GEX_C64( GEX_CTX_PC ) == stops[1];
+    __gexw_ctx_to_i386( area );
+    GEX_C32( GEX_CTX_CS ) = cs;
+    REG( X_RSP ) = rsp;
+    REG( X_R14 ) = r14;
+    REG( X_RBX ) = rbx;
+    REG( X_RBP ) = rbp;
+    REG( X_RSI ) = rsi;
+    REG( X_RDI ) = rdi;
+    GEX_C64( GEX_CTX_VN( 6 )) = xmm[0];
+    GEX_C64( GEX_CTX_VN( 6 ) + 8 ) = xmm[1];
+    GEX_C64( GEX_CTX_VN( 7 )) = xmm[2];
+    GEX_C64( GEX_CTX_VN( 7 ) + 8 ) = xmm[3];
+    GEX_C64( GEX_CTX_PC ) = pc;
+    return stop;
+}
+
 /* ---- NT system calls from native code ---- */
 
 /* The program's state set up as Wine's x86-64 stubs leave it at the call
