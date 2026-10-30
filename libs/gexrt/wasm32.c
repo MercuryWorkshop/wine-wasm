@@ -577,6 +577,58 @@ static uint32_t syscall_enter( int ctx, uint32_t id, const uint32_t *words, uint
     return sp;
 }
 
+/* ntdll's, in a WoW64 process's i386 ntdll: wow64 sets both to its CPU
+ * DLL's thunk into 64-bit code (BTCpuGetBopCode), and Wow64Transition only
+ * there. (Named as pelink names a DLL's exports; weak: a module without
+ * ntdll has neither.) */
+extern void *Wow64Transition __asm__("ntdll.dll!Wow64Transition") __attribute__((weak));
+extern void *__wine_syscall_dispatcher __asm__("ntdll.dll!__wine_syscall_dispatcher") __attribute__((weak));
+
+/* A WoW64 process's system call: a guest call into that thunk, with EAX the
+ * number and the arguments above two return addresses, as Wine's i386
+ * stubs call it. The thunk returns to the first. A thread sent elsewhere
+ * (an APC, NtContinue) runs nested until it comes back there, or leaves
+ * these native frames by going above them. */
+static uint32_t wow64_frame( int ctx, uint32_t id, const uint32_t *words, uint32_t n )
+{
+    uint32_t sp = ((gexw_get_sp() - 64) & ~15u) - 4 * n - 8, i;
+    uint32_t disp = (uint32_t)(uintptr_t)__wine_syscall_dispatcher;
+
+    for (i = 0; i < n; i++) GW( sp + 8 + 4 * i ) = words[i];
+    GW( sp ) = GEXW_RETURN_PAD;
+    GW( sp + 4 ) = GEXW_RETURN_PAD;
+    gp_set( ctx, R_ESP, sp );
+    gp_set( ctx, R_EAX, id );
+    GEX_C64( GEX_CTX_PC ) = disp;
+    GEX_C64( GEX_CTX_LAST_TARGET ) = disp;
+    return disp;
+}
+
+static uint32_t wow64_syscall( int ctx, uint32_t id, const uint32_t *words, uint32_t n )
+{
+    uint32_t esp0 = gp_reg( ctx, R_ESP ), pc0 = (uint32_t)GEX_C64( GEX_CTX_PC ), ret;
+    uint32_t disp = wow64_frame( ctx, id, words, n ), sp = gp_reg( ctx, R_ESP );
+
+    if (!GEX_FTAB( gex_ftab_idx( disp ))( ctx, gexw_get_depth() + 1, 0xffffffffu, GEXW_RETURN_PAD ))
+    {
+        gexw_set_entry_esp( esp0 );
+        run_until( ctx, GEXW_RETURN_PAD, esp0 );
+    }
+    /* The return an outer system call waits for (NtCallbackReturn: wow64
+     * went back to where the callback was made, which returns there too):
+     * these native frames are gone. */
+    if (gp_reg( ctx, R_ESP ) != sp + 4) __gexw_throw_unwind();
+    ret = gp_reg( ctx, R_EAX );
+    gp_set( ctx, R_ESP, esp0 );
+    GEX_C64( GEX_CTX_PC ) = pc0;
+    return ret;
+}
+
+static inline int wow64(void)
+{
+    return &Wow64Transition && Wow64Transition && &__wine_syscall_dispatcher && __wine_syscall_dispatcher;
+}
+
 /* A system call that returns to its caller. If the kernel sent the thread
  * elsewhere first (KiUserApcDispatcher), that runs here, nested, until it
  * comes back to the call's own state (NtContinue to the saved context). */
@@ -585,6 +637,7 @@ uint32_t __gexw_syscall( uint32_t id, const uint32_t *words, uint32_t n )
     int ctx = cur_ctx();
     uint32_t esp0 = gp_reg( ctx, R_ESP ), pc0 = (uint32_t)GEX_C64( GEX_CTX_PC ), stop, ret;
 
+    if (wow64()) return wow64_syscall( ctx, id, words, n );
     syscall_enter( ctx, id, words, n, &stop );
     if ((uint32_t)GEX_C64( GEX_CTX_PC ) != stop) run_until( ctx, stop, esp0 );
     ret = gp_reg( ctx, R_EAX );
@@ -601,6 +654,14 @@ uint32_t __gexw_syscall_resume( uint32_t id, const uint32_t *words, uint32_t n )
     int ctx = cur_ctx();
     uint32_t esp0 = gp_reg( ctx, R_ESP ), pc0 = (uint32_t)GEX_C64( GEX_CTX_PC ), stop, ret;
 
+    /* WoW64: the call loads the new state (it returns only when it fails,
+     * and then there is nothing to come back to): the guest makes it, from
+     * the innermost entry, once these native frames are gone */
+    if (wow64())
+    {
+        wow64_frame( ctx, id, words, n );
+        __gexw_throw_unwind();
+    }
     syscall_enter( ctx, id, words, n, &stop );
     if ((uint32_t)GEX_C64( GEX_CTX_PC ) != stop) __gexw_throw_unwind();
     ret = gp_reg( ctx, R_EAX );
