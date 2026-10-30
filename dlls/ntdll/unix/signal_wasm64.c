@@ -1245,6 +1245,23 @@ static void __wine_gex_fault( int ctx, unsigned int code, ULONG64 addr, unsigned
         rec.NumberParameters = 1;
         break;
     }
+    /* a debugger sees the first chance first, as x86-64's
+     * setup_raise_exception sends it; its context is what resumes. The
+     * request is made in 64-bit mode, as a signal handler runs: gex takes
+     * a WoW64 thread's mode from its context (frame_to_ctx sets it back). */
+    {
+        NTSTATUS status;
+
+        GEX_C32( GEX_CTX_CS ) = 0;
+        status = send_debug_event( data, &rec, &xcontext.c, TRUE, TRUE );
+
+        if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED)
+        {
+            NtSetContextThread( GetCurrentThread(), &xcontext.c );
+            frame_to_ctx( ctx, frame );
+            return;
+        }
+    }
     /* The stack the exception is dispatched on (the 64-bit one for a WoW64
      * thread's 32-bit code) is checked as x86-64's setup_raise_exception
      * checks it: past its guard page, a stack overflow; on its last page,
