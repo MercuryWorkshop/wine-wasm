@@ -231,7 +231,7 @@ const char *output_adapter64( const ORDDEF *odp, const char *wasm_sig )
     return ident;
 }
 
-/* The entry point: a program's mainCRTStartup(void), a DLL's
+/* The entry point: a program's mainCRTStartup(void), a driver's DriverEntry(driver, path), a DLL's
  * DllMain(hinst, reason, reserved). First, at a DLL's process attach (with
  * the loader lock held, as the loader binds an import table) and before a
  * program's main, the module's calls into DLLs that stay x86 code that are
@@ -244,7 +244,16 @@ void output_entry64( DLLSPEC *spec, int has_init )
     int is_dll = (spec->characteristics & IMAGE_FILE_DLL) != 0;
 
     output( "extern void wine_gexw_bind_imports(void) __attribute__((weak));\n" );
-    if (spec->init_func && !is_dll)
+    if (spec->init_func && !is_dll && spec->subsystem == IMAGE_SUBSYSTEM_NATIVE)
+    {
+        /* a driver's DriverEntry(driver, registry path), which ntoskrnl calls */
+        output( "int %s(void *, void *);\n", spec->init_func );
+        output( "static int gexp__entry_body(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
+        output( "    if (wine_gexw_bind_imports) wine_gexw_bind_imports();\n" );
+        output( "    return __gexw_ret(ctx, ret, (unsigned int)%s((void *)__gexw_arg(ctx, 0), (void *)__gexw_arg(ctx, 1)));\n}\n\n",
+                spec->init_func );
+    }
+    else if (spec->init_func && !is_dll)
     {
         output( "int %s(void);\n", spec->init_func );
         output( "static int gexp__entry_body(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
