@@ -5237,9 +5237,12 @@ void write_client_call_routine( FILE *file, const type_t *iface, const var_t *fu
     const var_list_t *args = type_function_get_args( func->declspec.type );
     const var_t *arg;
     int len, needs_params = 0;
+    /* wasm32 Wine serves i386 programs: its NdrClientCall2 takes the
+     * arguments as i386's does, a pointer to them in the i386 stack layout */
+    int stack_args = target.cpu == CPU_i386 || target.cpu == CPU_WASM32;
 
     /* we need a param structure if we have more than one arg */
-    if (target.cpu == CPU_i386 && args) needs_params = is_object( iface ) || list_count( args ) > 1;
+    if (stack_args && args) needs_params = is_object( iface ) || list_count( args ) > 1;
 
     print_file( file, 0, "{\n");
     if (needs_params)
@@ -5260,7 +5263,7 @@ void write_client_call_routine( FILE *file, const type_t *iface, const var_t *fu
     {
         fprintf( file, ",\n%*s&__params", len, "" );
     }
-    else if (target.cpu != CPU_i386)
+    else if (!stack_args)
     {
         if (is_object( iface )) fprintf( file, ",\n%*sThis", len, "" );
         if (args)
@@ -5281,7 +5284,7 @@ void write_client_call_routine( FILE *file, const type_t *iface, const var_t *fu
     {
         print_file( file, 1, "return (" );
         write_type_decl_left(file, rettype);
-        fprintf( file, ")%s;\n", target.cpu != CPU_i386 ? "_RetVal.Simple" : "*(LONG_PTR *)&_RetVal" );
+        fprintf( file, ")%s;\n", !stack_args ? "_RetVal.Simple" : "*(LONG_PTR *)&_RetVal" );
     }
     print_file( file, 0, "}\n\n");
 }
