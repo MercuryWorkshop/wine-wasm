@@ -58,7 +58,9 @@ struct gexw_callout
 
 /* WoW64: where native 64-bit code called from native 32-bit code (wow64cpu's
  * __wine_gex_syscall32) puts its C stack: below the 64-bit frames of the
- * innermost BTCpuSimulate, in TEB->SystemReserved1[24]. */
+ * innermost BTCpuSimulate, in TEB->SystemReserved1[24]. Only the native
+ * wow64cpu writes it, before each __gexw_run32: anything else reading it
+ * between runs may find a stale value. */
 #define GEXW_TEB_WOW64_SP 0x250
 
 /* The thread in 64-bit mode (CS 0x33) for a direct call from native 32-bit
