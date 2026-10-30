@@ -2405,6 +2405,8 @@ then
     enable_wow64cpu=${enable_wow64cpu:-x86_64}
     enable_xtajit64=${enable_xtajit64:-arm64ec}
 else
+    dnl gex's 64-bit Wine as native wasm64 code: its WoW64 layer is native too
+    test "$HOST_ARCH" != wasm64 || { enable_wow64=${enable_wow64:-wasm64}; enable_wow64win=${enable_wow64win:-wasm64}; }
     enable_wow64=${enable_wow64:-no}
     enable_wow64win=${enable_wow64win:-no}
     enable_wow64cpu=${enable_wow64cpu:-no}

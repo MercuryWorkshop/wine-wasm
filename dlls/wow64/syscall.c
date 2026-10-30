@@ -31,6 +31,9 @@
 #include "wine/asm.h"
 #include "wow64_private.h"
 #include "wine/debug.h"
+#ifdef __wasm64__
+#include "wine/exception.h"
+#endif
 
 WINE_DEFAULT_DEBUG_CHANNEL(wow);
 
@@ -372,6 +375,26 @@ __ASM_GLOBAL_FUNC( raise_exception_handler,
                    "1:\tmov w0, #1\n\t"        /* ExceptionContinueSearch */
                    "ldp x29, x30, [sp], #16\n\t"
                    "ret" )
+#elif defined __wasm64__
+/* Native code here: the exception is dispatched in place, a __TRY in this
+ * frame standing for the unwind target (wine/exception.h). */
+void WINAPI raise_exception( EXCEPTION_RECORD32 *rec32, void *ctx32,
+                             BOOL first_chance, EXCEPTION_RECORD *rec )
+{
+    CONTEXT context;
+
+    RtlCaptureContext( &context );
+    __TRY
+    {
+        if (first_chance) RtlRaiseException( rec );
+        else NtRaiseException( rec, &context, FALSE );
+    }
+    __EXCEPT_ALL
+    {
+        call_user_exception_dispatcher( rec32, ctx32, &context );
+    }
+    __ENDTRY
+}
 #else
 __ASM_GLOBAL_FUNC( raise_exception,
                    "sub $0x4d8,%rsp\n\t"       /* sizeof(context) + alignment */
@@ -1167,6 +1190,24 @@ __ASM_GLOBAL_FUNC( wow64_syscall_handler,
                    "1:\tmov w0, #1\n\t"            /* ExceptionContinueSearch */
                    "ldp x29, x30, [sp], #16\n\t"
                    "ret" )
+#elif defined __wasm64__
+typedef NTSTATUS (WINAPI *wow64_syscall_thunk)( UINT *args );
+NTSTATUS wow64_syscall( UINT *args, ULONG_PTR thunk )
+{
+    NTSTATUS status;
+
+    __TRY
+    {
+        status = ((wow64_syscall_thunk)thunk)( args );
+    }
+    __EXCEPT_ALL
+    {
+        status = GetExceptionCode();
+        if (status == STATUS_INVALID_HANDLE) call_raise_user_exception_dispatcher( status );
+    }
+    __ENDTRY
+    return status;
+}
 #else
 NTSTATUS wow64_syscall( UINT *args, ULONG_PTR thunk );
 __ASM_GLOBAL_FUNC( wow64_syscall,
@@ -1253,6 +1294,28 @@ __ASM_GLOBAL_FUNC( cpu_simulate_handler,
                    "ldp x19, x20, [sp, #16]\n\t"
                    "ldp x29, x30, [sp], #48\n\t"
                    "ret" )
+#elif defined __wasm64__
+static LONG CALLBACK cpu_simulate_filter( EXCEPTION_POINTERS *ptrs )
+{
+    Wow64PassExceptionToGuest( ptrs );
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+extern void DECLSPEC_NORETURN cpu_simulate(void);
+void cpu_simulate(void)
+{
+    for (;;)
+    {
+        __TRY
+        {
+            for (;;) pBTCpuSimulate();
+        }
+        __EXCEPT( cpu_simulate_filter )
+        {
+        }
+        __ENDTRY
+    }
+}
 #else
 extern void DECLSPEC_NORETURN cpu_simulate(void);
 __ASM_GLOBAL_FUNC( cpu_simulate,
