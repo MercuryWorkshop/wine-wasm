@@ -292,6 +292,47 @@ extern void *Wow64Transition __asm__("ntdll.dll!Wow64Transition") __attribute__(
 extern void *__wine_syscall_dispatcher __asm__("ntdll.dll!__wine_syscall_dispatcher") __attribute__((weak));
 
 /* A WoW64 process: this i386 ntdll has wow64 below it. */
+/* With gex's native wow64cpu (wasm64), whose syscall thunk is gex's stop
+ * address: a direct call into it, the same wasm type in both modules (it
+ * saves this state into its CPU area, with eip its return marker). Bit 32
+ * of the result: wow64 sent the thread elsewhere, and the context is that
+ * state, run here until it is back at the marker. */
+/* gex-kernel's win::tramp WOW64_STOP_SYSCALL, WOW64_RETURN_MARK */
+#define WOW64_STOP_SYSCALL 0x3ffff4u
+#define WOW64_RETURN_MARK  0x3ffffau
+extern unsigned long long gex_wow64_syscall32( uint32_t id, uint32_t args, uint32_t esp )
+    __attribute__((import_module("env"), import_name("wow64cpu.dll!__wine_gex_syscall32")));
+
+static void run_until( int ctx, uint32_t stop, uint32_t limit );
+
+static uint32_t wow64_native_syscall( int ctx, uint32_t id, const uint32_t *words, uint32_t n )
+{
+    uint32_t esp0 = gp_reg( ctx, R_ESP ), pc0 = (uint32_t)GEX_C64( GEX_CTX_PC ), ret;
+    uint32_t sp = ((gexw_get_sp() - 64) & ~15u) - 4 * n - 8, i;
+    unsigned long long r;
+
+    for (i = 0; i < n; i++) GW( sp + 8 + 4 * i ) = words[i];
+    GW( sp ) = WOW64_RETURN_MARK;
+    GW( sp + 4 ) = WOW64_RETURN_MARK;
+    r = gex_wow64_syscall32( id, sp + 8, sp );
+    ret = (uint32_t)r;
+    if (r >> 32)
+    {
+        gexw_set_entry_esp( esp0 );
+        run_until( ctx, WOW64_RETURN_MARK, esp0 );
+        if (gp_reg( ctx, R_ESP ) != sp) __gexw_throw_unwind();
+        ret = gp_reg( ctx, R_EAX );
+    }
+    gp_set( ctx, R_ESP, esp0 );
+    GEX_C64( GEX_CTX_PC ) = pc0;
+    return ret;
+}
+
+static inline int wow64_native(void)
+{
+    return &Wow64Transition && (uint32_t)(uintptr_t)Wow64Transition == WOW64_STOP_SYSCALL;
+}
+
 static inline int wow64(void)
 {
     return &Wow64Transition && Wow64Transition && &__wine_syscall_dispatcher && __wine_syscall_dispatcher;
@@ -667,6 +708,7 @@ uint32_t __gexw_syscall( uint32_t id, const uint32_t *words, uint32_t n )
     int ctx = cur_ctx();
     uint32_t esp0 = gp_reg( ctx, R_ESP ), pc0 = (uint32_t)GEX_C64( GEX_CTX_PC ), stop, ret;
 
+    if (wow64_native()) return wow64_native_syscall( ctx, id, words, n );
     if (wow64()) return wow64_syscall( ctx, id, words, n );
     syscall_enter( ctx, id, words, n, &stop );
     if ((uint32_t)GEX_C64( GEX_CTX_PC ) != stop) run_until( ctx, stop, esp0 );
@@ -687,6 +729,20 @@ uint32_t __gexw_syscall_resume( uint32_t id, const uint32_t *words, uint32_t n )
     /* WoW64: the call loads the new state (it returns only when it fails,
      * and then there is nothing to come back to): the guest makes it, from
      * the innermost entry, once these native frames are gone */
+    if (wow64_native())
+    {
+        unsigned long long r;
+        uint32_t sp = ((gexw_get_sp() - 64) & ~15u) - 4 * n - 8, i;
+
+        for (i = 0; i < n; i++) GW( sp + 8 + 4 * i ) = words[i];
+        GW( sp ) = WOW64_RETURN_MARK;
+        GW( sp + 4 ) = WOW64_RETURN_MARK;
+        r = gex_wow64_syscall32( id, sp + 8, sp );
+        if (r >> 32) __gexw_throw_unwind();
+        gp_set( ctx, R_ESP, esp0 );
+        GEX_C64( GEX_CTX_PC ) = pc0;
+        return (uint32_t)r;
+    }
     if (wow64())
     {
         wow64_frame( ctx, id, words, n );

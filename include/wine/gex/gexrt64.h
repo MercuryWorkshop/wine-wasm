@@ -47,4 +47,20 @@ struct gexw_callout
     unsigned long long context;
 };
 
+/* WoW64 (wow64cpu): the guest addresses gex stops 32-bit code at, never
+ * translated: its system call and unix call thunks (BTCpuGetBopCode,
+ * __wine_get_unix_opcode), and the return marker of a system call native
+ * 32-bit ntdll makes: int3 filler on gex-kernel's trampoline page
+ * (win::tramp, the same names). */
+#define WOW64_STOP_SYSCALL 0x3ffff4u
+#define WOW64_STOP_UNIX    0x3ffff7u
+#define WOW64_RETURN_MARK  0x3ffffau
+
+/* Runs the 32-bit state in AREA (an I386_CONTEXT: wow64cpu's CPU area) until
+ * it reaches STOPS[0] or STOPS[1], stores it back and returns which (0, 1). */
+extern unsigned int __gexw_run32( void *area, const unsigned int stops[2] );
+/* The gex context's 32-bit state into AREA, and AREA's into it. */
+extern void __gexw_ctx_to_i386( void *area );
+extern void __gexw_i386_to_ctx( const void *area );
+
 #endif  /* __WINE_WINE_GEX_GEXRT64_H */

@@ -46,7 +46,9 @@ struct thunk_opcodes
 };
 #pragma pack(pop)
 
+#ifndef __wasm64__
 static BYTE DECLSPEC_ALIGN(4096) code_buffer[0x1000];
+#endif
 
 UINT cs32_sel = 0;
 UINT ss32_sel = 0;
@@ -163,6 +165,8 @@ static void copy_context_64to32( I386_CONTEXT *ctx32, DWORD flags, AMD64_CONTEXT
     /* FIXME: xstate */
 }
 
+
+#ifndef __wasm64__
 
 /**********************************************************************
  *           syscall_32to64
@@ -372,6 +376,145 @@ void * WINAPI __wine_get_unix_opcode(void)
 
     return &thunk->unix_thunk;
 }
+#else  /* __wasm64__ */
+
+/*
+ * gex's native wasm64 build: the 32-bit code is run by gex, and the thread's
+ * 32-bit state while it is in 64-bit code is this CPU area, as upstream's.
+ * BTCpuSimulate runs it until it reaches one of two stop addresses (the
+ * system call and unix call thunks, which gex never translates), then makes
+ * the call. Native 32-bit ntdll makes its system calls through
+ * __wine_gex_syscall32, with a third stop address as the return marker.
+ */
+
+#include "wine/gex/gexrt64.h"
+
+extern NTSTATUS WINAPI Wow64SystemServiceEx( UINT num, UINT *args );
+
+static inline WOW64_CPURESERVED *cpu_area(void)
+{
+    return NtCurrentTeb()->TlsSlots[WOW64_TLS_CPURESERVED];
+}
+
+static inline I386_CONTEXT *cpu_context(void)
+{
+    return (I386_CONTEXT *)((char *)cpu_area() + sizeof(WOW64_CPURESERVED));
+}
+
+/* the 32-bit call at a stop address: the stub's return address on top, the
+ * caller's above it */
+static void call_32to64( I386_CONTEXT *ctx, unsigned int stop )
+{
+    ULONG esp = ctx->Esp;
+
+    ctx->Eip = *(ULONG *)ULongToPtr( esp );
+    ctx->SegCs = cs32_sel;
+    if (stop == WOW64_STOP_SYSCALL)
+    {
+        ctx->Esp = esp + 4;
+        ctx->Eax = Wow64SystemServiceEx( ctx->Eax, ULongToPtr( esp + 8 ));
+    }
+    else
+    {
+        ctx->Esp = esp + 20;
+        ctx->Eax = ((NTSTATUS (WINAPI *)( ULONG64, unsigned int, void * ))__wine_unix_call_dispatcher)(
+                       *(ULONG64 *)ULongToPtr( esp + 4 ), *(ULONG *)ULongToPtr( esp + 12 ),
+                       ULongToPtr( *(ULONG *)ULongToPtr( esp + 16 )));
+    }
+}
+
+/**********************************************************************
+ *           BTCpuSimulate  (wow64cpu.@)
+ */
+void WINAPI BTCpuSimulate(void)
+{
+    static const unsigned int stops[2] = { WOW64_STOP_SYSCALL, WOW64_STOP_UNIX };
+    I386_CONTEXT *ctx = cpu_context();
+
+    ctx->SegCs = cs32_sel;
+    ctx->SegSs = ss32_sel;
+    for (;;)
+    {
+        cpu_area()->Flags &= ~WOW64_CPURESERVED_FLAG_RESET_STATE;
+        call_32to64( ctx, stops[__gexw_run32( ctx, stops )] );
+    }
+}
+
+/**********************************************************************
+ *           __wine_gex_syscall32  (wow64cpu.@)
+ *
+ * A system call of native 32-bit ntdll, with ARGS its arguments on the
+ * 32-bit stack at ESP (32-bit addresses only: the call has the same wasm
+ * type in both modules). Returns the status, with bit 32 set when the
+ * thread is to go on elsewhere (an APC, NtContinue): the gex context is then
+ * the area's, to be run until it is back at the marker.
+ */
+ULONG64 WINAPI __wine_gex_syscall32( ULONG id, ULONG args, ULONG esp )
+{
+    I386_CONTEXT *ctx = cpu_context();
+    NTSTATUS status;
+    BOOL moved;
+
+    __gexw_ctx_to_i386( ctx );
+    ctx->Esp = esp;
+    ctx->Eip = WOW64_RETURN_MARK;
+    ctx->SegCs = cs32_sel;
+    ctx->SegSs = ss32_sel;
+    cpu_area()->Flags &= ~WOW64_CPURESERVED_FLAG_RESET_STATE;
+    status = Wow64SystemServiceEx( id, ULongToPtr( args ));
+    moved = ctx->Eip != WOW64_RETURN_MARK || ctx->Esp != esp ||
+            (cpu_area()->Flags & WOW64_CPURESERVED_FLAG_RESET_STATE);
+    if (moved) __gexw_i386_to_ctx( ctx );
+    return (ULONG)status | ((ULONG64)moved << 32);
+}
+
+/**********************************************************************
+ *           BTCpuProcessInit  (wow64cpu.@)
+ */
+NTSTATUS WINAPI BTCpuProcessInit(void)
+{
+    HMODULE module;
+    UNICODE_STRING str = RTL_CONSTANT_STRING( L"ntdll.dll" );
+    void **p__wine_unix_call_dispatcher;
+    WOW64INFO *wow64info = NtCurrentTeb()->TlsSlots[WOW64_TLS_WOW64INFO];
+    CONTEXT context;
+    I386_CONTEXT context_i386;
+
+    wow64info->CpuFlags |= WOW64_CPUFLAGS_MSFT64;
+
+    LdrGetDllHandle( NULL, 0, &str, &module );
+    p__wine_unix_call_dispatcher = RtlFindExportedRoutineByName( module, "__wine_unix_call_dispatcher" );
+    __wine_unix_call_dispatcher = *p__wine_unix_call_dispatcher;
+
+    RtlCaptureContext( &context );
+    cs64_sel = context.SegCs;
+    ds64_sel = context.SegDs;
+    fs32_sel = context.SegFs;
+
+    context_i386.ContextFlags = CONTEXT_I386_CONTROL;
+    RtlWow64GetThreadContext( GetCurrentThread(), &context_i386 );
+    cs32_sel = context_i386.SegCs;
+    ss32_sel = context_i386.SegSs;
+    return STATUS_SUCCESS;
+}
+
+/**********************************************************************
+ *           BTCpuGetBopCode  (wow64cpu.@)
+ */
+void * WINAPI BTCpuGetBopCode(void)
+{
+    return ULongToPtr( WOW64_STOP_SYSCALL );
+}
+
+/**********************************************************************
+ *           __wine_get_unix_opcode  (wow64cpu.@)
+ */
+void * WINAPI __wine_get_unix_opcode(void)
+{
+    return ULongToPtr( WOW64_STOP_UNIX );
+}
+
+#endif  /* __wasm64__ */
 
 
 /**********************************************************************
@@ -409,6 +552,7 @@ NTSTATUS WINAPI BTCpuResetToConsistentState( EXCEPTION_POINTERS *ptrs )
 {
     CONTEXT *context = ptrs->ContextRecord;
     I386_CONTEXT wow_context;
+#ifndef __wasm64__
     struct machine_frame
     {
         ULONG64 rip;
@@ -417,6 +561,7 @@ NTSTATUS WINAPI BTCpuResetToConsistentState( EXCEPTION_POINTERS *ptrs )
         ULONG64 rsp;
         ULONG64 ss;
     } *machine_frame;
+#endif
 
     if (context->SegCs == cs64_sel) return STATUS_SUCCESS;  /* exception in 64-bit code, nothing to do */
 
@@ -424,6 +569,7 @@ NTSTATUS WINAPI BTCpuResetToConsistentState( EXCEPTION_POINTERS *ptrs )
     wow_context.EFlags &= ~(0x100|0x40000);
     BTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &wow_context );
 
+#ifndef __wasm64__  /* gex raises it from the 64-bit frame that ran the 32-bit code */
     /* fixup context to pretend that we jumped to 64-bit mode */
     context->Rip = (ULONG64)syscall_32to64;
     context->SegCs = cs64_sel;
@@ -433,6 +579,7 @@ NTSTATUS WINAPI BTCpuResetToConsistentState( EXCEPTION_POINTERS *ptrs )
     machine_frame = (struct machine_frame *)(((ULONG_PTR)(ptrs->ExceptionRecord + 1) + 15) & ~15);
     machine_frame->rip = context->Rip;
     machine_frame->rsp = context->Rsp;
+#endif
     return STATUS_SUCCESS;
 }
 
