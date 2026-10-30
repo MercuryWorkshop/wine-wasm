@@ -469,6 +469,32 @@ ULONG64 WINAPI __wine_gex_syscall32( ULONG id, ULONG args, ULONG esp )
 }
 
 /**********************************************************************
+ *           __wine_gex_unix_call32  (wow64cpu.@)
+ *
+ * A Unix call of native 32-bit code, its arguments at the 32-bit address
+ * ARGS: as unix_call_32to64 makes it (the same wasm type in both modules).
+ */
+NTSTATUS WINAPI __wine_gex_unix_call32( ULONG64 handle, ULONG code, ULONG args )
+{
+    I386_CONTEXT *ctx = cpu_context();
+    ULONG eip = ctx->Eip, esp = ctx->Esp;
+    NTSTATUS status;
+
+    cpu_area()->Flags &= ~WOW64_CPURESERVED_FLAG_RESET_STATE;
+    status = ((NTSTATUS (WINAPI *)( ULONG64, unsigned int, void * ))__wine_unix_call_dispatcher)(
+                 handle, code, ULongToPtr( args ));
+    /* nothing here goes on elsewhere after a Unix call: one that did is not
+     * carried on from silently */
+    if ((cpu_area()->Flags & WOW64_CPURESERVED_FLAG_RESET_STATE) || ctx->Eip != eip || ctx->Esp != esp)
+    {
+        ERR( "unix call %#lx of %s moved the 32-bit thread (eip %#lx -> %#lx, esp %#lx -> %#lx)\n",
+             code, wine_dbgstr_longlong( handle ), eip, ctx->Eip, esp, ctx->Esp );
+        __builtin_trap();
+    }
+    return status;
+}
+
+/**********************************************************************
  *           BTCpuProcessInit  (wow64cpu.@)
  */
 NTSTATUS WINAPI BTCpuProcessInit(void)

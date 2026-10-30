@@ -10,3 +10,4 @@
 #@ stub TurboDispatchJumpAddressStart
 @ stdcall __wine_get_unix_opcode()
 @ stdcall -arch=wasm64 __wine_gex_syscall32(long long long)
+@ stdcall -arch=wasm64 __wine_gex_unix_call32(int64 long long)
