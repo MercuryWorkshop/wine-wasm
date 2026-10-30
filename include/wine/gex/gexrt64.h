@@ -56,6 +56,20 @@ struct gexw_callout
 #define WOW64_STOP_UNIX    0x3ffff7u
 #define WOW64_RETURN_MARK  0x3ffffau
 
+/* WoW64: where native 64-bit code called from native 32-bit code (wow64cpu's
+ * __wine_gex_syscall32) puts its C stack: below the 64-bit frames of the
+ * innermost BTCpuSimulate, in TEB->SystemReserved1[24]. */
+#define GEXW_TEB_WOW64_SP 0x250
+
+/* The thread in 64-bit mode (CS 0x33) for a direct call from native 32-bit
+ * code; returns the mode to put back with __gexw_mode64_leave. */
+extern unsigned int __gexw_mode64_enter(void);
+extern void __gexw_mode64_leave( unsigned int cs );
+
+/* FN(ARG) with the C stack pointer at SP, put back after. */
+extern unsigned long long __gexw_call_on_stack( unsigned long long sp, unsigned long long (*fn)( void * ), void *arg );
+extern unsigned long long gexw_get_sp(void);
+
 /* Runs the 32-bit state in AREA (an I386_CONTEXT: wow64cpu's CPU area) until
  * it reaches STOPS[0] or STOPS[1], stores it back and returns which (0, 1). */
 extern unsigned int __gexw_run32( void *area, const unsigned int stops[2] );

@@ -139,6 +139,26 @@ __asm__(
     "\t.functype gexw_get_sp () -> (i64)\n"
     "\tglobal.get __stack_pointer\n"
     "\tend_function\n"
+    /* __gexw_call_on_stack(sp, fn, arg): fn(arg) with the C stack at sp,
+     * put back after (a throw past it lands in an entry, which puts back
+     * its own) */
+    "\t.globl __gexw_call_on_stack\n"
+    "\t.type __gexw_call_on_stack,@function\n"
+    "__gexw_call_on_stack:\n"
+    "\t.functype __gexw_call_on_stack (i64, i64, i64) -> (i64)\n"
+    "\t.local i64, i64\n"
+    "\tglobal.get __stack_pointer\n"
+    "\tlocal.set 3\n"
+    "\tlocal.get 0\n"
+    "\tglobal.set __stack_pointer\n"
+    "\tlocal.get 2\n"
+    "\tlocal.get 1\n"
+    "\tcall_indirect __indirect_function_table, (i64) -> (i64)\n"
+    "\tlocal.set 4\n"
+    "\tlocal.get 3\n"
+    "\tglobal.set __stack_pointer\n"
+    "\tlocal.get 4\n"
+    "\tend_function\n"
     "\t.globl __gexw_throw_unwind\n"
     "\t.type __gexw_throw_unwind,@function\n"
     "__gexw_throw_unwind:\n"
@@ -623,6 +643,26 @@ void __gexw_far_longjmp( void *buf, int val, uint64_t frame )
     REG( X_RSP ) = ((const struct gexw_callout *)(uintptr_t)to)->pad_rsp;
     GEX_C64( GEX_CTX_PC ) = GEXW_RETURN_PAD;
     __gexw_throw_unwind();
+}
+
+/* Native 32-bit code calling into native 64-bit code directly (wow64cpu's
+ * __wine_gex_syscall32): the thread in 64-bit mode for the call, as
+ * x86-64's far jump into 64-bit code puts it, so that the system calls and
+ * faults of the 64-bit code are 64-bit ones. Returns the mode to go back to. */
+unsigned int __gexw_mode64_enter(void)
+{
+    int ctx = cur_ctx();
+    uint32_t cs = GEX_C32( GEX_CTX_CS );
+
+    GEX_C32( GEX_CTX_CS ) = 0x33;
+    return cs;
+}
+
+void __gexw_mode64_leave( unsigned int cs )
+{
+    int ctx = cur_ctx();
+
+    GEX_C32( GEX_CTX_CS ) = cs;
 }
 
 /* ---- NT system calls from native code ---- */
