@@ -282,9 +282,52 @@ void __gexw_missing( int ctx )
  * gex-kernel's NT trampoline page (int3 filler). */
 #define GEXW_RETURN_PAD 0x3ffff1u
 
+/* ---- WoW64 ---- */
+
+/* ntdll's, in a WoW64 process's i386 ntdll: wow64 sets both to its CPU
+ * DLL's thunk into 64-bit code (BTCpuGetBopCode), and Wow64Transition only
+ * there. (Named as pelink names a DLL's exports; weak: a module without
+ * ntdll has neither.) */
+extern void *Wow64Transition __asm__("ntdll.dll!Wow64Transition") __attribute__((weak));
+extern void *__wine_syscall_dispatcher __asm__("ntdll.dll!__wine_syscall_dispatcher") __attribute__((weak));
+
+/* A WoW64 process: this i386 ntdll has wow64 below it. */
+static inline int wow64(void)
+{
+    return &Wow64Transition && Wow64Transition && &__wine_syscall_dispatcher && __wine_syscall_dispatcher;
+}
+
+/* The thread runs its i386 code now: always, but in a WoW64 process only
+ * while its CS is the 32-bit one. While it runs the 64-bit side, ESP is the
+ * low half of a stack below the 32-bit one, and says nothing about these
+ * frames. */
+static inline int in_mode( int ctx )
+{
+    uint32_t cs;
+    if (!wow64()) return 1;
+    cs = GEX_C32( GEX_CTX_CS );
+    return cs == 0x23 || cs == 0x1b;
+}
+
+/* In a WoW64 process, the guest reached our return pad: its return to this
+ * call only if the thread is back in its i386 code with the stack where the
+ * call's own return leaves it, ESP in [lo, hi]. Anything else is an outer
+ * call's return to the same pad (NtCallbackReturn: wow64 went back to where
+ * the callback was made, from the 64-bit side): these native frames are
+ * gone, and the context is left as it is. */
+static void came_back( int ctx, uint32_t lo, uint32_t hi )
+{
+    uint32_t esp;
+    if (!wow64()) return;
+    esp = gp_reg( ctx, R_ESP );
+    if (!in_mode( ctx ) || esp < lo || esp > hi) __gexw_throw_unwind();
+}
+
 /* Run the guest from the context until it reaches `stop` (a return
  * address of ours, or a syscall's), as gex's own dispatch loop does: an
- * F_body that returns 0 has written where to go on into the context. */
+ * F_body that returns 0 has written where to go on into the context.
+ * Reaching `stop` says nothing of whose return it was: in a WoW64 process a
+ * caller waiting at our return pad checks with came_back after. */
 static void run_until( int ctx, uint32_t stop, uint32_t limit )
 {
     int depth = gexw_get_depth() + 1;
@@ -296,7 +339,7 @@ static void run_until( int ctx, uint32_t stop, uint32_t limit )
          * continuing in an outer frame, a longjmp): every native frame
          * since that entry is dead. Drop them; the entry returns 0 and the
          * guest goes on from the context. */
-        if (limit && gp_reg( ctx, R_ESP ) >= limit) __gexw_throw_unwind();
+        if (limit && in_mode( ctx ) && gp_reg( ctx, R_ESP ) >= limit) __gexw_throw_unwind();
         GEX_C64( GEX_CTX_LAST_TARGET ) = pc;
         if (GEX_FTAB( gex_ftab_idx( pc ))( ctx, depth, 0xffffffffu, stop )) return;
         /* a trap through native frames inside it skipped their entries'
@@ -324,7 +367,7 @@ int __gexw_entry( int ctx, int depth, unsigned int need, unsigned long long ret,
     uint32_t e = gexw_get_entry_esp();
     /* (at or above: a live entry's nested callees run below its native
      * frames, which are below its own stack pointer) */
-    if (e && gp_reg( ctx, R_ESP ) >= e)
+    if (e && in_mode( ctx ) && gp_reg( ctx, R_ESP ) >= e)
     {
         uint32_t eax = gp_reg( ctx, R_EAX );
         /* re-entered from the guest's side, `jmp eax` to this function's
@@ -391,6 +434,8 @@ uint64_t __gexw_guest_call( uint32_t target, const uint32_t *words, uint32_t n )
         gexw_set_entry_esp( limit );
         run_until( ctx, ra, limit );
     }
+    /* (the callee popped its arguments, or did not) */
+    came_back( ctx, sp + 4, sp + 4 + 4 * n );
     gp_set( ctx, R_ESP, sp0 );
     return ((uint64_t)gp_reg( ctx, R_EDX ) << 32) | gp_reg( ctx, R_EAX );
 }
@@ -577,13 +622,6 @@ static uint32_t syscall_enter( int ctx, uint32_t id, const uint32_t *words, uint
     return sp;
 }
 
-/* ntdll's, in a WoW64 process's i386 ntdll: wow64 sets both to its CPU
- * DLL's thunk into 64-bit code (BTCpuGetBopCode), and Wow64Transition only
- * there. (Named as pelink names a DLL's exports; weak: a module without
- * ntdll has neither.) */
-extern void *Wow64Transition __asm__("ntdll.dll!Wow64Transition") __attribute__((weak));
-extern void *__wine_syscall_dispatcher __asm__("ntdll.dll!__wine_syscall_dispatcher") __attribute__((weak));
-
 /* A WoW64 process's system call: a guest call into that thunk, with EAX the
  * number and the arguments above two return addresses, as Wine's i386
  * stubs call it. The thunk returns to the first. A thread sent elsewhere
@@ -614,19 +652,11 @@ static uint32_t wow64_syscall( int ctx, uint32_t id, const uint32_t *words, uint
         gexw_set_entry_esp( esp0 );
         run_until( ctx, GEXW_RETURN_PAD, esp0 );
     }
-    /* The return an outer system call waits for (NtCallbackReturn: wow64
-     * went back to where the callback was made, which returns there too):
-     * these native frames are gone. */
-    if (gp_reg( ctx, R_ESP ) != sp + 4) __gexw_throw_unwind();
+    came_back( ctx, sp + 4, sp + 4 );
     ret = gp_reg( ctx, R_EAX );
     gp_set( ctx, R_ESP, esp0 );
     GEX_C64( GEX_CTX_PC ) = pc0;
     return ret;
-}
-
-static inline int wow64(void)
-{
-    return &Wow64Transition && Wow64Transition && &__wine_syscall_dispatcher && __wine_syscall_dispatcher;
 }
 
 /* A system call that returns to its caller. If the kernel sent the thread
