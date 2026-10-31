@@ -485,6 +485,12 @@ int read_process_memory( struct process *process, client_ptr_t ptr, data_size_t 
     }
 
     if ((ret = read_process_memory_vm( thread, ptr, size, dest )) != -1) return ret;
+#if defined(__wasm32__) || defined(__wasm64__)
+    /* gex has no ptrace: with no process_vm_readv/writev either (the
+     * page), the caller has the process itself copy (an APC) */
+    set_error( STATUS_NOT_SUPPORTED );
+    return 0;
+#endif
     return read_process_memory_ptrace( thread, ptr, size, dest );
 }
 
@@ -600,6 +606,12 @@ int write_process_memory( struct process *process, client_ptr_t ptr, data_size_t
     }
 
     if ((ret = write_process_memory_vm( thread, ptr, size, src, written )) != -1) return ret;
+#if defined(__wasm32__) || defined(__wasm64__)
+    /* gex has no ptrace: with no process_vm_readv/writev either (the
+     * page), the caller has the process itself copy (an APC) */
+    set_error( STATUS_NOT_SUPPORTED );
+    return 0;
+#endif
     return write_process_memory_ptrace( thread, ptr, size, src, written );
 }
 

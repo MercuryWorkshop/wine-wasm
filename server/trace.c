@@ -308,6 +308,12 @@ static void dump_apc_call( const char *prefix, const union apc_call *call )
                  call->dup_handle.src_handle, call->dup_handle.dst_process, call->dup_handle.access,
                  call->dup_handle.attributes, call->dup_handle.options );
         break;
+    case APC_READ_VM:
+    case APC_WRITE_VM:
+        fprintf( stderr, "%s", call->type == APC_READ_VM ? "APC_READ_VM" : "APC_WRITE_VM" );
+        dump_uint64( ",addr=", &call->vm.addr );
+        dump_uint64( ",size=", &call->vm.size );
+        break;
     default:
         fprintf( stderr, "type=%u", call->type );
         break;
@@ -391,6 +397,12 @@ static void dump_apc_result( const char *prefix, const union apc_result *result 
     case APC_DUP_HANDLE:
         fprintf( stderr, "APC_DUP_HANDLE,status=%s,handle=%04x",
                  get_status_name( result->dup_handle.status ), result->dup_handle.handle );
+        break;
+    case APC_READ_VM:
+    case APC_WRITE_VM:
+        fprintf( stderr, "%s,status=%s", result->type == APC_READ_VM ? "APC_READ_VM" : "APC_WRITE_VM",
+                 get_status_name( result->vm.status ) );
+        dump_uint64( ",size=", &result->vm.size );
         break;
     default:
         fprintf( stderr, "type=%u", result->type );

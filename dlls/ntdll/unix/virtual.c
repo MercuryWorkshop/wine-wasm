@@ -7455,6 +7455,12 @@ NTSTATUS WINAPI NtReadVirtualMemory( HANDLE process, const void *addr, void *buf
     }
     else
     {
+#ifdef __wasm32__
+        /* the server cannot reach another process's memory: that process copies it */
+        status = server_process_memory( process, FALSE, (void *)addr, buffer, size, &size );
+#else
+        SIZE_T want = size;
+
         SERVER_START_REQ( read_process_memory )
         {
             req->handle = wine_server_obj_handle( process );
@@ -7463,6 +7469,12 @@ NTSTATUS WINAPI NtReadVirtualMemory( HANDLE process, const void *addr, void *buf
             if ((status = wine_server_call( req ))) size = 0;
         }
         SERVER_END_REQ;
+#ifdef __wasm64__
+        /* a server that cannot reach it (gex's page): that process copies it */
+        if (status == STATUS_NOT_SUPPORTED)
+            status = server_process_memory( process, FALSE, (void *)addr, buffer, want, &size );
+#endif
+#endif
     }
     if (bytes_read) *bytes_read = size;
     return status;
@@ -7480,6 +7492,12 @@ NTSTATUS WINAPI NtWriteVirtualMemory( HANDLE process, void *addr, const void *bu
 
     if (virtual_check_buffer_for_read( buffer, size ))
     {
+#ifdef __wasm32__
+        /* the server cannot reach another process's memory: that process writes it */
+        status = server_process_memory( process, TRUE, addr, (void *)buffer, size, &size );
+#else
+        SIZE_T want = size;
+
         SERVER_START_REQ( write_process_memory )
         {
             req->handle     = wine_server_obj_handle( process );
@@ -7489,6 +7507,12 @@ NTSTATUS WINAPI NtWriteVirtualMemory( HANDLE process, void *addr, const void *bu
             size = reply->written;
         }
         SERVER_END_REQ;
+#ifdef __wasm64__
+        /* a server that cannot reach it (gex's page): that process writes it */
+        if (status == STATUS_NOT_SUPPORTED)
+            status = server_process_memory( process, TRUE, addr, (void *)buffer, want, &size );
+#endif
+#endif
     }
     else
     {
