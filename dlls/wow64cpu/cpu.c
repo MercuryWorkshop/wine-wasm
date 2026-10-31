@@ -479,13 +479,19 @@ static ULONG64 syscall32( void *arg )
 }
 
 /* the C stack native 64-bit code called from 32-bit code runs on: the
- * 64-bit stack, below the innermost BTCpuSimulate */
+ * 64-bit stack, below the innermost BTCpuSimulate. A callback into 32-bit
+ * code during the call runs a BTCpuSimulate of its own further down, which
+ * moves the slot there and is left without moving it back (its callback
+ * returns by NtCallbackReturn): the slot is this call's again once the call
+ * is done, or every callback would start lower down until the stack ran out
+ * (a window's size loop: one callback for each move). */
 static ULONG64 on_64bit_stack( ULONG64 (*fn)( void * ), void *arg )
 {
-    ULONG64 sp = *(ULONG64 *)((char *)NtCurrentTeb() + GEXW_TEB_WOW64_SP), ret;
+    ULONG64 *slot = (ULONG64 *)((char *)NtCurrentTeb() + GEXW_TEB_WOW64_SP), sp = *slot, ret;
     unsigned int cs = __gexw_mode64_enter();
 
     ret = sp ? __gexw_call_on_stack( sp, fn, arg ) : fn( arg );
+    *slot = sp;
     __gexw_mode64_leave( cs );
     return ret;
 }
