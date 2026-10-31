@@ -3,6 +3,8 @@
 extern GLsync WINAPI glCreateSyncFromCLeventARB( struct _cl_context *context, struct _cl_event *event, GLbitfield flags );
 extern void WINAPI glDeleteSync( GLsync sync );
 extern GLsync WINAPI glFenceSync( GLenum condition, GLbitfield flags );
+extern void WINAPI glGetAttachedObjectsARB( GLhandleARB containerObj, GLsizei maxCount, GLsizei *count, GLhandleARB *obj );
+extern void WINAPI glGetAttachedShaders( GLuint program, GLsizei maxCount, GLsizei *count, GLuint *shaders );
 extern void WINAPI glGetFramebufferAttachmentParameteriv( GLenum target, GLenum attachment, GLenum pname, GLint *params );
 extern void WINAPI glGetFramebufferAttachmentParameterivEXT( GLenum target, GLenum attachment, GLenum pname, GLint *params );
 extern void WINAPI glGetNamedFramebufferAttachmentParameteriv( GLuint framebuffer, GLenum attachment, GLenum pname, GLint *params );

@@ -8214,32 +8214,6 @@ static void WINAPI glGetArrayObjectivATI( GLenum array, GLenum pname, GLint *par
     if ((status = UNIX_CALL( glGetArrayObjectivATI, &args ))) WARN( "glGetArrayObjectivATI returned %#lx\n", status );
 }
 
-static void WINAPI glGetAttachedObjectsARB( GLhandleARB containerObj, GLsizei maxCount, GLsizei *count, GLhandleARB *obj )
-{
-    GLuint obj_buf[64], *obj_tmp;
-    struct glGetAttachedObjectsARB_params args = { .teb = NtCurrentTeb(), .maxCount = maxCount, .count = count };
-    NTSTATUS status;
-    TRACE( "containerObj %d, maxCount %d, count %p, obj %p\n", containerObj, maxCount, count, obj );
-    args.containerObj = *map_context_objects( OBJ_TYPE_SHADER, 1, &containerObj );
-    obj_tmp = maxCount > 0 ? memdup_objects( maxCount, obj, obj_buf, ARRAY_SIZE(obj_buf) ) : NULL;
-    args.obj = maxCount > 0 ? map_context_objects( OBJ_TYPE_SHADER, maxCount, obj_tmp ) : NULL;
-    if ((status = UNIX_CALL( glGetAttachedObjectsARB, &args ))) WARN( "glGetAttachedObjectsARB returned %#lx\n", status );
-    if (obj_tmp != obj_buf) free( obj_tmp );
-}
-
-static void WINAPI glGetAttachedShaders( GLuint program, GLsizei maxCount, GLsizei *count, GLuint *shaders )
-{
-    GLuint shaders_buf[64], *shaders_tmp;
-    struct glGetAttachedShaders_params args = { .teb = NtCurrentTeb(), .maxCount = maxCount, .count = count };
-    NTSTATUS status;
-    TRACE( "program %d, maxCount %d, count %p, shaders %p\n", program, maxCount, count, shaders );
-    args.program = *map_context_objects( OBJ_TYPE_SHADER, 1, &program );
-    shaders_tmp = maxCount > 0 ? memdup_objects( maxCount, shaders, shaders_buf, ARRAY_SIZE(shaders_buf) ) : NULL;
-    args.shaders = maxCount > 0 ? map_context_objects( OBJ_TYPE_SHADER, maxCount, shaders_tmp ) : NULL;
-    if ((status = UNIX_CALL( glGetAttachedShaders, &args ))) WARN( "glGetAttachedShaders returned %#lx\n", status );
-    if (shaders_tmp != shaders_buf) free( shaders_tmp );
-}
-
 static GLint WINAPI glGetAttribLocation( GLuint program, const GLchar *name )
 {
     struct glGetAttribLocation_params args = { .teb = NtCurrentTeb(), .name = name };
