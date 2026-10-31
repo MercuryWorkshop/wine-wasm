@@ -1224,6 +1224,11 @@ static void __wine_gex_fault( int ctx, unsigned int code, ULONG64 addr, unsigned
      * at the fault into a context, the record, and the exception dispatched
      * from the program's stack. A frame is borrowed for it. */
     ctx_to_frame( ctx, frame, pc, REG( R_RSP ), FALSE );
+    /* The rest runs in 64-bit mode, as a signal handler does: gex takes a
+     * WoW64 thread's mode from its context, and a system call made in
+     * 32-bit mode (the signal mask a lock sets, the debugger's request)
+     * faults. frame_to_ctx sets the mode back. */
+    GEX_C32( GEX_CTX_CS ) = 0;
     memset( &xcontext, 0, sizeof(xcontext) );
     xcontext.c.ContextFlags = CONTEXT_FULL;
     NtGetContextThread( GetCurrentThread(), &xcontext.c );
@@ -1246,14 +1251,9 @@ static void __wine_gex_fault( int ctx, unsigned int code, ULONG64 addr, unsigned
         break;
     }
     /* a debugger sees the first chance first, as x86-64's
-     * setup_raise_exception sends it; its context is what resumes. The
-     * request is made in 64-bit mode, as a signal handler runs: gex takes
-     * a WoW64 thread's mode from its context (frame_to_ctx sets it back). */
+     * setup_raise_exception sends it; its context is what resumes */
     {
-        NTSTATUS status;
-
-        GEX_C32( GEX_CTX_CS ) = 0;
-        status = send_debug_event( data, &rec, &xcontext.c, TRUE, TRUE );
+        NTSTATUS status = send_debug_event( data, &rec, &xcontext.c, TRUE, TRUE );
 
         if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED)
         {
