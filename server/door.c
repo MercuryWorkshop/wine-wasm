@@ -82,13 +82,20 @@ struct door_area
     unsigned int ctx_size; /* 136: the door context's bytes (the host checks it holds gex's whole context) */
     unsigned int usd;      /* 140: the user shared data (one page): processes copy it at start and
                             * ntdll's first-boot fill is written to it (gex.usd_copy, usd_publish) */
+    unsigned int usd_state;/* 144: USD_UNPUBLISHED until a process publishes its fill there, then
+                            * USD_PUBLISHED (the host sets it): a copy of an unpublished page
+                            * holds only the server's own fields */
 };
+
+#define USD_UNPUBLISHED 0x30445355  /* "USD0" */
+#define USD_PUBLISHED   0x31445355  /* "USD1" */
 
 #define DOOR_VERSION 1
 #define DOOR_BUF_SIZE (1024 * 1024 + 4096)
 #define DOOR_STACK_SIZE (256 * 1024)
 
-static struct door_area door_area_storage = { .lock = 1 /* the pump holds it until its first wait */ };
+static struct door_area door_area_storage = { .lock = 1 /* the pump holds it until its first wait */,
+                                               .usd_state = USD_UNPUBLISHED };
 struct door_area *door_area;
 
 static int kick_rfd = -1;

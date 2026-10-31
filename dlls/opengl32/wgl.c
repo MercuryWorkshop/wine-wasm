@@ -2513,7 +2513,7 @@ GLhandleARB WINAPI glGetHandleARB( GLenum pname )
 
 void WINAPI glGetAttachedObjectsARB( GLhandleARB container, GLsizei max_count, GLsizei *count, GLhandleARB *obj )
 {
-    struct glGetAttachedObjectsARB_params args = { .teb = NtCurrentTeb(), .maxCount = max_count, .count = count };
+    struct glGetAttachedObjectsARB_params args = { .teb = NtCurrentTeb(), .maxCount = max_count, .count = count, .obj = obj };
     struct object_table *table;
     struct context *ctx;
     NTSTATUS status;
@@ -2538,7 +2538,7 @@ void WINAPI glGetAttachedObjectsARB( GLhandleARB container, GLsizei max_count, G
 
 void WINAPI glGetAttachedShaders( GLuint program, GLsizei max_count, GLsizei *count, GLuint *shaders )
 {
-    struct glGetAttachedShaders_params args = { .teb = NtCurrentTeb(), .maxCount = max_count, .count = count };
+    struct glGetAttachedShaders_params args = { .teb = NtCurrentTeb(), .maxCount = max_count, .count = count, .shaders = shaders };
     struct object_table *table;
     struct context *ctx;
     NTSTATUS status;

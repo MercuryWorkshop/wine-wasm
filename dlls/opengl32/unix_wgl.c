@@ -786,6 +786,20 @@ BOOL wrap_wglCopyContext( TEB *teb, HGLRC client_src, HGLRC client_dst, UINT mas
     return copy_context_attributes( teb, client_dst, dst, client_src, src, mask );
 }
 
+/* Whether a buffer's mappings, persistent ones included, go to 32-bit code as
+ * the GL library made them. On gex, the GL library's mappings are its own
+ * memory, which 32-bit code addresses where it is: below 4 GiB they need no
+ * copy, no pinned memory and no placed Vulkan mapping (wow64_map_buffer hands
+ * them over as they are), and one above would fail as it did before. */
+static BOOL wow64_direct_maps(void)
+{
+#ifdef __wasm__
+    return TRUE;
+#else
+    return FALSE;
+#endif
+}
+
 static BOOL initialize_vk_device( TEB *teb, struct context *ctx )
 {
     struct opengl_client_context *client = opengl_client_context_from_client( ctx->base.client_context );
@@ -1047,7 +1061,8 @@ static void make_context_current( TEB *teb, const struct opengl_funcs *funcs, HD
         TRACE( "-- %s (disabled by config)\n", all_extensions[i].name );
     }
 
-    if (is_win64 && is_wow64() && !initialize_vk_device( teb, ctx )
+    if (is_win64 && is_wow64() && !wow64_direct_maps()
+        && !initialize_vk_device( teb, ctx )
         && !(ctx->use_pinned_memory = client->extensions[GL_AMD_pinned_memory]))
     {
         if (client->major_version > 4 || (client->major_version == 4 && client->minor_version > 3))
@@ -1954,6 +1969,7 @@ static struct buffer *create_buffer_storage( TEB *teb, GLenum target, GLuint nam
     VkResult vr;
 
     if (!(flags & (GL_MAP_READ_BIT | GL_MAP_WRITE_BIT))) return NULL;
+    if (wow64_direct_maps()) return NULL;
     if ((!(vk_device = buffers.vk_device) || !vk_device->vk_device) && !ctx->use_pinned_memory) return NULL;
 
     if (!(buffer = calloc( 1, sizeof(*buffer) ))) return NULL;

@@ -316,6 +316,8 @@ DECL_HANDLER(d3dkmt_mutex_acquire);
 DECL_HANDLER(d3dkmt_mutex_release);
 DECL_HANDLER(alpc_create_port);
 DECL_HANDLER(read_session_data);
+DECL_HANDLER(get_apc_data);
+DECL_HANDLER(set_apc_data);
 
 typedef void (*req_handler)( const void *req, void *reply );
 static const req_handler req_handlers[REQ_NB_REQUESTS] =
@@ -629,6 +631,8 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_d3dkmt_mutex_release,
     (req_handler)req_alpc_create_port,
     (req_handler)req_read_session_data,
+    (req_handler)req_get_apc_data,
+    (req_handler)req_set_apc_data,
 };
 
 C_ASSERT( sizeof(abstime_t) == 8 );
@@ -2400,3 +2404,8 @@ C_ASSERT( offsetof(struct read_session_data_request, offset) == 16 );
 C_ASSERT( offsetof(struct read_session_data_request, size) == 24 );
 C_ASSERT( sizeof(struct read_session_data_request) == 32 );
 C_ASSERT( sizeof(struct read_session_data_reply) == 8 );
+C_ASSERT( offsetof(struct get_apc_data_request, handle) == 12 );
+C_ASSERT( sizeof(struct get_apc_data_request) == 16 );
+C_ASSERT( sizeof(struct get_apc_data_reply) == 8 );
+C_ASSERT( offsetof(struct set_apc_data_request, handle) == 12 );
+C_ASSERT( sizeof(struct set_apc_data_request) == 16 );

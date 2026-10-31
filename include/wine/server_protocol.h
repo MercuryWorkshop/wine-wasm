@@ -493,7 +493,9 @@ enum apc_type
     APC_MAP_VIEW_EX,
     APC_UNMAP_VIEW,
     APC_CREATE_THREAD,
-    APC_DUP_HANDLE
+    APC_DUP_HANDLE,
+    APC_READ_VM,
+    APC_WRITE_VM
 };
 
 struct user_apc
@@ -631,6 +633,13 @@ union apc_call
         unsigned int     attributes;
         unsigned int     options;
     } dup_handle;
+    struct
+    {
+        enum apc_type    type;
+        unsigned int     __pad;
+        client_ptr_t     addr;
+        mem_size_t       size;
+    } vm;
 };
 
 union apc_result
@@ -743,6 +752,12 @@ union apc_result
         enum apc_type    type;
         unsigned int     status;
     } break_process;
+    struct
+    {
+        enum apc_type    type;
+        unsigned int     status;
+        mem_size_t       size;
+    } vm;
 };
 
 enum irp_type
@@ -6256,6 +6271,32 @@ struct read_session_data_reply
 };
 
 
+
+struct get_apc_data_request
+{
+    struct request_header __header;
+    obj_handle_t        handle;
+};
+struct get_apc_data_reply
+{
+    struct reply_header __header;
+    /* VARARG(data,bytes); */
+};
+
+
+
+struct set_apc_data_request
+{
+    struct request_header __header;
+    obj_handle_t        handle;
+    /* VARARG(data,bytes); */
+};
+struct set_apc_data_reply
+{
+    struct reply_header __header;
+};
+
+
 enum request
 {
     REQ_new_process,
@@ -6567,6 +6608,8 @@ enum request
     REQ_d3dkmt_mutex_release,
     REQ_alpc_create_port,
     REQ_read_session_data,
+    REQ_get_apc_data,
+    REQ_set_apc_data,
     REQ_NB_REQUESTS
 };
 
@@ -6883,6 +6926,8 @@ union generic_request
     struct d3dkmt_mutex_release_request d3dkmt_mutex_release_request;
     struct alpc_create_port_request alpc_create_port_request;
     struct read_session_data_request read_session_data_request;
+    struct get_apc_data_request get_apc_data_request;
+    struct set_apc_data_request set_apc_data_request;
 };
 union generic_reply
 {
@@ -7197,8 +7242,10 @@ union generic_reply
     struct d3dkmt_mutex_release_reply d3dkmt_mutex_release_reply;
     struct alpc_create_port_reply alpc_create_port_reply;
     struct read_session_data_reply read_session_data_reply;
+    struct get_apc_data_reply get_apc_data_reply;
+    struct set_apc_data_reply set_apc_data_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 959
+#define SERVER_PROTOCOL_VERSION 960
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

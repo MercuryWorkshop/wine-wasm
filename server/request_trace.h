@@ -3549,6 +3549,22 @@ static void dump_read_session_data_reply( const struct read_session_data_reply *
     dump_varargs_bytes( " data=", cur_size );
 }
 
+static void dump_get_apc_data_request( const struct get_apc_data_request *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+}
+
+static void dump_get_apc_data_reply( const struct get_apc_data_reply *req )
+{
+    dump_varargs_bytes( " data=", cur_size );
+}
+
+static void dump_set_apc_data_request( const struct set_apc_data_request *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+    dump_varargs_bytes( ", data=", cur_size );
+}
+
 typedef void (*dump_func)( const void *req );
 
 static const dump_func req_dumpers[REQ_NB_REQUESTS] =
@@ -3862,6 +3878,8 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_d3dkmt_mutex_release_request,
     (dump_func)dump_alpc_create_port_request,
     (dump_func)dump_read_session_data_request,
+    (dump_func)dump_get_apc_data_request,
+    (dump_func)dump_set_apc_data_request,
 };
 
 static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
@@ -4175,6 +4193,8 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
     NULL,
     (dump_func)dump_alpc_create_port_reply,
     (dump_func)dump_read_session_data_reply,
+    (dump_func)dump_get_apc_data_reply,
+    NULL,
 };
 
 static const char * const req_names[REQ_NB_REQUESTS] =
@@ -4488,6 +4508,8 @@ static const char * const req_names[REQ_NB_REQUESTS] =
     "d3dkmt_mutex_release",
     "alpc_create_port",
     "read_session_data",
+    "get_apc_data",
+    "set_apc_data",
 };
 
 static const struct
