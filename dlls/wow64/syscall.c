@@ -953,6 +953,22 @@ NTSTATUS WINAPI wow64_NtWow64IsProcessorFeaturePresent( UINT *args )
 }
 
 
+#ifdef __wasm64__
+/* the 32-bit side is native wasm code: its ntdll a skeleton over a wasm32
+ * module, with the section that names it (.wasmref) */
+static BOOL native_32bit;
+
+static void native_32bit_ntdll( HMODULE module )
+{
+    IMAGE_NT_HEADERS32 *nt = (IMAGE_NT_HEADERS32 *)((char *)module + ((IMAGE_DOS_HEADER *)module)->e_lfanew);
+    IMAGE_SECTION_HEADER *sec = (IMAGE_SECTION_HEADER *)((char *)&nt->OptionalHeader + nt->FileHeader.SizeOfOptionalHeader);
+    unsigned int i;
+
+    for (i = 0; i < nt->FileHeader.NumberOfSections; i++)
+        if (!memcmp( sec[i].Name, ".wasmref", 8 )) native_32bit = TRUE;
+}
+#endif
+
 /**********************************************************************
  *           init_image_mapping
  */
@@ -971,6 +987,9 @@ void init_image_mapping( HMODULE module )
 
         if (usd) *usd = gex_kuser_address();
     }
+#endif
+#ifdef __wasm64__
+    if (ptr) native_32bit_ntdll( module );
 #endif
 }
 
@@ -1378,10 +1397,37 @@ __ASM_GLOBAL_FUNC( cpu_simulate_handler,
                    "ldp x29, x30, [sp], #48\n\t"
                    "ret" )
 #elif defined __wasm64__
+/* The 64-bit context of a thread whose 32-bit code faulted: at the return
+ * pad of the call into that code (gexrt64.h's GEXW_RETURN_PAD). */
+#define RETURN_PAD_32BIT 0x3ffff1
+
+/* With a native 32-bit side the thread's native 32-bit frames lie between
+ * this one and the fault: unwinding to this frame would end them, and with
+ * them every 32-bit __TRY the 32-bit dispatch is to find. The 32-bit
+ * dispatcher goes on in place instead, at the fault, as a 32-bit process's
+ * does. */
 static LONG CALLBACK cpu_simulate_filter( EXCEPTION_POINTERS *ptrs )
 {
+    CONTEXT *context = ptrs->ContextRecord;
+    I386_CONTEXT ctx = { CONTEXT_I386_CONTROL | CONTEXT_I386_INTEGER | CONTEXT_I386_SEGMENTS };
+
     Wow64PassExceptionToGuest( ptrs );
-    return EXCEPTION_EXECUTE_HANDLER;
+    if (!native_32bit || context->Rip != RETURN_PAD_32BIT) return EXCEPTION_EXECUTE_HANDLER;
+    pBTCpuGetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
+    context->ContextFlags = CONTEXT_AMD64_CONTROL | CONTEXT_AMD64_INTEGER;
+    context->Rax = ctx.Eax;
+    context->Rbx = ctx.Ebx;
+    context->Rcx = ctx.Ecx;
+    context->Rdx = ctx.Edx;
+    context->Rsi = ctx.Esi;
+    context->Rdi = ctx.Edi;
+    context->Rbp = ctx.Ebp;
+    context->Rsp = ctx.Esp;
+    context->Rip = ctx.Eip;
+    context->EFlags = ctx.EFlags;
+    context->SegCs = ctx.SegCs;
+    context->SegSs = ctx.SegSs;
+    return EXCEPTION_CONTINUE_EXECUTION;
 }
 
 extern void DECLSPEC_NORETURN cpu_simulate(void);
