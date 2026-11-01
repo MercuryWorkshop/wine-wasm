@@ -31,7 +31,7 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(ntoskrnl);
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)  /* wasm32 serves i386 drivers: their hal exports */
 
 #ifdef __ASM_USE_FASTCALL_WRAPPER
 

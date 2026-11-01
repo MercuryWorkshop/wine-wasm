@@ -73,9 +73,13 @@
 @ stdcall -fastcall ObfDereferenceObject(ptr)
 @ stdcall -fastcall ObfReferenceObject(ptr)
 @ stub RtlPrefetchMemoryNonTemporal
-@ stdcall -fastcall -arch=i386 -norelay RtlUlongByteSwap(long)
-@ stdcall -fastcall -arch=i386 -norelay RtlUlonglongByteSwap(int64)
-@ stdcall -fastcall -arch=i386 -norelay RtlUshortByteSwap(long)
+# (wasm32: ntdll's, forwarded: register-convention helpers the wasm32 code cannot define)
+@ stdcall -fastcall -arch=i386,!wasm32 -norelay RtlUlongByteSwap(long)
+@ stdcall -fastcall -arch=wasm32 -norelay RtlUlongByteSwap(long) ntdll.RtlUlongByteSwap
+@ stdcall -fastcall -arch=i386,!wasm32 -norelay RtlUlonglongByteSwap(int64)
+@ stdcall -fastcall -arch=wasm32 -norelay RtlUlonglongByteSwap(int64) ntdll.RtlUlonglongByteSwap
+@ stdcall -fastcall -arch=i386,!wasm32 -norelay RtlUshortByteSwap(long)
+@ stdcall -fastcall -arch=wasm32 -norelay RtlUshortByteSwap(long) ntdll.RtlUshortByteSwap
 @ stub WmiGetClock
 @ stub Kei386EoiHelper
 @ stub Kii386SpinOnSpinLock
@@ -1563,17 +1567,24 @@
 @ cdecl -private -arch=i386 _CIsqrt()
 @ cdecl -private _abnormal_termination()
 @ cdecl -arch=i386 -norelay -ret64 _alldiv(int64 int64)
-@ cdecl -arch=i386 -norelay _alldvrm(int64 int64)
+@ cdecl -arch=i386,!wasm32 -norelay _alldvrm(int64 int64)
+@ cdecl -arch=wasm32 -norelay _alldvrm(int64 int64) ntdll._alldvrm
 @ cdecl -arch=i386 -norelay -ret64 _allmul(int64 int64)
-@ cdecl -arch=i386 -norelay _alloca_probe()
+@ cdecl -arch=i386,!wasm32 -norelay _alloca_probe()
+@ cdecl -arch=wasm32 -norelay _alloca_probe() ntdll._alloca_probe
 @ cdecl -arch=i386 -norelay -ret64 _allrem(int64 int64)
-@ cdecl -arch=i386 -norelay -ret64 _allshl(int64 long)
-@ cdecl -arch=i386 -norelay -ret64 _allshr(int64 long)
+@ cdecl -arch=i386,!wasm32 -norelay -ret64 _allshl(int64 long)
+@ cdecl -arch=wasm32 -norelay -ret64 _allshl(int64 long) ntdll._allshl
+@ cdecl -arch=i386,!wasm32 -norelay -ret64 _allshr(int64 long)
+@ cdecl -arch=wasm32 -norelay -ret64 _allshr(int64 long) ntdll._allshr
 @ cdecl -arch=i386 -norelay -ret64 _aulldiv(int64 int64)
-@ cdecl -arch=i386 -norelay _aulldvrm(int64 int64)
+@ cdecl -arch=i386,!wasm32 -norelay _aulldvrm(int64 int64)
+@ cdecl -arch=wasm32 -norelay _aulldvrm(int64 int64) ntdll._aulldvrm
 @ cdecl -arch=i386 -norelay -ret64 _aullrem(int64 int64)
-@ cdecl -arch=i386 -norelay -ret64 _aullshr(int64 long)
-@ cdecl -arch=i386 -norelay _chkstk()
+@ cdecl -arch=i386,!wasm32 -norelay -ret64 _aullshr(int64 long)
+@ cdecl -arch=wasm32 -norelay -ret64 _aullshr(int64 long) ntdll._aullshr
+@ cdecl -arch=i386,!wasm32 -norelay _chkstk()
+@ cdecl -arch=wasm32 -norelay _chkstk() ntdll._chkstk
 @ cdecl -arch=i386 _except_handler2(ptr ptr ptr ptr)
 @ cdecl -arch=i386 _except_handler3(ptr ptr ptr ptr)
 @ cdecl _finite(double)
