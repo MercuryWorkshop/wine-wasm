@@ -897,6 +897,14 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
              * NtUserGetKeyState): then an adapter of its own */
             if ((odp->flags & FLAG_IMPORT) && (!odp->name || !strcmp( odp->name, get_link_name( odp ))))
                 continue;
+            /* longjmp and the setjmps are compiler builtins: a call to one
+             * the objects do not define (ntoskrnl re-exports msvcrt's) is
+             * lowered to wasm exception handling, which a DLL's glue has no
+             * runtime for. No adapter: gex binds gexp__missing */
+            if (target.cpu != CPU_WASM64 && !find_func_sig( get_link_name( odp )) &&
+                (!strcmp( get_link_name( odp ), "longjmp" ) || !strcmp( get_link_name( odp ), "setjmp" ) ||
+                 !strcmp( get_link_name( odp ), "_setjmp" ) || !strcmp( get_link_name( odp ), "_setjmpex" )))
+                continue;
             if (!(sig = find_func_sig( get_link_name( odp ))) &&
                 !(sig = spec_sig( odp )))
             {

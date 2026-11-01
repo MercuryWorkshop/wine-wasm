@@ -241,7 +241,7 @@ struct dbg_process*     dbg_get_process_h(HANDLE h)
     return NULL;
 }
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)  /* wasm32 serves i386 programs */
 extern struct backend_cpu be_i386;
 #elif defined(__x86_64__)
 extern struct backend_cpu be_i386;
@@ -293,7 +293,7 @@ struct dbg_process*	dbg_add_process(const struct be_process_io* pio, DWORD pid, 
 
     list_add_head(&dbg_process_list, &p->entry);
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
     p->be_cpu = &be_i386;
 #elif defined(__x86_64__)
     p->be_cpu = wow64 ? &be_i386 : &be_x86_64;
