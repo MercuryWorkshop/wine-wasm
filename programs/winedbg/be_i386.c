@@ -21,7 +21,7 @@
 #include "debugger.h"
 #include "wine/debug.h"
 
-#if defined(__i386__) || defined(__x86_64__) || defined(__wasm32__)  /* wasm32 serves i386 programs */
+#if defined(__i386__) || defined(__x86_64__) || defined(__wasm32__) || defined(__wasm64__)  /* wasm32 and wasm64 serve i386 and x86-64 programs */
 
 WINE_DEFAULT_DEBUG_CHANNEL(winedbg);
 

@@ -243,7 +243,7 @@ struct dbg_process*     dbg_get_process_h(HANDLE h)
 
 #if defined(__i386__) || defined(__wasm32__)  /* wasm32 serves i386 programs */
 extern struct backend_cpu be_i386;
-#elif defined(__x86_64__)
+#elif defined(__x86_64__) || defined(__wasm64__)  /* wasm64 serves x86-64 programs */
 extern struct backend_cpu be_i386;
 extern struct backend_cpu be_x86_64;
 #elif defined(__arm__) && !defined(__ARMEB__)
@@ -295,7 +295,7 @@ struct dbg_process*	dbg_add_process(const struct be_process_io* pio, DWORD pid, 
 
 #if defined(__i386__) || defined(__wasm32__)
     p->be_cpu = &be_i386;
-#elif defined(__x86_64__)
+#elif defined(__x86_64__) || defined(__wasm64__)
     p->be_cpu = wow64 ? &be_i386 : &be_x86_64;
 #elif defined(__arm__) && !defined(__ARMEB__)
     p->be_cpu = &be_arm;

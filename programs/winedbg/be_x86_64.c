@@ -22,7 +22,7 @@
 #include "debugger.h"
 #include "wine/debug.h"
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__wasm64__)  /* wasm64 serves x86-64 programs */
 
 WINE_DEFAULT_DEBUG_CHANNEL(winedbg);
 

@@ -54,7 +54,7 @@ void minidump_write(const char* file, const EXCEPTION_RECORD* rec)
     MINIDUMP_EXCEPTION_INFORMATION      mei;
     EXCEPTION_POINTERS                  ep;
 
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(__wasm64__)
     if (dbg_curr_process->be_cpu->machine != IMAGE_FILE_MACHINE_AMD64)
     {
         FIXME("Cannot write minidump for 32-bit process using 64-bit winedbg\n");
@@ -484,7 +484,7 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
             }
         }
         if (machine == IMAGE_FILE_MACHINE_UNKNOWN
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(__wasm64__)
                                                   || machine == IMAGE_FILE_MACHINE_I386
 #endif
             )
