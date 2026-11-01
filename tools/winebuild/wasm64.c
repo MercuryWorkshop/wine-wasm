@@ -147,6 +147,12 @@ const char *output_adapter64( const ORDDEF *odp, const char *wasm_sig )
     unsigned int j, k = 0, nfixed, n = count++;
     int sret_reg = 0, sret_mem = 0, fmt = -1, wide = 0, va_list_param = -1;
 
+    /* longjmp and the setjmps are compiler builtins whose prototype a
+     * declaration here may not change (ntoskrnl exports a longjmp it does
+     * not define: clang's backend failed on the guessed one) */
+    if (!str && (!strcmp( link, "longjmp" ) || !strcmp( link, "setjmp" ) ||
+                 !strcmp( link, "_setjmp" ) || !strcmp( link, "_setjmpex" )))
+        return NULL;
     if (!parse_sig64( str ? str : wasm_sig, &s )) return NULL;
     if (s.ret.k == 'X') return NULL;
     sret_reg = s.ret.k == 's' && small_struct( s.ret.size );
@@ -204,7 +210,8 @@ const char *output_adapter64( const ORDDEF *odp, const char *wasm_sig )
     for (j = 0; j < nfixed; j++)
     {
         if (j) output( ", " );
-        if ((int)j == va_list_param) output( "buf" );
+        /* (as the declaration has it: a forward's parameters are words) */
+        if ((int)j == va_list_param) output( "(%s)(unsigned long long)buf", c_type64( &s.params[j] ));
         else output_arg64( &s.params[j], k + j );
     }
     if (s.varargs) output( "%sbuf", nfixed ? ", " : "" );
@@ -224,29 +231,51 @@ const char *output_adapter64( const ORDDEF *odp, const char *wasm_sig )
     return ident;
 }
 
-/* The entry point: a program's mainCRTStartup(void), a DLL's
- * DllMain(hinst, reason, reserved). */
+/* The entry point: a program's mainCRTStartup(void), a driver's DriverEntry(driver, path), a DLL's
+ * DllMain(hinst, reason, reserved). First, at a DLL's process attach (with
+ * the loader lock held, as the loader binds an import table) and before a
+ * program's main, the module's calls into DLLs that stay x86 code that are
+ * static imports are bound (pelink's guest-import stubs). Bound on first
+ * call instead, a stub would take the loader lock wherever its caller is:
+ * inside a user callback holding win32u's lock, while a thread detaching
+ * holds the loader lock and waits for win32u's lock. */
 void output_entry64( DLLSPEC *spec, int has_init )
 {
-    if (spec->init_func && !(spec->characteristics & IMAGE_FILE_DLL))
+    int is_dll = (spec->characteristics & IMAGE_FILE_DLL) != 0;
+
+    output( "extern void wine_gexw_bind_imports(void) __attribute__((weak));\n" );
+    if (spec->init_func && !is_dll && spec->subsystem == IMAGE_SUBSYSTEM_NATIVE)
+    {
+        /* a driver's DriverEntry(driver, registry path), which ntoskrnl calls */
+        output( "int %s(void *, void *);\n", spec->init_func );
+        output( "static int gexp__entry_body(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
+        output( "    if (wine_gexw_bind_imports) wine_gexw_bind_imports();\n" );
+        output( "    return __gexw_ret(ctx, ret, (unsigned int)%s((void *)__gexw_arg(ctx, 0), (void *)__gexw_arg(ctx, 1)));\n}\n\n",
+                spec->init_func );
+    }
+    else if (spec->init_func && !is_dll)
     {
         output( "int %s(void);\n", spec->init_func );
         output( "static int gexp__entry_body(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
+        output( "    if (wine_gexw_bind_imports) wine_gexw_bind_imports();\n" );
         output( "    return __gexw_ret(ctx, ret, (unsigned int)%s());\n}\n\n", spec->init_func );
     }
     else if (has_init)
     {
         output( "int %s(void *, unsigned int, void *);\n", spec->init_func );
         output( "static int gexp__entry_body(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
-        output( "    int r = %s((void *)__gexw_arg(ctx, 0), (unsigned int)__gexw_arg(ctx, 1), (void *)__gexw_arg(ctx, 2));\n",
+        output( "    int r;\n" );
+        output( "    if ((unsigned int)__gexw_arg(ctx, 1) == 1 && wine_gexw_bind_imports) wine_gexw_bind_imports();\n" );
+        output( "    r = %s((void *)__gexw_arg(ctx, 0), (unsigned int)__gexw_arg(ctx, 1), (void *)__gexw_arg(ctx, 2));\n",
                 spec->init_func );
         output( "    return __gexw_ret(ctx, ret, (unsigned int)r);\n}\n\n" );
     }
     else
     {
-        output( "int gexp__entry(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
+        output( "static int gexp__entry_body(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
+        output( "    if (%s && wine_gexw_bind_imports) wine_gexw_bind_imports();\n",
+                is_dll ? "(unsigned int)__gexw_arg(ctx, 1) == 1" : "1" );
         output( "    return __gexw_ret(ctx, ret, 1);\n}\n\n" );
-        return;
     }
     output( "int gexp__entry(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
     output( "    return __gexw_entry(ctx, depth, need, ret, gexp__entry_body);\n}\n\n" );

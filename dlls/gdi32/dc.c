@@ -198,7 +198,7 @@ static struct graphics_driver *create_driver( HMODULE module )
 
 #if defined(__i386__) || defined(__wasm32__)  /* wasm32 serves i386 programs */
 static const WCHAR printer_env[] = L"w32x86";
-#elif defined __x86_64__
+#elif defined(__x86_64__) || defined(__wasm64__)  /* wasm64 serves x86-64 programs */
 static const WCHAR printer_env[] = L"x64";
 #elif defined __arm__
 static const WCHAR printer_env[] = L"arm";
