@@ -3648,6 +3648,11 @@ static void output_source_nasm( struct makefile *make, struct incl_file *source,
 }
 
 
+/* Wine as native wasm32 (docs/wine-native.md): a DLL's code is a wasm
+ * module (the .so), and its PE file is the skeleton gex binds it at, built
+ * from the module (data exports point into the module's data). */
+static int host_wasm32;
+
 /*******************************************************************
  *         output_source_one_arch
  */
@@ -3673,7 +3678,15 @@ static void output_source_one_arch( struct makefile *make, struct incl_file *sou
     {
         if (!unix_lib_supported) return;
     }
-    else if (source->file->flags & (FLAG_C_CXX | FLAG_C_ASM))
+    else if (source->file->flags & FLAG_C_ASM)
+    {
+        return;
+    }
+    /* a wasm build compiles a static library's C++ (FluidSynth's DSP
+     * templates, which need no C++ runtime) with its CXX, when configure
+     * has one */
+    else if ((source->file->flags & FLAG_C_CXX) &&
+             !(host_wasm32 && make->staticlib && get_expanded_arch_var( make, "CXX", arch )))
     {
         return;
     }
@@ -3890,10 +3903,6 @@ static const struct
 };
 
 
-/* Wine as native wasm32 (docs/wine-native.md): a DLL's code is a wasm
- * module (the .so), and its PE file is the skeleton gex binds it at, built
- * from the module (data exports point into the module's data). */
-static int host_wasm32;
 
 /*******************************************************************
  *         output_fake_module
