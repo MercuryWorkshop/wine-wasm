@@ -709,9 +709,10 @@ HRESULT ICLRRuntimeInfo_GetRuntimeHost(ICLRRuntimeInfo *iface, RuntimeHost **res
     return CLRRuntimeInfo_GetRuntimeHost(This, result);
 }
 
-#ifdef __i386__
+/* a wasm build serves x86 programs: theirs is the x86 Mono */
+#if defined(__i386__) || defined(__wasm32__)
 static const WCHAR libmono2_arch_dll[] = L"\\bin\\libmono-2.0-x86.dll";
-#elif defined(__x86_64__)
+#elif defined(__x86_64__) || defined(__wasm64__)
 static const WCHAR libmono2_arch_dll[] = L"\\bin\\libmono-2.0-x86_64.dll";
 #elif defined(__aarch64__)
 static const WCHAR libmono2_arch_dll[] = L"\\bin\\libmono-2.0-arm64.dll";
