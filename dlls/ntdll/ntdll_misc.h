@@ -103,7 +103,7 @@ extern const WCHAR windows_dir[];
 
 extern void (FASTCALL *pBaseThreadInitThunk)(DWORD,LPTHREAD_START_ROUTINE,void *);
 
-#ifdef __wasm64__
+#if defined(__wasm64__) || defined(__wasm32__)
 /* where gex has this process read KUSER_SHARED_DATA (thread.c) */
 extern struct _KUSER_SHARED_DATA *gex_user_shared_data(void);
 #define user_shared_data gex_user_shared_data()
