@@ -471,7 +471,7 @@ static struct list pp_includelogiclist = LIST_INIT( pp_includelogiclist );
 	/*
 	 * Scan the substitution of a macro
 	 */
-<pp_mbody>[^a-zA-Z0-9'"#/\\\n]+	ppy_lval.cptr = xstrdup(ppy_text); return tLITERAL;
+<pp_mbody>[^a-zA-Z0-9_'"#/\\\n]+	ppy_lval.cptr = xstrdup(ppy_text); return tLITERAL;
 <pp_mbody>{cident}		ppy_lval.cptr = xstrdup(ppy_text); return tIDENT;
 <pp_mbody>\#\#			return tCONCAT;
 <pp_mbody>\#			return tSTRINGIZE;
