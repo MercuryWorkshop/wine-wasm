@@ -1964,8 +1964,24 @@ NTSTATUS WINAPI LdrFindEntryForAddress( const void *addr, PLDR_DATA_TABLE_ENTRY 
 {
     RTL_BALANCED_NODE *node;
 
+#ifdef __wasm__
+    if (!(node = rtl_rb_tree_get( &base_address_index_tree, addr, module_address_search_compare )))
+    {
+        /* A native DLL's function pointer is a function-table index, below
+         * any view (gex's NATIVE_FN_TOP), and its static data is in memory
+         * gex allocated beside its skeleton: neither is in the image. gex
+         * knows the DLL of both, and gives its skeleton's base. */
+        extern unsigned long long gex_image_of( unsigned long long addr )
+            __attribute__((import_module("gex"), import_name("image_of")));
+        void *base = (void *)(ULONG_PTR)gex_image_of( (ULONG_PTR)addr );
+
+        if (!base || !(node = rtl_rb_tree_get( &base_address_index_tree, base, module_address_search_compare )))
+            return STATUS_NO_MORE_ENTRIES;
+    }
+#else
     if (!(node = rtl_rb_tree_get( &base_address_index_tree, addr, module_address_search_compare )))
         return STATUS_NO_MORE_ENTRIES;
+#endif
     *pmod = CONTAINING_RECORD(node, LDR_DATA_TABLE_ENTRY, BaseAddressIndexNode);
     return STATUS_SUCCESS;
 }

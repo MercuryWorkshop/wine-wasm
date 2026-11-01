@@ -215,6 +215,14 @@ static void *w64_code_space_start = (void *)0x400000;
 
 #endif
 
+#ifdef __wasm64__
+/* No view below gex's NATIVE_FN_TOP (the end of its dispatch directory,
+ * which with its runtime's reserved pages takes the space under it anyway):
+ * there a value is a native PE function pointer, a function-table index,
+ * and LdrFindEntryForAddress asks gex for its DLL. */
+static void * const gex_fn_top = (void *)0x300000;
+#endif
+
 static struct file_view *arm64ec_view;
 
 ULONG_PTR user_space_wow_limit = 0;
@@ -2476,6 +2484,11 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
     else if (!base && is_wow64() && limit_low < (ULONG_PTR)w64_code_space_start &&
              (!limit_high || limit_high > (ULONG_PTR)w64_code_space_start))
         limit_low = (ULONG_PTR)w64_code_space_start;
+#endif
+
+#ifdef __wasm64__
+    if (base && (char *)base < (char *)gex_fn_top) return STATUS_CONFLICTING_ADDRESSES;
+    if (!base && limit_low < (ULONG_PTR)gex_fn_top) limit_low = (ULONG_PTR)gex_fn_top;
 #endif
 
     if (alloc_type & MEM_REPLACE_PLACEHOLDER)
