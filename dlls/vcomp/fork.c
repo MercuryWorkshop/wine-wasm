@@ -165,4 +165,53 @@ __ASM_GLOBAL_FUNC( _vcomp_fork_call_wrapper,
                    "ldp x29, x30, [SP], #16\n\t"
                    "ret" )
 
+#elif defined(__wasm32__) || defined(__wasm64__)
+
+#include "wine/debug.h"
+
+WINE_DEFAULT_DEBUG_CHANNEL(vcomp);
+
+/* Native code calls the wrapper, the program's code or a native module's,
+ * through a pointer of its own arity. */
+void CDECL _vcomp_fork_call_wrapper( void *wrapper, int nargs, void **a )
+{
+    switch (nargs)
+    {
+    case 0: ((void (CDECL *)(void))wrapper)(); break;
+    case 1: ((void (CDECL *)(void *))wrapper)(a[0]); break;
+    case 2: ((void (CDECL *)(void *, void *))wrapper)(a[0], a[1]); break;
+    case 3: ((void (CDECL *)(void *, void *, void *))wrapper)(a[0], a[1], a[2]); break;
+    case 4: ((void (CDECL *)(void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3]); break;
+    case 5: ((void (CDECL *)(void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4]); break;
+    case 6: ((void (CDECL *)(void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5]); break;
+    case 7: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6]); break;
+    case 8: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]); break;
+    case 9: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8]); break;
+    case 10: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9]); break;
+    case 11: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10]); break;
+    case 12: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11]); break;
+    case 13: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12]); break;
+    case 14: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13]); break;
+    case 15: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14]); break;
+    case 16: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15]); break;
+    case 17: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15], a[16]); break;
+    case 18: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15], a[16], a[17]); break;
+    case 19: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15], a[16], a[17], a[18]); break;
+    case 20: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15], a[16], a[17], a[18], a[19]); break;
+    case 21: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15], a[16], a[17], a[18], a[19], a[20]); break;
+    case 22: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15], a[16], a[17], a[18], a[19], a[20], a[21]); break;
+    case 23: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15], a[16], a[17], a[18], a[19], a[20], a[21], a[22]); break;
+    case 24: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15], a[16], a[17], a[18], a[19], a[20], a[21], a[22], a[23]); break;
+    case 25: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15], a[16], a[17], a[18], a[19], a[20], a[21], a[22], a[23], a[24]); break;
+    case 26: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15], a[16], a[17], a[18], a[19], a[20], a[21], a[22], a[23], a[24], a[25]); break;
+    case 27: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15], a[16], a[17], a[18], a[19], a[20], a[21], a[22], a[23], a[24], a[25], a[26]); break;
+    case 28: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15], a[16], a[17], a[18], a[19], a[20], a[21], a[22], a[23], a[24], a[25], a[26], a[27]); break;
+    case 29: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15], a[16], a[17], a[18], a[19], a[20], a[21], a[22], a[23], a[24], a[25], a[26], a[27], a[28]); break;
+    case 30: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15], a[16], a[17], a[18], a[19], a[20], a[21], a[22], a[23], a[24], a[25], a[26], a[27], a[28], a[29]); break;
+    case 31: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15], a[16], a[17], a[18], a[19], a[20], a[21], a[22], a[23], a[24], a[25], a[26], a[27], a[28], a[29], a[30]); break;
+    case 32: ((void (CDECL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))wrapper)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15], a[16], a[17], a[18], a[19], a[20], a[21], a[22], a[23], a[24], a[25], a[26], a[27], a[28], a[29], a[30], a[31]); break;
+    default: ERR( "%d arguments, at most 32\n", nargs ); break;
+    }
+}
+
 #endif
