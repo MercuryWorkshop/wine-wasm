@@ -4356,6 +4356,9 @@ __ASM_GLOBAL_FUNC( __chkstk, "lsl r4, r4, #2\n\t"
 #elif defined(__aarch64__)
 /* Supposed to touch all the stack pages, but we shouldn't need that. */
 __ASM_GLOBAL_FUNC( __chkstk, "ret" );
+#elif defined(__wasm64__)
+/* (wasm64 serves x86_64 drivers: the x86_64 one, which returns) */
+void CDECL __chkstk(void) {}
 #endif
 
 /*********************************************************************
@@ -4785,7 +4788,7 @@ KPROCESSOR_MODE WINAPI ExGetPreviousMode(void)
     return PsIsSystemThread((PETHREAD)KeGetCurrentThread()) ? KernelMode : UserMode;
 }
 
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(__wasm64__)  /* wasm64 serves x86_64 drivers */
 
 void WINAPI KfRaiseIrql(KIRQL new, KIRQL *old)
 {
