@@ -1772,6 +1772,7 @@
 @ stdcall __wine_ctrl_routine(ptr)
 @ extern -private __wine_syscall_dispatcher
 @ extern -private __wine_unix_call_dispatcher
+@ extern -private -arch=i386,!wasm32 __wine_user_shared_data user_shared_data
 @ extern -private -arch=arm64ec __wine_unix_call_dispatcher_arm64ec
 @ extern -private __wine_unixlib_handle
 

@@ -901,6 +901,17 @@ void init_image_mapping( HMODULE module )
     ULONG *ptr = RtlFindExportedRoutineByName( module, "Wow64Transition" );
 
     if (ptr) *ptr = PtrToUlong( pBTCpuGetBopCode() );
+#if defined(__wasm32__) || defined(__wasm64__)
+    {
+        /* the 32-bit ntdll reads KUSER_SHARED_DATA through its user_shared_data,
+         * 0x7ffe0000; in a compact space that page is at the low address gex folds
+         * constant accesses to, which a pointer read is not */
+        extern unsigned int gex_kuser_address(void) __attribute__((import_module("gex"), import_name("kuser_address")));
+        ULONG *usd = RtlFindExportedRoutineByName( module, "__wine_user_shared_data" );
+
+        if (usd) *usd = gex_kuser_address();
+    }
+#endif
 }
 
 
