@@ -385,11 +385,18 @@ static void run_until( int ctx, uint32_t stop, uint32_t limit )
          * since that entry is dead. Drop them; the entry returns 0 and the
          * guest goes on from the context. */
         if (limit && in_mode( ctx ) && gp_reg( ctx, R_ESP ) >= limit) __gexw_throw_unwind();
+        uint32_t esp = gp_reg( ctx, R_ESP );
         GEX_C64( GEX_CTX_LAST_TARGET ) = pc;
         if (GEX_FTAB( gex_ftab_idx( pc ))( ctx, depth, 0xffffffffu, stop )) return;
         /* a trap through native frames inside it skipped their entries'
          * restores */
         gexw_set_entry_esp( limit );
+        /* Left where it was entered, with the stack as it was: its depth
+         * guard, the nest it was called in being full. That nest is ours
+         * and cannot be left, so the guest goes on in a new nest from here,
+         * at depth 0, as gex's own nested loops start one; called again at
+         * this depth it would leave again, forever. */
+        if ((uint32_t)GEX_C64( GEX_CTX_PC ) == pc && gp_reg( ctx, R_ESP ) == esp) depth = 0;
     }
 }
 
