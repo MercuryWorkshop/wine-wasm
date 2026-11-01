@@ -2813,12 +2813,13 @@ static unsigned int unused_font_count;
 #define UNUSED_CACHE_SIZE 10
 
 static BOOL fontcmp( const struct gdi_font *font, DWORD hash, const LOGFONTW *lf,
-                     const FMAT2 *matrix, BOOL can_use_bitmap )
+                     const FMAT2 *matrix, BOOL can_use_bitmap, UINT aa_request )
 {
     if (font->hash != hash) return TRUE;
     if (memcmp( &font->matrix, matrix, sizeof(*matrix))) return TRUE;
     if (memcmp( &font->lf, lf, offsetof(LOGFONTW, lfFaceName))) return TRUE;
     if (!font->can_use_bitmap != !can_use_bitmap) return TRUE;
+    if (font->aa_request != aa_request) return TRUE;
     return facename_compare( font->lf.lfFaceName, lf->lfFaceName, -1 );
 }
 
@@ -2852,20 +2853,21 @@ static void cache_gdi_font( struct gdi_font *font )
     static DWORD cache_num = 1;
 
     font->cache_num = cache_num++;
-    font->hash = hash_font( &font->lf, &font->matrix, font->can_use_bitmap );
+    font->hash = hash_font( &font->lf, &font->matrix, font->can_use_bitmap ) ^ (font->aa_request << 8);
     list_add_head( &gdi_font_list, &font->entry );
     TRACE( "font %p\n", font );
 }
 
-static struct gdi_font *find_cached_gdi_font( const LOGFONTW *lf, const FMAT2 *matrix, BOOL can_use_bitmap )
+static struct gdi_font *find_cached_gdi_font( const LOGFONTW *lf, const FMAT2 *matrix, BOOL can_use_bitmap,
+                                              UINT aa_request )
 {
     struct gdi_font *font;
-    DWORD hash = hash_font( lf, matrix, can_use_bitmap );
+    DWORD hash = hash_font( lf, matrix, can_use_bitmap ) ^ (aa_request << 8);
 
     /* try the in-use list */
     LIST_FOR_EACH_ENTRY( font, &gdi_font_list, struct gdi_font, entry )
     {
-        if (fontcmp( font, hash, lf, matrix, can_use_bitmap )) continue;
+        if (fontcmp( font, hash, lf, matrix, can_use_bitmap, aa_request )) continue;
         list_remove( &font->entry );
         list_add_head( &gdi_font_list, &font->entry );
         if (!font->refcount++)
@@ -4420,7 +4422,7 @@ static void get_nearest_charset( const WCHAR *family_name, struct gdi_font_face 
     csi->ciCharset = DEFAULT_CHARSET;
 }
 
-static struct gdi_font *select_font( LOGFONTW *lf, FMAT2 dcmat, BOOL can_use_bitmap )
+static struct gdi_font *select_font( LOGFONTW *lf, FMAT2 dcmat, BOOL can_use_bitmap, UINT aa_request )
 {
     struct gdi_font *font;
     struct gdi_font_face *face;
@@ -4438,7 +4440,7 @@ static struct gdi_font *select_font( LOGFONTW *lf, FMAT2 dcmat, BOOL can_use_bit
     if (!facename_compare( lf->lfFaceName, symbolW, -1 )) lf->lfCharSet = SYMBOL_CHARSET;
 
     /* check the cache first */
-    if ((font = find_cached_gdi_font( lf, &dcmat, can_use_bitmap )))
+    if ((font = find_cached_gdi_font( lf, &dcmat, can_use_bitmap, aa_request )))
     {
         TRACE( "returning cached gdiFont(%p)\n", font );
         return font;
@@ -4454,6 +4456,7 @@ static struct gdi_font *select_font( LOGFONTW *lf, FMAT2 dcmat, BOOL can_use_bit
     font->use_logfont_name = substituted;
     font->matrix = dcmat;
     font->can_use_bitmap = can_use_bitmap;
+    font->aa_request = aa_request;
     if (!csi.fs.fsCsb[0]) get_nearest_charset( face->family->family_name, face, &csi );
     font->charset = csi.ciCharset;
     font->codepage = csi.ciACP;
@@ -4481,7 +4484,7 @@ static struct gdi_font *select_font( LOGFONTW *lf, FMAT2 dcmat, BOOL can_use_bit
         dcmat.eM11 = dcmat.eM22 = 1.0;
         /* As we changed the matrix, we need to search the cache for the font again,
          * otherwise we might explode the cache. */
-        if ((cachedfont = find_cached_gdi_font( lf, &dcmat, can_use_bitmap )))
+        if ((cachedfont = find_cached_gdi_font( lf, &dcmat, can_use_bitmap, aa_request )))
         {
             TRACE("Found cached font after non-scalable matrix rescale!\n");
             free_gdi_font( font );
@@ -4582,7 +4585,7 @@ static HFONT font_SelectFont( PHYSDEV dev, HFONT hfont, UINT *aa_flags )
 
         pthread_mutex_lock( &font_lock );
 
-        font = select_font( &lf, dcmat, can_use_bitmap );
+        font = select_font( &lf, dcmat, can_use_bitmap, *aa_flags );
 
         if (font)
         {
@@ -4595,6 +4598,9 @@ static HFONT font_SelectFont( PHYSDEV dev, HFONT hfont, UINT *aa_flags )
                     *aa_flags = font_smoothing;
             }
             *aa_flags = font_funcs->get_aa_flags( font, *aa_flags, antialias_fakes );
+            /* the format follows from the request, which is part of the cache key,
+             * so every DC that selects this font draws it the same way */
+            if (!font->metrics_format) font->metrics_format = *aa_flags;
         }
         TRACE( "%p %s %d aa %x\n", hfont, debugstr_w(lf.lfFaceName), lf.lfHeight, *aa_flags );
         pthread_mutex_unlock( &font_lock );

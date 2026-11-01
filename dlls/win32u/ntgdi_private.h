@@ -283,6 +283,8 @@ struct gdi_font
     UINT                   ntmFlags;
     UINT                   ntmAvgWidth;
     UINT                   aa_flags;
+    UINT                   aa_request;         /* the format the device asked for, part of the cache key */
+    UINT                   metrics_format;     /* the format text is drawn with: GGO_METRICS loads glyphs as it does */
     ULONG                  ttc_item_offset;    /* 0 if font is not a part of TrueType collection */
     UINT                   can_use_bitmap : 1;
     UINT                   fake_italic : 1;

@@ -3103,8 +3103,9 @@ static UINT freetype_get_glyph_outline( struct gdi_font *font, UINT glyph, UINT 
     FT_Glyph_Metrics metrics;
     FT_Error err;
     FT_BBox bbox;
-    FT_Int load_flags = get_load_flags(format);
+    FT_Int load_flags;
     FT_Matrix transform_matrices[3], *matrices = NULL;
+    UINT load_format;
     BOOL vertical_metrics;
 
     TRACE("%p, %04x, %08x, %p, %08x, %p, %p\n", font, glyph, format, lpgm, buflen, buf, lpmat);
@@ -3113,13 +3114,23 @@ static UINT freetype_get_glyph_outline( struct gdi_font *font, UINT glyph, UINT 
           font->matrix.eM11, font->matrix.eM12,
           font->matrix.eM21, font->matrix.eM22);
 
+    /* GGO_METRICS loads the glyph as the font's text is drawn (font_SelectFont's
+     * format): its hinting target, and its embedded bitmap strike if it draws
+     * from one. Measured otherwise, a glyph's advance can differ from the one
+     * it is drawn with, and measured text is laid out wider or narrower than
+     * drawn. */
+    load_format = format;
+    if ((format & ~GGO_GLYPH_INDEX) == GGO_METRICS && base_font->metrics_format)
+        load_format = (format & (GGO_GLYPH_INDEX | GGO_UNHINTED)) | base_font->metrics_format;
+    load_flags = get_load_flags(load_format);
+
     format &= ~GGO_UNHINTED;
 
     matrices = get_transform_matrices( font, tategaki, lpmat, transform_matrices );
 
     vertical_metrics = (tategaki && FT_HAS_VERTICAL(ft_face));
 
-    if (matrices || format != GGO_BITMAP) load_flags |= FT_LOAD_NO_BITMAP;
+    if (matrices || (load_format & ~(GGO_GLYPH_INDEX | GGO_UNHINTED)) != GGO_BITMAP) load_flags |= FT_LOAD_NO_BITMAP;
     if (vertical_metrics) load_flags |= FT_LOAD_VERTICAL_LAYOUT;
 
     err = pFT_Load_Glyph(ft_face, glyph, load_flags & FT_LOAD_NO_HINTING ? load_flags : load_flags | FT_LOAD_PEDANTIC);
