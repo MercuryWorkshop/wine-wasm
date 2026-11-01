@@ -467,6 +467,10 @@ extern "C++" { \
 #define STDAPIV_(type)          EXTERN_C type STDAPIVCALLTYPE
 #define STDMETHODIMPV           HRESULT STDMETHODVCALLTYPE
 #define STDMETHODIMPV_(type)    type STDMETHODVCALLTYPE
+#define IFACEMETHODIMP          STDMETHODIMP
+#define IFACEMETHODIMP_(type)   STDMETHODIMP_(type)
+#define IFACEMETHODIMPV         STDMETHODIMPV
+#define IFACEMETHODIMPV_(type)  STDMETHODIMPV_(type)
 
 /* Define the basic types */
 #ifndef VOID
@@ -2325,6 +2329,8 @@ typedef void (CALLBACK *PTERMINATION_HANDLER)(BOOLEAN,DWORD64);
 #define PRODUCT_PROFESSIONAL_S_N                        0x00000080
 #define PRODUCT_ENTERPRISE_S_EVALUATION                 0x00000081
 #define PRODUCT_ENTERPRISE_S_N_EVALUATION               0x00000082
+#define PRODUCT_DATACENTER_A_SERVER_CORE                0x00000091
+#define PRODUCT_STANDARD_A_SERVER_CORE                  0x00000092
 #define PRODUCT_UNLICENSED                              0xABCDABCD
 
 
@@ -7999,6 +8005,22 @@ static FORCEINLINE LONGLONG WINAPI InterlockedXorNoFence64( LONGLONG volatile *d
 static FORCEINLINE LONGLONG WINAPI InterlockedXorRelease64( LONGLONG volatile *dest, LONGLONG val ) { return __atomic_fetch_xor( dest, val, __ATOMIC_RELEASE ); }
 
 #endif  /* defined(__arm__) || defined(__aarch64__) */
+
+#if defined(__cplusplus) && !defined(_MSC_VER)
+/* the unsigned overloads of the SDK's C++ */
+extern "C++" {
+static FORCEINLINE unsigned InterlockedIncrement( unsigned volatile *dest ) { return InterlockedIncrement( (LONG volatile *)dest ); }
+static FORCEINLINE unsigned long InterlockedIncrement( unsigned long volatile *dest ) { return InterlockedIncrement( (LONG volatile *)dest ); }
+static FORCEINLINE unsigned InterlockedDecrement( unsigned volatile *dest ) { return InterlockedDecrement( (LONG volatile *)dest ); }
+static FORCEINLINE unsigned long InterlockedDecrement( unsigned long volatile *dest ) { return InterlockedDecrement( (LONG volatile *)dest ); }
+static FORCEINLINE unsigned InterlockedExchange( unsigned volatile *dest, unsigned val ) { return InterlockedExchange( (LONG volatile *)dest, val ); }
+static FORCEINLINE unsigned long InterlockedExchange( unsigned long volatile *dest, unsigned long val ) { return InterlockedExchange( (LONG volatile *)dest, val ); }
+static FORCEINLINE unsigned InterlockedExchangeAdd( unsigned volatile *dest, unsigned val ) { return InterlockedExchangeAdd( (LONG volatile *)dest, val ); }
+static FORCEINLINE unsigned long InterlockedExchangeAdd( unsigned long volatile *dest, unsigned long val ) { return InterlockedExchangeAdd( (LONG volatile *)dest, val ); }
+static FORCEINLINE unsigned InterlockedCompareExchange( unsigned volatile *dest, unsigned xchg, unsigned cmp ) { return InterlockedCompareExchange( (LONG volatile *)dest, xchg, cmp ); }
+static FORCEINLINE unsigned long InterlockedCompareExchange( unsigned long volatile *dest, unsigned long xchg, unsigned long cmp ) { return InterlockedCompareExchange( (LONG volatile *)dest, xchg, cmp ); }
+}
+#endif
 
 #if defined(__x86_64__) || defined(__i386__)
 /* On x86, Support old GCC with either no or buggy (GCC BZ#81316) __atomic_* support */

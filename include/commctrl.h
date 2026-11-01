@@ -1069,12 +1069,6 @@ typedef struct tagNMBCHOTITEM
 #define BST_HOT                 0x0200
 #define BST_DROPDOWNPUSHED      0x0400
 
-/* Button control styles for _WIN32_WINNT >= 0x600 */
-#define BS_SPLITBUTTON          0x0000000C
-#define BS_DEFSPLITBUTTON       0x0000000D
-#define BS_COMMANDLINK          0x0000000E
-#define BS_DEFCOMMANDLINK       0x0000000F
-
 #define BCSIF_GLYPH             0x00000001
 #define BCSIF_IMAGE             0x00000002
 #define BCSIF_STYLE             0x00000004
@@ -3872,6 +3866,11 @@ typedef struct tagNMLVCUSTOMDRAW
     UINT uAlign;	/* (_WIN32_IE >= 0x560) */
 } NMLVCUSTOMDRAW, *LPNMLVCUSTOMDRAW;
 
+/* NMLVCUSTOMDRAW's dwItemType */
+#define LVCDI_ITEM      0x00000000
+#define LVCDI_GROUP     0x00000001
+#define LVCDI_ITEMSLIST 0x00000002
+
 typedef struct tagNMLVCACHEHINT
 {
 	NMHDR	hdr;
@@ -3936,6 +3935,8 @@ typedef struct tagLVITEMINDEX
 
 #define ListView_SetItemCount(hwnd,count) \
     (BOOL)SNDMSG((hwnd),LVM_SETITEMCOUNT,(WPARAM)(INT)(count),0)
+#define ListView_SetItemCountEx(hwnd,count,flags) \
+    (BOOL)SNDMSG((hwnd),LVM_SETITEMCOUNT,(WPARAM)(INT)(count),(LPARAM)(flags))
 #define ListView_SetTextBkColor(hwnd,clrBk) \
     (BOOL)SNDMSG((hwnd),LVM_SETTEXTBKCOLOR,0,(LPARAM)(COLORREF)(clrBk))
 #define ListView_SetTextColor(hwnd,clrBk) \

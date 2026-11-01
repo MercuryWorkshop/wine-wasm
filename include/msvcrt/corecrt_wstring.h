@@ -67,6 +67,7 @@ _ACRTIMP int      __cdecl wcsncmp(const wchar_t*,const wchar_t*,size_t);
 _ACRTIMP wchar_t* __cdecl wcsncpy(wchar_t*,const wchar_t*,size_t);
 _ACRTIMP errno_t  __cdecl wcsncpy_s(wchar_t*,size_t,const wchar_t*,size_t);
 _ACRTIMP size_t   __cdecl wcsnlen(const wchar_t*,size_t);
+static inline size_t wcsnlen_s(const wchar_t *str, size_t count) { return str ? wcsnlen(str, count) : 0; }
 _ACRTIMP wchar_t* __cdecl wcspbrk(const wchar_t*,const wchar_t*);
 _ACRTIMP wchar_t* __cdecl wcsrchr(const wchar_t*,wchar_t wcFor);
 _ACRTIMP size_t   __cdecl wcsspn(const wchar_t*,const wchar_t*);

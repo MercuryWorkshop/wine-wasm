@@ -61,6 +61,7 @@ _ACRTIMP int     __cdecl strncmp(const char*,const char*,size_t);
 _ACRTIMP char*   __cdecl strncpy(char*,const char*,size_t);
 _ACRTIMP errno_t __cdecl strncpy_s(char*,size_t,const char*,size_t);
 _ACRTIMP size_t  __cdecl strnlen(const char*,size_t);
+static inline size_t strnlen_s(const char *str, size_t count) { return str ? strnlen(str, count) : 0; }
 _ACRTIMP char*   __cdecl strpbrk(const char*,const char*);
 _ACRTIMP char*   __cdecl strrchr(const char*,int);
 _ACRTIMP size_t  __cdecl strspn(const char*,const char*);

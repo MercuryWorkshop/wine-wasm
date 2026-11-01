@@ -651,6 +651,70 @@ interface IShellItemArray : IUnknown
 
 }
 
+/*****************************************************************************
+ * IExplorerCommand interface
+ */
+typedef [v1_enum] enum _EXPCMDSTATE
+{
+    ECS_ENABLED     = 0x00,
+    ECS_DISABLED    = 0x01,
+    ECS_HIDDEN      = 0x02,
+    ECS_CHECKBOX    = 0x04,
+    ECS_CHECKED     = 0x08,
+    ECS_RADIOCHECK  = 0x10
+} EXPCMDSTATE;
+cpp_quote("DEFINE_ENUM_FLAG_OPERATORS(EXPCMDSTATE)")
+
+typedef [v1_enum] enum _EXPCMDFLAGS
+{
+    ECF_DEFAULT         = 0x000,
+    ECF_HASSUBCOMMANDS  = 0x001,
+    ECF_HASSPLITBUTTON  = 0x002,
+    ECF_HIDELABEL       = 0x004,
+    ECF_ISSEPARATOR     = 0x008,
+    ECF_HASLUASHIELD    = 0x010,
+    ECF_SEPARATORBEFORE = 0x020,
+    ECF_SEPARATORAFTER  = 0x040,
+    ECF_ISDROPDOWN      = 0x080,
+    ECF_TOGGLEABLE      = 0x100,
+    ECF_AUTOMENUICONS   = 0x200
+} EXPCMDFLAGS;
+cpp_quote("DEFINE_ENUM_FLAG_OPERATORS(EXPCMDFLAGS)")
+
+interface IEnumExplorerCommand;
+
+[
+    object,
+    local,
+    uuid(a08ce4d0-fa25-44ab-b57c-c7b1c323e0b9),
+    pointer_default(unique)
+]
+interface IExplorerCommand : IUnknown
+{
+    HRESULT GetTitle([in, unique] IShellItemArray *items, [out, string] LPWSTR *name);
+    HRESULT GetIcon([in, unique] IShellItemArray *items, [out, string] LPWSTR *icon);
+    HRESULT GetToolTip([in, unique] IShellItemArray *items, [out, string] LPWSTR *infotip);
+    HRESULT GetCanonicalName([out] GUID *command_name);
+    HRESULT GetState([in, unique] IShellItemArray *items, [in] BOOL ok_to_be_slow, [out] EXPCMDSTATE *state);
+    HRESULT Invoke([in, unique] IShellItemArray *items, [in, unique] IBindCtx *bc);
+    HRESULT GetFlags([out] EXPCMDFLAGS *flags);
+    HRESULT EnumSubCommands([out] IEnumExplorerCommand **enum_commands);
+}
+
+[
+    object,
+    local,
+    uuid(a88826f8-186f-4987-aade-ea0cef8fbfe8),
+    pointer_default(unique)
+]
+interface IEnumExplorerCommand : IUnknown
+{
+    HRESULT Next([in] ULONG count, [out, size_is(count), length_is(*fetched)] IExplorerCommand **commands, [out] ULONG *fetched);
+    HRESULT Skip([in] ULONG count);
+    HRESULT Reset();
+    HRESULT Clone([out] IEnumExplorerCommand **enum_commands);
+}
+
 typedef [v1_enum] enum DATAOBJ_GET_ITEM_FLAGS
 {
     DOGIF_DEFAULT       = 0x0,
