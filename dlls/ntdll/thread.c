@@ -35,7 +35,7 @@ WINE_DECLARE_DEBUG_CHANNEL(relay);
 WINE_DECLARE_DEBUG_CHANNEL(pid);
 WINE_DECLARE_DEBUG_CHANNEL(timestamp);
 
-#ifdef __wasm64__
+#if defined(__wasm64__) || defined(__wasm32__)
 __attribute__((import_module("gex"), import_name("kuser_address")))
 extern unsigned int gex_kuser_address(void);
 

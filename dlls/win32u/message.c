@@ -45,7 +45,7 @@ WINE_DECLARE_DEBUG_CHANNEL(relay);
 #define QS_HARDWARE     0x40000000
 #define QS_INTERNAL     (QS_DRIVER | QS_HARDWARE)
 
-#ifdef __wasm64__
+#if defined(__wasm64__) || defined(__wasm32__)
 __attribute__((import_module("gex"), import_name("kuser_address")))
 extern unsigned int gex_kuser_address(void);
 

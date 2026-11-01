@@ -39,7 +39,7 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(sync);
 
-#ifdef __wasm64__
+#if defined(__wasm64__) || defined(__wasm32__)
 __attribute__((import_module("gex"), import_name("kuser_address")))
 extern unsigned int gex_kuser_address(void);
 
