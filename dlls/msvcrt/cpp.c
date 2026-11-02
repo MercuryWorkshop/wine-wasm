@@ -82,7 +82,12 @@ static uintptr_t get_obj_locator_base( const rtti_object_locator *ptr )
 #ifdef RTTI_USE_RVA
     void *base;
     if (ptr->signature) return (uintptr_t)ptr - ptr->object_locator;
+#ifdef __wasm64__
+    (void)base;
+    return cxx_rva_base( ptr );  /* (0 for a native DLL's locator) */
+#else
     return (uintptr_t)RtlPcToFileHeader( (void *)ptr, &base );
+#endif
 #else
     return 0;
 #endif

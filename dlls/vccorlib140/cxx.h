@@ -466,7 +466,20 @@ extern const vtable_ptr type_info_vtable;
 static inline uintptr_t cxx_rva_base( const void *ptr )
 {
     void *base;
+#ifdef __wasm64__
+    /* A native DLL's data is outside its image and its RVAs are from 0
+     * (INIT_CXX_TYPE), though RtlPcToFileHeader finds the DLL of it: an
+     * address is from its image's base only when it is in that image. */
+    const IMAGE_NT_HEADERS *nt;
+
+    if (!RtlPcToFileHeader( (void *)ptr, &base )) return 0;
+    nt = (const IMAGE_NT_HEADERS *)((const char *)base + ((const IMAGE_DOS_HEADER *)base)->e_lfanew);
+    if ((const char *)ptr < (const char *)base || (const char *)ptr >= (const char *)base + nt->OptionalHeader.SizeOfImage)
+        return 0;
+    return (uintptr_t)base;
+#else
     return (uintptr_t)RtlPcToFileHeader( (void *)ptr, &base );
+#endif
 }
 
 static inline void *cxx_rva( unsigned int rva, uintptr_t base )
