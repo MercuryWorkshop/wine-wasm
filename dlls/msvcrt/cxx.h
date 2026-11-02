@@ -20,6 +20,9 @@
 #include "winternl.h"
 #include "rtlsupportapi.h"
 #include "wine/asm.h"
+#ifdef __wasm64__
+#include "wine/gex/runtime.h"  /* GEXW_ICALL_FLOOR */
+#endif
 
 #define CLASS_IS_SIMPLE_TYPE          1
 #define CLASS_HAS_VIRTUAL_BASE_CLASS  4
@@ -440,13 +443,16 @@ static inline uintptr_t cxx_rva_base( const void *ptr )
 #ifdef __wasm64__
     /* A native DLL's data is outside its image and its RVAs are from 0
      * (INIT_CXX_TYPE), though RtlPcToFileHeader finds the DLL of it: an
-     * address is from its image's base only when it is in that image. */
+     * address is from its image's base only when it is in that image. The
+     * RVAs are an address's low half; in a 64-bit memory the data is above
+     * 4 GiB (gex's PE data window, one 4 GiB block), and the base is that
+     * block's, as get_obj_locator_base finds a native locator's. */
     const IMAGE_NT_HEADERS *nt;
 
-    if (!RtlPcToFileHeader( (void *)ptr, &base )) return 0;
+    if (!RtlPcToFileHeader( (void *)ptr, &base )) return (uintptr_t)ptr & ~(uintptr_t)0xffffffff;
     nt = (const IMAGE_NT_HEADERS *)((const char *)base + ((const IMAGE_DOS_HEADER *)base)->e_lfanew);
     if ((const char *)ptr < (const char *)base || (const char *)ptr >= (const char *)base + nt->OptionalHeader.SizeOfImage)
-        return 0;
+        return (uintptr_t)ptr & ~(uintptr_t)0xffffffff;
     return (uintptr_t)base;
 #else
     return (uintptr_t)RtlPcToFileHeader( (void *)ptr, &base );
@@ -455,6 +461,15 @@ static inline uintptr_t cxx_rva_base( const void *ptr )
 
 static inline void *cxx_rva( unsigned int rva, uintptr_t base )
 {
+#ifdef __wasm64__
+    /* A native DLL's function (a copy constructor, a destructor) is its
+     * table index, an RVA from 0, though its data's base is its 4 GiB block
+     * (cxx_rva_base): not an image's RVA when that base starts no image. */
+    void *image;
+
+    if (base && rva < GEXW_ICALL_FLOOR && !(base & 0xffffffff) && RtlPcToFileHeader( (void *)base, &image ) != (void *)base)
+        return (void *)(uintptr_t)rva;
+#endif
     return (void *)(base + rva);
 }
 
