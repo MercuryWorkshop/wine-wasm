@@ -154,6 +154,24 @@ const char *output_adapter64( const ORDDEF *odp, const char *wasm_sig )
                  !strcmp( link, "_setjmp" ) || !strcmp( link, "_setjmpex" )))
         return NULL;
     if (!parse_sig64( str ? str : wasm_sig, &s )) return NULL;
+    /* No gexw.sig64 line (a function this DLL imports and exports, such as
+     * user32's GetKeyboardState, which is win32u's NtUserGetKeyboardState):
+     * the wasm signature is the lowered code's, where a pointer is an i32
+     * like an int. The .spec says which are pointers; taken as ints, one
+     * above 4 GiB (a 64-bit memory's stack or image) lost its high half. */
+    if (!str && odp->type != TYPE_VARARGS && s.nparams == (unsigned int)odp->u.func.nb_args)
+    {
+        for (j = 0; j < s.nparams; j++)
+        {
+            if (s.params[j].k != 'i') continue;
+            switch (odp->u.func.args[j])
+            {
+            case ARG_PTR: case ARG_STR: case ARG_WSTR: s.params[j].k = 'p'; break;
+            case ARG_INT64: s.params[j].k = 'I'; break;
+            default: break;
+            }
+        }
+    }
     if (s.ret.k == 'X') return NULL;
     sret_reg = s.ret.k == 's' && small_struct( s.ret.size );
     sret_mem = s.ret.k == 's' && !sret_reg;
