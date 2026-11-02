@@ -1703,7 +1703,14 @@ void signal_start_thread( PRTL_THREAD_START_ROUTINE entry, void *arg, TEB *teb )
     if ((wow_context = get_cpu_area( data, IMAGE_FILE_MACHINE_I386 )))
     {
         wow_context->ContextFlags = CONTEXT_I386_ALL;
-        wow_context->Eax = (ULONG_PTR)entry;
+        /* A 64-bit debugger's break-in (DbgUiIssueRemoteBreakin starts it
+         * at the old WoW64 marker here): the 32-bit ntdll's
+         * DbgUiRemoteBreakin, since the 64-bit one is native code the
+         * 32-bit side cannot call. */
+        if (entry == (void *)0x7ffe1000 && pDbgUiRemoteBreakinWow64)
+            wow_context->Eax = pDbgUiRemoteBreakinWow64;
+        else
+            wow_context->Eax = (ULONG_PTR)entry;
         wow_context->Ebx = (arg == peb ? (ULONG_PTR)wow_peb : (ULONG_PTR)arg);
         wow_context->Esp = get_wow_teb( teb )->Tib.StackBase - 16;
         wow_context->Eip = pLdrSystemDllInitBlock->pRtlUserThreadStart;

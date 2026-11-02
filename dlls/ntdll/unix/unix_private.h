@@ -201,6 +201,9 @@ static const LONG teb_offset = 0x2000;
 
 /* callbacks to PE ntdll from the Unix side */
 extern void *pDbgUiRemoteBreakin;
+#ifdef __wasm64__
+extern ULONG_PTR pDbgUiRemoteBreakinWow64;
+#endif
 extern void *pKiRaiseUserExceptionDispatcher;
 extern void *pKiUserExceptionDispatcher;
 extern void *pKiUserApcDispatcher;
