@@ -70,4 +70,11 @@
 #define _LIBCXXABI_NO_CFI
 #endif
 
+// A build without C++ exceptions (wasm's, with no unwinder) is libc++abi's
+// no-exceptions configuration: cxa_noexception.cpp in place of
+// cxa_exception.cpp and cxa_personality.cpp
+#if !defined(__cpp_exceptions) && !defined(_LIBCXXABI_NO_EXCEPTIONS)
+#define _LIBCXXABI_NO_EXCEPTIONS
+#endif
+
 #endif // ____CXXABI_CONFIG_H

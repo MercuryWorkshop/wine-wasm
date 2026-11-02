@@ -269,7 +269,7 @@
 #  define _LIBCPP_MSVCRT_LIKE
 // If mingw not explicitly detected, assume using MS C runtime only if
 // a MS compatibility version is specified.
-#  if defined(_MSC_VER) || defined(__MINGW32__)
+#  if defined(_MSC_VER) || defined(__MINGW32__) || defined(__wasm__)
 #    define _LIBCPP_MSVCRT // Using Microsoft's C Runtime library
 #  endif
 #  if (defined(_M_AMD64) || defined(__x86_64__)) || (defined(_M_ARM) || defined(__arm__))

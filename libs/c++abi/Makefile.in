@@ -11,6 +11,7 @@ SOURCES = \
 	src/cxa_exception_storage.cpp \
 	src/cxa_guard.cpp \
 	src/cxa_handlers.cpp \
+	src/cxa_noexception.cpp \
 	src/cxa_personality.cpp \
 	src/cxa_thread_atexit.cpp \
 	src/cxa_vector.cpp \

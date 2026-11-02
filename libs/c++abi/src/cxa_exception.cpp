@@ -11,6 +11,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "__cxxabi_config.h"
+#ifndef _LIBCXXABI_NO_EXCEPTIONS
+
 #include "cxxabi.h"
 
 #include <exception>        // for std::terminate
@@ -760,3 +763,5 @@ void __cxa_call_terminate(void* unwind_arg) throw() {
 }  // extern "C"
 
 }  // abi
+
+#endif // _LIBCXXABI_NO_EXCEPTIONS

@@ -2407,6 +2407,9 @@ then
 else
     dnl gex's 64-bit Wine as native wasm64 code: its WoW64 layer is native too
     test "$HOST_ARCH" != wasm64 || { enable_wow64=${enable_wow64:-wasm64}; enable_wow64win=${enable_wow64win:-wasm64}; enable_wow64cpu=${enable_wow64cpu:-wasm64}; }
+    dnl and its C++ modules (icu) with the bundled libc++ and libc++abi, without
+    dnl exceptions (no unwinder): clang's wasm64 target compiles C++17
+    test "$HOST_ARCH" != wasm64 || { enable_cplusplus=${enable_cplusplus:-wasm64}; enable_cppabi=${enable_cppabi:-wasm64}; enable_unwind=${enable_unwind:-no}; }
     enable_wow64=${enable_wow64:-no}
     enable_wow64win=${enable_wow64win:-no}
     enable_wow64cpu=${enable_wow64cpu:-no}

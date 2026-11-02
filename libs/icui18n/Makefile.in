@@ -226,6 +226,7 @@ SOURCES = \
 	utf8collationiterator.cpp \
 	utmscale.cpp \
 	utrans.cpp \
+	vtzone.cpp \
 	windtfmt.cpp \
 	winnmfmt.cpp \
 	wintzimpl.cpp \
