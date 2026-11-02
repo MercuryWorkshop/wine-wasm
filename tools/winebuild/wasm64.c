@@ -154,12 +154,18 @@ const char *output_adapter64( const ORDDEF *odp, const char *wasm_sig )
                  !strcmp( link, "_setjmp" ) || !strcmp( link, "_setjmpex" )))
         return NULL;
     if (!parse_sig64( str ? str : wasm_sig, &s )) return NULL;
-    /* No gexw.sig64 line (a function this DLL imports and exports, such as
+    /* Neither a gexw.sig64 line nor a wasm signature in the objects (a
+     * function this DLL exports for another and never calls, such as
      * user32's GetKeyboardState, which is win32u's NtUserGetKeyboardState):
-     * the wasm signature is the lowered code's, where a pointer is an i32
-     * like an int. The .spec says which are pointers; taken as ints, one
-     * above 4 GiB (a 64-bit memory's stack or image) lost its high half. */
-    if (!str && odp->type != TYPE_VARARGS && s.nparams == (unsigned int)odp->u.func.nb_args)
+     * the signature is the .spec's, where every argument but int64 and
+     * floating point is an int. The .spec says which are pointers; taken as
+     * ints, one above 4 GiB (a 64-bit memory's stack or image) lost its high
+     * half. A wasm signature the objects do have (a call to it) is kept as
+     * it is: the adapter's declaration must match the call's at the link,
+     * and the code's types are right where a .spec's differ from them
+     * (ntoskrnl's RtlCreateUserThread, a ULONG the .spec calls ptr). */
+    if (!str && !find_func_sig( link ) && odp->type != TYPE_VARARGS &&
+        s.nparams == (unsigned int)odp->u.func.nb_args)
     {
         for (j = 0; j < s.nparams; j++)
         {
