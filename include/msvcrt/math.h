@@ -318,7 +318,9 @@ inline bool signbit(long double x) throw() { return _ldsign(x) != 0; }
 inline int _fpcomp(float x, float y) throw() { return _fdpcomp(x, y); }
 inline int _fpcomp(double x, double y) throw() { return _dpcomp(x, y); }
 inline int _fpcomp(long double x, long double y) throw() { return _ldpcomp(x, y); }
-#ifndef _LIBCPP_VERSION  /* libc++'s <math.h> has its own */
+/* (not under libc++'s own <math.h>, which declares its own abs overloads: a
+ * libc++ newer than the one these headers carry, gexcc's) */
+#ifndef _LIBCPP_MATH_H
 inline float abs(float x) throw() { return ::fabsf(x); }
 inline double abs(double x) throw() { return ::fabs(x); }
 inline long double abs(long double x) throw() { return ::fabs((double)x); }
