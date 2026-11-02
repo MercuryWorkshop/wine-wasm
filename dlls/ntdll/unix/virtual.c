@@ -181,9 +181,22 @@ static const UINT_PTR host_page_size = 0x1000;
 static const UINT_PTR host_page_mask = 0xfff;
 #endif
 
+#ifdef __wasm64__
+/* No view below gex's NATIVE_FN_TOP (the end of its dispatch directory,
+ * which with its runtime's reserved pages takes the space under it anyway):
+ * there a value is a native PE function pointer, a function-table index,
+ * and LdrFindEntryForAddress asks gex for its DLL. The address space starts
+ * there, so an allocation without an address takes the same path as one at
+ * the usual start. */
+#define GEX_FN_TOP 0x300000
+static void * const gex_fn_top = (void *)GEX_FN_TOP;
+#endif
+
 /* Note: these are Windows limits, you cannot change them. */
 #if defined(__i386__) || defined(__x86_64__)
 static void *address_space_start = (void *)0x110000; /* keep DOS area clear */
+#elif defined(__wasm64__)
+static void *address_space_start = (void *)GEX_FN_TOP;
 #else
 static void *address_space_start = (void *)0x10000;
 #endif
@@ -213,14 +226,6 @@ static void *w64_code_space_limit = (void *)0x7fff0000;
 static void *w64_code_space_start = (void *)0x400000;
 #define W64_CODE_SPLIT 1
 
-#endif
-
-#ifdef __wasm64__
-/* No view below gex's NATIVE_FN_TOP (the end of its dispatch directory,
- * which with its runtime's reserved pages takes the space under it anyway):
- * there a value is a native PE function pointer, a function-table index,
- * and LdrFindEntryForAddress asks gex for its DLL. */
-static void * const gex_fn_top = (void *)0x300000;
 #endif
 
 static struct file_view *arm64ec_view;
@@ -2488,7 +2493,6 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
 
 #ifdef __wasm64__
     if (base && (char *)base < (char *)gex_fn_top) return STATUS_CONFLICTING_ADDRESSES;
-    if (!base && limit_low < (ULONG_PTR)gex_fn_top) limit_low = (ULONG_PTR)gex_fn_top;
 #endif
 
     if (alloc_type & MEM_REPLACE_PLACEHOLDER)
@@ -2599,6 +2603,15 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
                      strerror(errno), (void *)view_size, unix_prot );
                 return status;
             }
+#ifdef __wasm64__
+            /* (gex's kernel places none there: its arena starts higher) */
+            if ((char *)ptr < (char *)gex_fn_top)
+            {
+                ERR( "anon mmap below %p: %p\n", gex_fn_top, ptr );
+                munmap( ptr, view_size );
+                return STATUS_NO_MEMORY;
+            }
+#endif
             TRACE( "got mem with anon mmap %p-%p\n", ptr, (char *)ptr + size );
             /* if we got something beyond the user limit, unmap it and retry */
             if (!is_beyond_limit( ptr, view_size, user_space_limit )) break;
@@ -4137,6 +4150,9 @@ void virtual_init(void)
             /* some apps start inside the DOS area */
             if (preload_reserve_start)
                 address_space_start = min( address_space_start, preload_reserve_start );
+#ifdef __wasm64__
+            address_space_start = max( address_space_start, gex_fn_top );
+#endif
         }
         unsetenv( "WINEPRELOADRESERVE" );
     }
@@ -4161,7 +4177,11 @@ void virtual_init(void)
     free_ranges_end = free_ranges + 1;
 
     /* make the DOS area accessible (except the low 64K) to hide bugs in broken apps like Excel 2003 */
+#ifdef __wasm64__
+    size = 0;  /* gex's runtime is below gex_fn_top */
+#else
     size = (char *)address_space_start - (char *)0x10000;
+#endif
     if (size && mmap_is_in_reserved_area( (void*)0x10000, size ) == 1)
         anon_mmap_fixed( (void *)0x10000, size, PROT_READ | PROT_WRITE, 0 );
 }
@@ -5744,7 +5764,9 @@ void virtual_set_large_address_space(void)
     {
         if (!is_wow64())
         {
+#ifndef __wasm64__
             address_space_start = (void *)0x10000;
+#endif
 #ifndef __APPLE__  /* don't free the zerofill section on macOS */
             if ((main_image_info.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA) &&
                 (main_image_info.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE))
