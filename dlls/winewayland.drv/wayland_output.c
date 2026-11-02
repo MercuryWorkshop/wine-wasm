@@ -113,6 +113,7 @@ static void maybe_init_display_devices(void)
      * also helps us avoid calling NtUserGetDesktopWindow() (see below) at
      * process init time, since it may not be safe. */
     if (!process_wayland.initialized) return;
+    if (wayland_fit_virtual_desktop_changed()) return;
 
     desktop_hwnd = NtUserGetDesktopWindow();
     NtUserGetWindowThread(desktop_hwnd, &desktop_pid);

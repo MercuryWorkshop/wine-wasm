@@ -282,16 +282,27 @@ static BOOL fit_desktop_enabled(void)
 
 /* The desktop window was first placed: ask for one fit once explorer has set up its
  * display settings, which it does before it reads its messages. */
+static HWND fit_desktop_hwnd;
+
 void wayland_fit_virtual_desktop_post(HWND hwnd)
 {
-    static BOOL posted;
     DWORD pid = 0;
 
-    if (posted || !fit_desktop_enabled()) return;
+    if (fit_desktop_hwnd || !fit_desktop_enabled()) return;
     NtUserGetWindowThread(hwnd, &pid);
     if (pid != GetCurrentProcessId()) return;
-    posted = TRUE;
+    fit_desktop_hwnd = hwnd;
     NtUserPostMessage(hwnd, WM_WAYLAND_INIT_DISPLAY_DEVICES, 0, 0);
+}
+
+/* An output changed in the desktop's process: fit again. The thread that reads
+ * the compositor's events is not on the virtual desktop (it has the process's
+ * startup desktop), so its own desktop window is not the one to tell. */
+BOOL wayland_fit_virtual_desktop_changed(void)
+{
+    if (!fit_desktop_hwnd) return FALSE;
+    NtUserPostMessage(fit_desktop_hwnd, WM_WAYLAND_INIT_DISPLAY_DEVICES, 0, 0);
+    return TRUE;
 }
 
 /* Called in the desktop process, after its display devices were updated: the
