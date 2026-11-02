@@ -167,7 +167,6 @@ const char *output_adapter64( const ORDDEF *odp, const char *wasm_sig )
             switch (odp->u.func.args[j])
             {
             case ARG_PTR: case ARG_STR: case ARG_WSTR: s.params[j].k = 'p'; break;
-            case ARG_INT64: s.params[j].k = 'I'; break;
             default: break;
             }
         }
