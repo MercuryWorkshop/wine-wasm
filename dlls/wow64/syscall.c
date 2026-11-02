@@ -33,6 +33,7 @@
 #include "wine/debug.h"
 #ifdef __wasm64__
 #include "wine/exception.h"
+#include "wine/gex/gexrt64.h"
 #endif
 
 WINE_DEFAULT_DEBUG_CHANNEL(wow);
@@ -63,6 +64,65 @@ static SYSTEM_SERVICE_TABLE syscall_tables[4] =
 {
     { (ULONG_PTR *)syscall_thunks, NULL, ARRAY_SIZE(syscall_thunks), syscall_args }
 };
+
+#ifdef __wasm64__
+/* gex's debugging switch GEX_NATIVE_TRY: a bad pointer of the caller's a
+ * thunk writes or reads through traps (wasm has no fault to take). With the
+ * switch, process_init points the system call tables at these guards, each
+ * of which calls its thunk under gex.native_try: a trap ends the call with
+ * STATUS_ACCESS_VIOLATION, as wow64_syscall's handler makes of a fault.
+ * Without it the tables, and wow64_syscall, are as ever. One guard per
+ * table slot, both tables' thunks in a row: GUARD_COUNT of them. */
+#define GUARD_COUNT 0x800
+static int guard_thunks[GUARD_COUNT];
+
+static NTSTATUS guard_call( unsigned int i, UINT *args )
+{
+    if ((ULONG_PTR)args >> 32) return ((NTSTATUS (WINAPI *)( UINT * ))(ULONG_PTR)guard_thunks[i])( args );
+    return __gexw_native_try( guard_thunks[i] | GEXW_TRY_WIDE, PtrToUlong( args ) );
+}
+
+#define GUARD1(n) static NTSTATUS WINAPI guard_##n( UINT *args ) { return guard_call( n, args ); }
+#define GUARD16(p) GUARD1(p##0) GUARD1(p##1) GUARD1(p##2) GUARD1(p##3) GUARD1(p##4) GUARD1(p##5) GUARD1(p##6) GUARD1(p##7) \
+    GUARD1(p##8) GUARD1(p##9) GUARD1(p##a) GUARD1(p##b) GUARD1(p##c) GUARD1(p##d) GUARD1(p##e) GUARD1(p##f)
+#define GUARD256(p) GUARD16(p##0) GUARD16(p##1) GUARD16(p##2) GUARD16(p##3) GUARD16(p##4) GUARD16(p##5) GUARD16(p##6) \
+    GUARD16(p##7) GUARD16(p##8) GUARD16(p##9) GUARD16(p##a) GUARD16(p##b) GUARD16(p##c) GUARD16(p##d) GUARD16(p##e) GUARD16(p##f)
+GUARD256(0x0) GUARD256(0x1) GUARD256(0x2) GUARD256(0x3) GUARD256(0x4) GUARD256(0x5) GUARD256(0x6) GUARD256(0x7)
+#undef GUARD1
+#define GUARD1(n) guard_##n,
+static NTSTATUS (WINAPI * const guards[GUARD_COUNT])( UINT * ) =
+{
+    GUARD256(0x0) GUARD256(0x1) GUARD256(0x2) GUARD256(0x3) GUARD256(0x4) GUARD256(0x5) GUARD256(0x6) GUARD256(0x7)
+};
+#undef GUARD1
+#undef GUARD16
+#undef GUARD256
+
+static void guard_syscall_tables(void)
+{
+    unsigned int t, i, n = 0;
+
+    for (t = 0; t < ARRAY_SIZE(syscall_tables); t++)
+    {
+        SYSTEM_SERVICE_TABLE *table = &syscall_tables[t];
+        ULONG_PTR *slots;
+
+        if (!table->ServiceTable || !table->ServiceLimit) continue;
+        if (n + table->ServiceLimit > GUARD_COUNT ||
+            !(slots = RtlAllocateHeap( GetProcessHeap(), 0, table->ServiceLimit * sizeof(*slots) )))
+        {
+            ERR( "system call table %u unguarded\n", t );
+            continue;
+        }
+        for (i = 0; i < table->ServiceLimit; i++, n++)
+        {
+            guard_thunks[n] = (int)table->ServiceTable[i];
+            slots[i] = (ULONG_PTR)guards[n];
+        }
+        table->ServiceTable = slots;
+    }
+}
+#endif
 
 /* header for Wow64AllocTemp blocks; probably not the right layout */
 struct mem_header
@@ -1078,6 +1138,9 @@ static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **contex
     module = load_64bit_module( L"wow64win.dll" );
     GET_PTR( sdwhwin32 );
     syscall_tables[1] = *psdwhwin32;
+#ifdef __wasm64__
+    if (__gexw_native_try_on()) guard_syscall_tables();
+#endif
 
     pBTCpuProcessInit();
 

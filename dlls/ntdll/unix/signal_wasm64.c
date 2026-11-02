@@ -66,6 +66,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(seh);
 unsigned long __gex_get_ctx(void);
 __attribute__((import_module("gex"), import_name("fault_hook"))) void gex_fault_hook( int idx );
 __attribute__((import_module("gex"), import_name("unix_dispatcher"))) int gex_unix_dispatcher( int op, int idx );
+__attribute__((import_module("gex"), import_name("native_try"))) int gex_native_try( int idx, int arg );
 __attribute__((import_module("gex"), import_name("signal_hook"))) void gex_signal_hook( int idx );
 
 static inline int cur_ctx(void) { return (int)__gex_get_ctx(); }
@@ -1072,6 +1073,8 @@ void __wine_gex_entry_body( int ctx, int unix_call )
 }
 
 extern void __wine_gex_entry_switch( int ctx, int unix_call );
+extern ULONG64 __wine_gex_get_sp(void);
+extern void __wine_gex_set_sp( ULONG64 sp );
 __asm__(
     "\t.globaltype __stack_pointer, i64\n"
     "\t.functype __wine_gex_syscall_sp () -> (i64)\n"
@@ -1089,6 +1092,19 @@ __asm__(
     "\tlocal.get 1\n"
     "\tcall __wine_gex_entry_body\n"
     "\tlocal.get 2\n"
+    "\tglobal.set __stack_pointer\n"
+    "\tend_function\n"
+    "\t.globl __wine_gex_get_sp\n"
+    "\t.type __wine_gex_get_sp,@function\n"
+    "__wine_gex_get_sp:\n"
+    "\t.functype __wine_gex_get_sp () -> (i64)\n"
+    "\tglobal.get __stack_pointer\n"
+    "\tend_function\n"
+    "\t.globl __wine_gex_set_sp\n"
+    "\t.type __wine_gex_set_sp,@function\n"
+    "__wine_gex_set_sp:\n"
+    "\t.functype __wine_gex_set_sp (i64) -> ()\n"
+    "\tlocal.get 0\n"
     "\tglobal.set __stack_pointer\n"
     "\tend_function\n" );
 
@@ -1121,6 +1137,30 @@ static void __wine_gex_native_syscall( int ctx )
 static void __wine_gex_native_unix_call( int ctx )
 {
     __wine_gex_entry_switch( ctx, 1 );
+}
+
+/* gex's debugging switch GEX_NATIVE_TRY: the system call entry for native
+ * PE code under gex.native_try (gex.unix_dispatcher's op 0 holds this one
+ * instead). A bad pointer the Unix side writes or reads through traps on a
+ * memory access out of bounds (wasm has no fault to take), which gex
+ * catches here, every wasm frame since gone. The call then ends as x86-64's
+ * handle_syscall_fault ends a fault inside a system call: the exception
+ * code back to the caller from the innermost system call frame, the C stack
+ * pointer back where it was. A Unix-side __TRY whose frame went is not run
+ * (x86-64 would take its __EXCEPT); the locks they held stay held, as on
+ * x86-64. An out-of-bounds bug in the Unix code itself ends the same way:
+ * WINEDEBUG=warn+seh names the call. */
+static void __wine_gex_native_syscall_try( int ctx )
+{
+    ULONG64 sp = __wine_gex_get_sp();
+    struct syscall_frame *frame;
+
+    if ((NTSTATUS)gex_native_try( GEX_ADDR( __wine_gex_native_syscall ), ctx ) != STATUS_ACCESS_VIOLATION) return;
+    __wine_gex_set_sp( sp );
+    frame = get_syscall_frame( get_thread_data() );
+    WARN( "system call %04x faulted out of bounds: STATUS_ACCESS_VIOLATION\n", (unsigned int)frame->rax );
+    if (!(frame->restore_flags & CONTEXT_INTEGER)) frame->rax = STATUS_ACCESS_VIOLATION;
+    frame_to_ctx( ctx, frame );
 }
 
 
@@ -1604,7 +1644,8 @@ void signal_init_process( TEB *teb )
 
     /* gex's side: both entries and the program's faults come by the hook */
     gex_fault_hook( GEX_ADDR( __wine_gex_fault ) );
-    gex_unix_dispatcher( 0, GEX_ADDR( __wine_gex_native_syscall ) );
+    gex_unix_dispatcher( 0, gex_native_try( 0, 0 ) == 2 ? GEX_ADDR( __wine_gex_native_syscall_try )
+                                                       : GEX_ADDR( __wine_gex_native_syscall ) );
     gex_unix_dispatcher( 4, GEX_ADDR( __wine_gex_native_unix_call ) );
     install_signal_handlers();
 }

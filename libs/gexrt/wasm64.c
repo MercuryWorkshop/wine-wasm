@@ -139,6 +139,13 @@ __asm__(
     "\t.functype gexw_get_sp () -> (i64)\n"
     "\tglobal.get __stack_pointer\n"
     "\tend_function\n"
+    "\t.globl gexw_set_sp\n"
+    "\t.type gexw_set_sp,@function\n"
+    "gexw_set_sp:\n"
+    "\t.functype gexw_set_sp (i64) -> ()\n"
+    "\tlocal.get 0\n"
+    "\tglobal.set __stack_pointer\n"
+    "\tend_function\n"
     /* __gexw_call_on_stack(sp, fn, arg): fn(arg) with the C stack at sp,
      * put back after (a throw past it lands in an entry, which puts back
      * its own) */
@@ -257,6 +264,7 @@ int32_t gexw_get_ctx(void);
 int32_t gexw_get_depth(void);
 uint64_t gexw_get_retaddr(void);
 uint64_t gexw_get_sp(void);
+void gexw_set_sp(uint64_t);
 uint64_t gexw_get_entry_rsp(void);
 void gexw_set_entry_rsp(uint64_t);
 void __gexw_throw_unwind(void) __attribute__((noreturn));
@@ -371,6 +379,7 @@ extern void longjmp( void *, int ) __attribute__((noreturn));
 
 __attribute__((import_module("gex"), import_name("unix_dispatcher"))) int gex_unix_dispatcher( int op, int idx );
 __attribute__((import_module("gex"), import_name("kuser_address"))) unsigned int gex_kuser_address(void);
+__attribute__((import_module("gex"), import_name("native_try"))) int gex_native_try( int idx, int arg );
 
 /* The page after KUSER_SHARED_DATA, asked once */
 unsigned long long __gexw_entry_page(void)
@@ -389,6 +398,32 @@ unsigned long long __gexw_entry_page(void)
  * on the Unix side registers them). 0: none; -1 until asked. Process-wide:
  * the module's data is the process's. */
 static int unix_syscall_entry = -1, unix_call_entry = -1;
+
+/* Whether gex.native_try catches a trap here: only with gex's debugging
+ * switch GEX_NATIVE_TRY (never in the page's single-thread build). -1 until
+ * asked. */
+static int native_try_on = -1;
+
+int __gexw_native_try_on(void)
+{
+    if (native_try_on < 0) native_try_on = gex_native_try( 0, 0 ) == 2;
+    return native_try_on;
+}
+
+/* FN(ARG) through gex.native_try, where __gexw_native_try_on: what FN
+ * returned (0 for a void FN), or STATUS_ACCESS_VIOLATION when it trapped on
+ * a memory access out of bounds (a bad pointer), every wasm frame since the
+ * call gone and this module's stack pointer put back. FN is a table index
+ * that stays in the table for the process; with GEXW_TRY_WIDE, FN takes a
+ * pointer (an i64) and ARG is its low half. */
+unsigned int __gexw_native_try( int fn, unsigned int arg )
+{
+    uint64_t sp = gexw_get_sp();
+    unsigned int r = (unsigned int)gex_native_try( fn, (int)arg );
+
+    if (r == GEXW_TRY_FAULT) gexw_set_sp( sp );
+    return r;
+}
 
 static inline void callout_push( int ctx, struct gexw_callout *rec, uint64_t pad_rsp )
 {

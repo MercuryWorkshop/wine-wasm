@@ -72,6 +72,18 @@ extern void __gexw_mode64_leave( unsigned int cs );
 extern unsigned long long __gexw_call_on_stack( unsigned long long sp, unsigned long long (*fn)( void * ), void *arg );
 extern unsigned long long gexw_get_sp(void);
 
+/* FN(ARG) under gex.native_try (wasm64.c), where __gexw_native_try_on
+ * (gex's debugging switch GEX_NATIVE_TRY): what FN returned (0 for a void
+ * FN), or GEXW_TRY_FAULT when it trapped on a memory access out of bounds.
+ * FN is a table index that stays in the table; with GEXW_TRY_WIDE it takes
+ * a pointer, whose low half ARG is. An FN that returns STATUS_ACCESS_VIOLATION
+ * itself reads as a fault: the status is the same, and restoring the stack
+ * pointer after a balanced return changes nothing. */
+#define GEXW_TRY_WIDE  0x80000000u
+#define GEXW_TRY_FAULT 0xc0000005u  /* STATUS_ACCESS_VIOLATION */
+extern int __gexw_native_try_on(void);
+extern unsigned int __gexw_native_try( int fn, unsigned int arg );
+
 /* Runs the 32-bit state in AREA (an I386_CONTEXT: wow64cpu's CPU area) until
  * it reaches STOPS[0] or STOPS[1] (WOW64_STOP_SYSCALL and WOW64_STOP_UNIX,
  * the pair gex knows), stores it back and returns the index of the one it
