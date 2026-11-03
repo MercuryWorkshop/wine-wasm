@@ -76,6 +76,7 @@ extern LRESULT WINPROC_CallProcAtoW( winproc_callback_t callback, HWND hwnd, UIN
                                      enum wm_char_mapping mapping );
 
 extern INT_PTR WINPROC_CallDlgProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam );
+extern LRESULT WINPROC_CallTimerProc( const MSG *msg, BOOL ansi );
 extern INT_PTR WINPROC_CallDlgProcW( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam );
 extern void winproc_init(void);
 extern LRESULT dispatch_win_proc_params( struct win_proc_params *params );

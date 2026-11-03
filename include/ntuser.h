@@ -187,7 +187,8 @@ enum wm_char_mapping
     WMCHAR_MAP_CALLWINDOWPROC,
     WMCHAR_MAP_ISDIALOGMESSAGE,
     WMCHAR_MAP_COUNT,
-    WMCHAR_MAP_NOMAPPING = WMCHAR_MAP_COUNT
+    WMCHAR_MAP_NOMAPPING = WMCHAR_MAP_COUNT,
+    WMCHAR_MAP_TIMERPROC  /* a timer procedure's call (WM_TIMER or WM_SYSTIMER with one) */
 };
 
 /* NtUserCallWindowProc params */

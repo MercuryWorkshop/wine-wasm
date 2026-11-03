@@ -695,10 +695,37 @@ static LRESULT WINPROC_CallProcWtoA( winproc_callback_t callback, HWND hwnd, UIN
 }
 
 
+/* call a timer procedure: on wasm, where an indirect call checks the
+ * callee's type, as the TIMERPROC it is rather than as a window procedure */
+static LRESULT call_timer_proc( WNDPROC proc, HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
+{
+    TRACE_(relay)( "\1Call timer proc %p (hwnd=%p,msg=%s,wp=%08Ix,lp=%08Ix)\n",
+                   proc, hwnd, SPY_GetMsgName(msg, hwnd), wp, lp );
+#ifdef __wasm__
+    ((TIMERPROC)proc)( hwnd, msg, wp, lp );
+    return 0;
+#else
+    return WINPROC_wrapper( proc, hwnd, msg, wp, lp );
+#endif
+}
+
 LRESULT dispatch_win_proc_params( struct win_proc_params *params )
 {
     DPI_AWARENESS_CONTEXT context = SetThreadDpiAwarenessContext( ULongToHandle( params->dpi_context ) );
     LRESULT result = 0;
+
+    if (params->mapping == WMCHAR_MAP_TIMERPROC)
+    {
+        WNDPROC proc = params->ansi_dst ? params->procA : params->procW;
+
+        if (proc && proc != WINPROC_PROC16)
+        {
+            result = call_timer_proc( proc, params->hwnd, params->msg, params->wparam, params->lparam );
+            SetThreadDpiAwarenessContext( context );
+            return result;
+        }
+        params->mapping = WMCHAR_MAP_CALLWINDOWPROC;
+    }
 
     if (!params->ansi)
     {
@@ -888,6 +915,24 @@ LRESULT WINAPI CallWindowProcW( WNDPROC func, HWND hwnd, UINT msg, WPARAM wParam
     params.func = func;
     if (!NtUserMessageCall( hwnd, msg, wParam, lParam, &params, NtUserCallWindowProc, FALSE ))
         return 0;
+    return dispatch_win_proc_params( &params );
+}
+
+
+/**********************************************************************
+ *		WINPROC_CallTimerProc
+ *
+ * DispatchMessage's call of a timer message's procedure (its lParam).
+ */
+LRESULT WINPROC_CallTimerProc( const MSG *msg, BOOL ansi )
+{
+    struct win_proc_params params;
+
+    params.func = (WNDPROC)msg->lParam;
+    if (!NtUserMessageCall( msg->hwnd, msg->message, msg->wParam, GetTickCount(), &params,
+                            NtUserCallWindowProc, ansi ))
+        return 0;
+    params.mapping = WMCHAR_MAP_TIMERPROC;
     return dispatch_win_proc_params( &params );
 }
 
