@@ -196,4 +196,8 @@ extern void *__os_arm64x_helper8;
 
 #endif
 
+#if defined(__wasm32__) || defined(__wasm64__)
+extern void *wasm_remote_start( HANDLE process, void *start );
+#endif
+
 #endif
