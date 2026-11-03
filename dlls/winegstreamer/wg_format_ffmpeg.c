@@ -389,11 +389,17 @@ bool wg_ffmpeg_copy_frame(struct SwsContext **sws, const AVFrame *frame, enum AV
             planes, strides) > 0;
 }
 
-/* WinMM's channel mask of a layout (FFmpeg's native order follows WinMM's bits) */
+/* WinMM's channel mask of a layout (FFmpeg's native order follows WinMM's
+ * bits); an unspecified one's is the default for its channel count, as
+ * GStreamer's fallback mask (ASF's WMA streams name none) */
 static uint32_t channel_mask(const AVChannelLayout *layout)
 {
+    AVChannelLayout def;
+
     if (layout->order == AV_CHANNEL_ORDER_NATIVE) return (uint32_t)layout->u.mask;
-    return 0;
+    if (layout->order != AV_CHANNEL_ORDER_UNSPEC || layout->nb_channels <= 0) return 0;
+    av_channel_layout_default(&def, layout->nb_channels);
+    return def.order == AV_CHANNEL_ORDER_NATIVE ? (uint32_t)def.u.mask : 0;
 }
 
 enum AVSampleFormat wg_ffmpeg_sample_fmt(wg_audio_format format, int *bytes)
