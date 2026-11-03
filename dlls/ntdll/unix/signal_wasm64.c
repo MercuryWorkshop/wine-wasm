@@ -1484,7 +1484,7 @@ extern void __gex_signal_frames( volatile unsigned long long *x, unsigned long l
 
 static __thread int in_guest_signal, guest_signal_ctx;
 
-static void __wine_gex_signal( int ctx, unsigned int pc )
+static void __wine_gex_signal( int ctx, unsigned long long pc )
 {
     int prev = guest_signal_ctx;
 
