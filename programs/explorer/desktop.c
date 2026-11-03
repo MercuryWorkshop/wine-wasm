@@ -28,6 +28,7 @@
 #include <rpc.h>
 #include <shlobj.h>
 #include <shellapi.h>
+#include <shlwapi.h>
 #include <ntuser.h>
 #include "exdisp.h"
 
@@ -360,10 +361,29 @@ static WCHAR *build_title( const WCHAR *filename, int len )
     return ret;
 }
 
+/* as Windows: a registered type's extension is hidden unless HideFileExt is 0 */
+static BOOL hide_extension( const WCHAR *path )
+{
+    const WCHAR *ext = PathFindExtensionW( path );
+    DWORD hide = 1, size = sizeof(hide);
+    HKEY key;
+
+    if (!*ext || !wcsicmp( ext, L".lnk" )) return TRUE;
+    RegGetValueW( HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                  L"HideFileExt", RRF_RT_REG_DWORD, NULL, &hide, &size );
+    if (!hide || RegOpenKeyExW( HKEY_CLASSES_ROOT, ext, 0, KEY_READ, &key )) return FALSE;
+    RegCloseKey( key );
+    return TRUE;
+}
+
+static BOOL remove_launcher( const WCHAR *folder, const WCHAR *filename, int len_filename );
+
 static BOOL add_launcher( const WCHAR *folder, const WCHAR *filename, int len_filename )
 {
     struct launcher *launcher;
     IShellLinkW *link;
+    SHFILEINFOW info;
+    DWORD attrs;
 
     if (nb_launchers == nb_allocated)
     {
@@ -374,13 +394,31 @@ static BOOL add_launcher( const WCHAR *folder, const WCHAR *filename, int len_fi
         nb_allocated = count;
     }
 
+    if (len_filename == -1) len_filename = lstrlenW( filename );
     if (!(launcher = malloc( sizeof(*launcher) ))) return FALSE;
     if (!(launcher->path = append_path( folder, filename, len_filename ))) goto error;
-    if (!(link = load_shelllink( launcher->path ))) goto error;
+    attrs = GetFileAttributesW( launcher->path );
+    if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM))) goto error;
+    remove_launcher( folder, filename, len_filename );
 
-    launcher->icon = extract_icon( link );
-    launcher->title = build_title( filename, len_filename );
-    IShellLinkW_Release( link );
+    if (!wcsicmp( PathFindExtensionW( launcher->path ), L".lnk" ))
+    {
+        if (!(link = load_shelllink( launcher->path ))) goto error;
+        launcher->icon = extract_icon( link );
+        IShellLinkW_Release( link );
+    }
+    else
+    {
+        if (!SHGetFileInfoW( launcher->path, 0, &info, sizeof(info), SHGFI_ICON )) goto error;
+        launcher->icon = info.hIcon;
+    }
+    if (hide_extension( launcher->path ))
+        launcher->title = build_title( filename, len_filename );
+    else if ((launcher->title = malloc( (len_filename + 1) * sizeof(WCHAR) )))
+    {
+        memcpy( launcher->title, filename, len_filename * sizeof(WCHAR) );
+        launcher->title[len_filename] = 0;
+    }
     if (launcher->icon && launcher->title)
     {
         launchers[nb_launchers++] = launcher;
@@ -545,19 +583,23 @@ error:
 
 static void add_folder( const WCHAR *folder )
 {
-    static const WCHAR lnkW[] = L"\\*.lnk";
-    int len = lstrlenW( folder ) + lstrlenW( lnkW );
+    static const WCHAR allW[] = L"\\*";
+    int len = lstrlenW( folder ) + lstrlenW( allW );
     WIN32_FIND_DATAW data;
     HANDLE handle;
     WCHAR *glob;
 
     if (!(glob = malloc( (len + 1) * sizeof(WCHAR) ))) return;
     lstrcpyW( glob, folder );
-    lstrcatW( glob, lnkW );
+    lstrcatW( glob, allW );
 
     if ((handle = FindFirstFileW( glob, &data )) != INVALID_HANDLE_VALUE)
     {
-        do { add_launcher( folder, data.cFileName, -1 ); } while (FindNextFileW( handle, &data ));
+        do
+        {
+            if (!wcscmp( data.cFileName, L"." ) || !wcscmp( data.cFileName, L".." )) continue;
+            add_launcher( folder, data.cFileName, -1 );
+        } while (FindNextFileW( handle, &data ));
         FindClose( handle );
     }
     free( glob );

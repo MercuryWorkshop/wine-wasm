@@ -4965,6 +4965,23 @@ static void usd_clock_tick(void)
     __atomic_store_n( &usd->TickCountLowDeprecated, (ULONG)tick, __ATOMIC_SEQ_CST );
 }
 
+/* The time zone as the server's page has it, about once a second, as the
+ * server recomputes it: a process copied its page before the server had (one
+ * started before the server's door has the mapping's, with no bias at all),
+ * and the bias changes with daylight saving time. */
+static void usd_zone_tick(void)
+{
+    static KUSER_SHARED_DATA *server;
+    KUSER_SHARED_DATA *usd = (KUSER_SHARED_DATA *)user_shared_data;
+    int got;
+
+    if (!server && !(server = malloc( page_size ))) return;
+    got = gex_usd_copy( GEX_ADDR(server), page_size );
+    if (got != page_size && got != -2) return;
+    usd_store( &usd->TimeZoneBias, ((ULONGLONG)server->TimeZoneBias.High1Time << 32) | server->TimeZoneBias.LowPart );
+    __atomic_store_n( &usd->TimeZoneId, server->TimeZoneId, __ATOMIC_SEQ_CST );
+}
+
 /* Every 16 ms, as wineserver refreshes its own copy at least that often
  * (server/fd.c, user_shared_data_timeout): Windows's tick is 15.6 ms too.
  * It was every 1 ms, about 900 wakeups a second in each child process, each
@@ -4972,11 +4989,13 @@ static void usd_clock_tick(void)
 static void *usd_clock_thread( void *arg )
 {
     const struct timespec period = { 0, 16 * 1000000 };
+    unsigned int n = 0;
 
     for (;;)
     {
         nanosleep( &period, NULL );
         usd_clock_tick();
+        if (!(++n % 64)) usd_zone_tick();
     }
     return NULL;
 }

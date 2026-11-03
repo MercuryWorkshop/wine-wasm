@@ -115,7 +115,8 @@ static BOOL enable_dock; /* allow systray icons to be docked in the host systray
 static BOOL no_tray_items; /* hide the systray and all systray icons */
 
 static int icon_cx, icon_cy, tray_width, tray_height;
-static int start_button_width, taskbar_button_width;
+static int start_button_width, taskbar_button_width, clock_width;
+static HFONT clock_font;
 static WCHAR start_label[50];
 
 static struct icon *balloon_icon;
@@ -127,6 +128,7 @@ static POINT balloon_pos;
 
 #define BALLOON_CREATE_TIMER 1
 #define BALLOON_SHOW_TIMER   2
+#define CLOCK_TIMER          3
 
 #define BALLOON_CREATE_TIMEOUT   2000
 #define BALLOON_SHOW_MIN_TIMEOUT 10000
@@ -342,7 +344,7 @@ static POINT get_icon_pos( struct icon *icon )
 
     if (enable_taskbar)
     {
-        pos.x = tray_width - icon_cx * (icon->display + 1);
+        pos.x = tray_width - clock_width - icon_cx * (icon->display + 1);
         pos.y = (tray_height - icon_cy) / 2;
     }
     else
@@ -805,7 +807,7 @@ static void sync_taskbar_buttons(void)
     struct taskbar_button *win;
     int pos = 0, count = 0;
     int width = taskbar_button_width;
-    int right = tray_width - nb_displayed * icon_cx;
+    int right = tray_width - clock_width - nb_displayed * icon_cx;
     HWND foreground = GetAncestor( GetForegroundWindow(), GA_ROOTOWNER );
 
     if (!enable_taskbar) return;
@@ -1054,6 +1056,38 @@ static void show_taskbar_contextmenu( HWND button, LPARAM lparam )
     if (id) SendNotifyMessageW( (HWND)id, WM_POPUPSYSTEMMENU, 0, lparam );
 }
 
+/* the clock at the right end of the taskbar */
+static void get_clock_rect( RECT *rect )
+{
+    SetRect( rect, tray_width - clock_width, 0, tray_width, tray_height );
+}
+
+static void set_clock_timer(void)
+{
+    SYSTEMTIME st;
+
+    /* wake up when the minute changes */
+    GetLocalTime( &st );
+    SetTimer( tray_window, CLOCK_TIMER, (60 - st.wSecond) * 1000 - st.wMilliseconds, NULL );
+}
+
+static void paint_clock( HDC hdc )
+{
+    WCHAR text[64];
+    RECT rect;
+    HFONT old;
+
+    if (!GetTimeFormatEx( LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, NULL, NULL, text, ARRAY_SIZE(text) ))
+        return;
+    get_clock_rect( &rect );
+    DrawEdge( hdc, &rect, BDR_SUNKENOUTER, BF_RECT | BF_ADJUST );
+    old = SelectObject( hdc, clock_font );
+    SetBkMode( hdc, TRANSPARENT );
+    SetTextColor( hdc, GetSysColor( COLOR_BTNTEXT ));
+    DrawTextW( hdc, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE );
+    SelectObject( hdc, old );
+}
+
 static void do_hide_systray(void)
 {
     ShowWindow( tray_window, SW_HIDE );
@@ -1082,6 +1116,17 @@ static void do_show_systray(void)
     SelectObject( hdc, font );
     GetTextExtentPointA( hdc, "abcdefghijklmnopqrstuvwxyz", 26, &size );
     taskbar_button_width = size.cx;
+    if (!clock_font) clock_font = CreateFontIndirectW( &ncm.lfCaptionFont );
+    {
+        /* a late time of day, to measure the widest text the clock shows */
+        SYSTEMTIME st = { .wYear = 2000, .wMonth = 1, .wDay = 1, .wHour = 22, .wMinute = 58 };
+        WCHAR text[64];
+        SIZE clock;
+
+        if (GetTimeFormatEx( LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, &st, NULL, text, ARRAY_SIZE(text) ) &&
+            GetTextExtentPointW( hdc, text, lstrlenW(text), &clock ))
+            clock_width = clock.cx + 16;
+    }
     GetTextExtentPointW( hdc, start_label, lstrlenW(start_label), &size );
     /* add some margins (FIXME) */
     size.cx += 12 + GetSystemMetrics( SM_CXSMICON );
@@ -1095,6 +1140,7 @@ static void do_show_systray(void)
     SetWindowPos( tray_window, 0, 0, GetSystemMetrics( SM_CYSCREEN ) - tray_height,
                   tray_width, tray_height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW );
     sync_taskbar_buttons();
+    set_clock_timer();
 }
 
 static LRESULT WINAPI shell_traywnd_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
@@ -1123,6 +1169,27 @@ static LRESULT WINAPI shell_traywnd_proc( HWND hwnd, UINT msg, WPARAM wparam, LP
 
     case WM_MOVE:
         update_systray_balloon_position();
+        break;
+
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint( hwnd, &ps );
+
+        if (enable_taskbar) paint_clock( hdc );
+        EndPaint( hwnd, &ps );
+        break;
+    }
+
+    case WM_TIMER:
+        if (wparam == CLOCK_TIMER)
+        {
+            RECT rect;
+
+            get_clock_rect( &rect );
+            InvalidateRect( hwnd, &rect, TRUE );
+            set_clock_timer();
+        }
         break;
 
     case WM_CLOSE:

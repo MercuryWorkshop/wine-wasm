@@ -113,6 +113,7 @@ static void maybe_init_display_devices(void)
      * also helps us avoid calling NtUserGetDesktopWindow() (see below) at
      * process init time, since it may not be safe. */
     if (!process_wayland.initialized) return;
+    if (wayland_fit_virtual_desktop_changed()) return;
 
     desktop_hwnd = NtUserGetDesktopWindow();
     NtUserGetWindowThread(desktop_hwnd, &desktop_pid);
@@ -169,8 +170,9 @@ static void wayland_output_done(struct wayland_output *output)
 
     output->pending_flags = 0;
 
-    /* Ensure the logical dimensions have sane values. */
-    if ((!output->current.logical_w || !output->current.logical_h) &&
+    /* Ensure the logical dimensions have sane values. Without xdg-output
+     * they are the current mode's, which changes when the output is resized. */
+    if ((!output->zxdg_output_v1 || !output->current.logical_w || !output->current.logical_h) &&
         output->current.current_mode)
     {
         output->current.logical_w = output->current.current_mode->width;
