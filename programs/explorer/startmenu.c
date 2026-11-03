@@ -189,6 +189,7 @@ static struct menu_item* add_shell_item(struct menu_item* parent, LPITEMIDLIST p
     SFGAOF flags;
     SHFILEINFOW sfi;
     HIMAGELIST himl;
+    LPITEMIDLIST abs_pidl;
 
     item = calloc( 1, sizeof(struct menu_item) );
 
@@ -210,7 +211,12 @@ static struct menu_item* add_shell_item(struct menu_item* parent, LPITEMIDLIST p
             IShellFolder_BindToObject(parent->folder, pidl, NULL, &IID_IShellFolder, (void *)&item->folder);
     }
 
-    himl = (HIMAGELIST)SHGetFileInfoW((LPCWSTR)pidl, 0, &sfi, sizeof(sfi), SHGFI_PIDL|SHGFI_SYSICONINDEX|SHGFI_SMALLICON);
+    /* pidl is relative to the parent's folder; SHGetFileInfo takes an absolute one */
+    item->parent = parent;
+    item->pidl = pidl;
+    abs_pidl = build_pidl(item);
+    himl = (HIMAGELIST)SHGetFileInfoW((LPCWSTR)abs_pidl, 0, &sfi, sizeof(sfi), SHGFI_PIDL|SHGFI_SYSICONINDEX|SHGFI_SMALLICON);
+    CoTaskMemFree(abs_pidl);
     if (himl)
     {
         item->icon_himl = himl;
