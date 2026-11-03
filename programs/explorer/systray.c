@@ -1022,6 +1022,10 @@ static void click_taskbar_button( HWND button )
     if (IsIconic( hwnd ))
     {
         SendMessageW( hwnd, WM_SYSCOMMAND, SC_RESTORE, 0 );
+        /* Restored by another thread, it is shown but not activated (its thread
+         * is not the foreground one): Windows's taskbar brings it to the front
+         * with the keyboard, and so does this one. */
+        SetForegroundWindow( hwnd );
         return;
     }
 
