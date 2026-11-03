@@ -157,6 +157,9 @@ static DWORD load_service_config(HKEY hKey, struct service_entry *entry)
         entry->is_wow64 = TRUE;
     if (load_reg_dword(hKey, L"DelayedAutoStart", &value) == 0 && value == 1)
         entry->delayed_autostart = TRUE;
+    /* a root PnP device's driver that only StartService starts, not the boot */
+    if (load_reg_dword(hKey, L"DemandStart", &value) == 0 && value == 1)
+        entry->demand_start = TRUE;
 
     WINE_TRACE("Image path           = %s\n", wine_dbgstr_w(entry->config.lpBinaryPathName) );
     WINE_TRACE("Group                = %s\n", wine_dbgstr_w(entry->config.lpLoadOrderGroup) );
@@ -429,7 +432,7 @@ static void scmdatabase_autostart_services(struct scmdatabase *db)
         if (service->config.dwStartType == SERVICE_BOOT_START ||
             service->config.dwStartType == SERVICE_SYSTEM_START ||
             service->config.dwStartType == SERVICE_AUTO_START ||
-            (set != INVALID_HANDLE_VALUE && is_root_pnp_service(set, service)))
+            (!service->demand_start && set != INVALID_HANDLE_VALUE && is_root_pnp_service(set, service)))
         {
             if (i+1 >= size)
             {
