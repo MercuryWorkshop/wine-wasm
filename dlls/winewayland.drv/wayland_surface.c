@@ -339,6 +339,19 @@ static void gex_placement_handle_origin(void *data, struct gex_window_placement_
     wayland_win_data_release(win_data);
 }
 
+/* A window Win32 activated before it had a placement: WAYLAND_ActivateWindow
+ * found nothing to tell then (ShowWindow activates a window before the
+ * WindowPosChanged that makes its surface), and the compositor, which gives
+ * a placed window the keyboard only when told, would never give it one. So
+ * the placement says it at once when its window is the foreground one. */
+static void wayland_surface_activate_if_foreground(struct wayland_surface *surface)
+{
+    HWND fg = NtUserGetForegroundWindow();
+
+    if (fg && NtUserGetAncestor(fg, GA_ROOT) == surface->hwnd)
+        gex_window_placement_v1_activate(surface->gex_placement);
+}
+
 static const struct gex_window_placement_v1_listener gex_placement_listener =
 {
     gex_placement_handle_origin,
@@ -399,6 +412,7 @@ void wayland_surface_make_toplevel(struct wayland_surface *surface)
             surface->placed_layer = 0;
             surface->placed_below = 0;
             surface->placed_stacked = FALSE;
+            wayland_surface_activate_if_foreground(surface);
         }
     }
 
