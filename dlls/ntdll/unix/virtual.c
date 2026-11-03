@@ -3714,6 +3714,48 @@ static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_inf
  */
 #ifdef __wasm__
 __attribute__((import_module("gex"), import_name("image_mapped"))) void gex_image_mapped( gex_addr_t base, int fd );
+
+/* The memory gex maps for native modules (their data, heaps and stacks,
+ * outside every image), from the from'th range on: (start, end) pairs at
+ * out, at most max; how many ranges there are in all, in the order mapped. */
+__attribute__((import_module("gex"), import_name("host_data")))
+extern unsigned int gex_host_data( unsigned int from, gex_addr_t out, unsigned int max );
+
+static unsigned int gex_host_data_seen;
+
+/* A committed read-write system view of each of those ranges not seen yet,
+ * so that a program's statics are memory Wine knows (a server call's reply
+ * buffer, VirtualQuery). Called with virtual_mutex held: after an image is
+ * mapped, and where an address is in no view. TRUE when it made any. */
+static BOOL gex_host_data_sync(void)
+{
+    unsigned int r[2 * 16], total, n, i;
+    BOOL made = FALSE;
+
+    for (;;)
+    {
+        total = gex_host_data( gex_host_data_seen, GEX_ADDR(r), ARRAY_SIZE(r) / 2 );
+        if (total <= gex_host_data_seen) return made;
+        n = min( total - gex_host_data_seen, ARRAY_SIZE(r) / 2 );
+        for (i = 0; i < n; i++)
+        {
+            char *base = ROUND_ADDR( (ULONG_PTR)r[2 * i], host_page_mask );
+            char *end = ROUND_ADDR( (ULONG_PTR)r[2 * i + 1] + host_page_mask, host_page_mask );
+            struct file_view *view;
+
+            if (end <= base) continue;
+            /* one of Wine's own (a range gex unmapped and Wine took since) */
+            if ((view = find_view_range( base, end - base )) && !(view->protect & VPROT_SYSTEM))
+            {
+                WARN( "gex memory %p-%p overlaps view %p-%p\n", base, end, view->base, (char *)view->base + view->size );
+                continue;
+            }
+            if (!create_view( &view, base, end - base, VPROT_SYSTEM | VPROT_COMMITTED | VPROT_READ | VPROT_WRITE ))
+                made = TRUE;
+        }
+        gex_host_data_seen += n;
+    }
+}
 #endif
 
 static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size_ptr,
@@ -3767,7 +3809,11 @@ static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size
                                   machine, shared_fd, needs_close );
 #ifdef __wasm__
     /* gex: a native DLL's skeleton gets Wine's PE module at its exports */
-    if (status == STATUS_SUCCESS) gex_image_mapped( GEX_ADDR(view->base), unix_fd );
+    if (status == STATUS_SUCCESS)
+    {
+        gex_image_mapped( GEX_ADDR(view->base), unix_fd );
+        gex_host_data_sync();
+    }
 #endif
     if (status == STATUS_SUCCESS)
     {
@@ -5409,7 +5455,18 @@ void *virtual_setup_exception( struct thread_data *data, void *stack_ptr, size_t
  *
  * Check if the memory range is writable, temporarily disabling write watches if necessary.
  */
+static NTSTATUS check_write_access_views( void *base, size_t size, BOOL *has_write_watch );
+
 static NTSTATUS check_write_access( void *base, size_t size, BOOL *has_write_watch )
+{
+    NTSTATUS status = check_write_access_views( base, size, has_write_watch );
+#ifdef __wasm__
+    if (status && gex_host_data_sync()) status = check_write_access_views( base, size, has_write_watch );
+#endif
+    return status;
+}
+
+static NTSTATUS check_write_access_views( void *base, size_t size, BOOL *has_write_watch )
 {
     size_t i;
     char *addr = ROUND_ADDR( base, host_page_mask );
@@ -6389,6 +6446,10 @@ static unsigned int fill_basic_memory_info( const void *addr, MEMORY_BASIC_INFOR
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
     view = get_memory_region_size( base, &alloc_base, &alloc_end, &fake_reserved );
+#ifdef __wasm__
+    if (!view && gex_host_data_sync())
+        view = get_memory_region_size( base, &alloc_base, &alloc_end, &fake_reserved );
+#endif
 
     /* Fill the info structure */
 
