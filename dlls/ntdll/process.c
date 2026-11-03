@@ -736,9 +736,29 @@ NTSTATUS WINAPI DbgUiIssueRemoteBreakin( HANDLE process )
     HANDLE handle;
     NTSTATUS status;
     OBJECT_ATTRIBUTES attr = { sizeof(attr) };
+    void *start = DbgUiRemoteBreakin;
+#if defined(__wasm32__) || defined(__wasm64__)
+    ULONG_PTR wow;
+#ifdef __wasm64__
+    UNICODE_STRING name = RTL_CONSTANT_STRING( L"ntdll.dll" );
+    HMODULE module;
+#endif
+
+    /* A function pointer here is this process's own native code. The thread
+     * starts at the export's guest address instead, so that the breakpoint
+     * it raises is continued at that call's return; in a WoW64 process at
+     * the old WoW64 marker, which its Unix side starts at its 32-bit
+     * ntdll's export. */
+    if (!NtQueryInformationProcess( process, ProcessWow64Information, &wow, sizeof(wow), NULL ) && wow)
+        start = (void *)0x7ffe1000;
+#ifdef __wasm64__
+    else if (!LdrGetDllHandle( NULL, 0, &name, &module ))
+        start = RtlFindExportedRoutineByName( module, "DbgUiRemoteBreakin" );
+#endif
+#endif
 
     status = NtCreateThreadEx( &handle, THREAD_ALL_ACCESS, &attr, process,
-                               DbgUiRemoteBreakin, NULL, 0, 0, 0, 0, NULL );
+                               start, NULL, 0, 0, 0, 0, NULL );
 #ifdef _WIN64
     /* FIXME: hack for debugging 32-bit wow64 process without a 64-bit ntdll */
     if (status == STATUS_INVALID_PARAMETER)

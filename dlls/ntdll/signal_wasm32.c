@@ -402,7 +402,43 @@ static void capture_guest_context( CONTEXT *context, ULONG pop )
  */
 void WINAPI RtlCaptureContext( CONTEXT *context )
 {
-    capture_guest_context( context, 0 );
+    int ctx = guest_ctx();
+    ULONG ebp = CTX_REG( ctx, R_EBP );
+
+    /* The fields signal_i386.c's (and Windows') writes, and no others: callers
+     * may pass a CONTEXT that ends at SegSs (Wine Mono's release_call_wrapper
+     * reserves 0xcc bytes), so the FloatSave, debug and ExtendedRegisters
+     * parts are left as they are. As there, the context is the caller's
+     * caller's, found through the caller's EBP frame: Eip is the caller's
+     * return address, Esp the caller's stack after it returns (before it pops
+     * any arguments). With no valid frame, the guest's state at the call. */
+    context->ContextFlags = CONTEXT_FULL;  /* 0x10007, i386's */
+    context->SegGs = 0x2b;
+    context->SegFs = 0x63;
+    context->SegEs = 0x2b;
+    context->SegDs = 0x2b;
+    context->Edi = CTX_REG( ctx, R_EDI );
+    context->Esi = CTX_REG( ctx, R_ESI );
+    context->Ebx = CTX_REG( ctx, R_EBX );
+    context->Edx = CTX_REG( ctx, R_EDX );
+    context->Ecx = CTX_REG( ctx, R_ECX );
+    context->Eax = CTX_REG( ctx, R_EAX );
+    if (is_valid_frame( ebp ))
+    {
+        context->Ebp = guest_word( ebp );
+        context->Eip = guest_word( ebp + 4 );
+        context->Esp = ebp + 8;
+    }
+    else
+    {
+        ULONG esp = CTX_REG( ctx, R_ESP );
+        context->Ebp = ebp;
+        context->Eip = guest_word( esp );
+        context->Esp = esp + 4;
+    }
+    context->SegCs = 0x23;
+    context->EFlags = 0x202;
+    context->SegSs = 0x2b;
 }
 
 
@@ -501,6 +537,14 @@ void WINAPI RtlRaiseException( EXCEPTION_RECORD *rec )
 
     TRACE( "code=%lx flags=%lx addr=%p\n", rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress );
 
+    /* under a debugger, its first chance (signal_wasm64.c) */
+    if (NtCurrentTeb()->Peb->BeingDebugged)
+    {
+        struct debug_event_params params = { rec, &context };
+
+        status = WINE_UNIX_CALL( unix_debug_event, &params );
+        if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED) return;
+    }
     status = dispatch_exception_in_place( rec, &context );
 
     if (status == STATUS_SUCCESS)

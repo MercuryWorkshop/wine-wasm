@@ -508,8 +508,11 @@ ULONG64 WINAPI __wine_gex_syscall32( ULONG id, ULONG args, ULONG esp )
  *
  * A Unix call of native 32-bit code, its arguments at the 32-bit address
  * ARGS: as unix_call_32to64 makes it (the same wasm type in both modules).
+ * ESP is the 32-bit stack pointer below the caller's native frames, where a
+ * callback the call makes (KeUserDispatchCallback) puts its own: the area's
+ * is the last system call's, above every frame pushed since.
  */
-struct unix_call32_params { ULONG64 handle; ULONG code, args; };
+struct unix_call32_params { ULONG64 handle; ULONG code, args, esp; };
 
 static ULONG64 unix_call32( void *arg )
 {
@@ -517,9 +520,10 @@ static ULONG64 unix_call32( void *arg )
     ULONG64 handle = p->handle;
     ULONG code = p->code, args = p->args;
     I386_CONTEXT *ctx = cpu_context();
-    ULONG eip = ctx->Eip, esp = ctx->Esp;
+    ULONG eip = ctx->Eip, esp = p->esp, old_esp = ctx->Esp;
     NTSTATUS status;
 
+    ctx->Esp = esp;
     cpu_area()->Flags &= ~WOW64_CPURESERVED_FLAG_RESET_STATE;
     status = ((NTSTATUS (WINAPI *)( ULONG64, unsigned int, void * ))__wine_unix_call_dispatcher)(
                  handle, code, ULongToPtr( args ));
@@ -531,12 +535,13 @@ static ULONG64 unix_call32( void *arg )
              code, wine_dbgstr_longlong( handle ), eip, ctx->Eip, esp, ctx->Esp );
         __builtin_trap();
     }
+    ctx->Esp = old_esp;
     return (ULONG)status;
 }
 
-NTSTATUS WINAPI __wine_gex_unix_call32( ULONG64 handle, ULONG code, ULONG args )
+NTSTATUS WINAPI __wine_gex_unix_call32( ULONG64 handle, ULONG code, ULONG args, ULONG esp )
 {
-    struct unix_call32_params p = { handle, code, args };
+    struct unix_call32_params p = { handle, code, args, esp };
 
     return (NTSTATUS)on_64bit_stack( unix_call32, &p );
 }

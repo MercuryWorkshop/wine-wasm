@@ -108,6 +108,9 @@ void *pKiUserCallbackDispatcher = NULL;
 void *pKiUserEmulationDispatcher = NULL;
 void *pLdrInitializeThunk = NULL;
 void *pRtlUserThreadStart = NULL;
+#ifdef __wasm64__
+ULONG_PTR pDbgUiRemoteBreakinWow64 = 0;
+#endif
 void *p__wine_ctrl_routine = NULL;
 SYSTEM_DLL_INIT_BLOCK *pLdrSystemDllInitBlock = NULL;
 
@@ -1289,6 +1292,9 @@ static const unixlib_entry_t unix_call_funcs[] =
     unixcall_wine_server_handle_to_fd,
     unixcall_wine_spawnvp,
     system_time_precise,
+#ifdef __wasm64__
+    debug_event,
+#endif
 };
 
 
@@ -1307,6 +1313,9 @@ const unixlib_entry_t unix_call_wow64_funcs[] =
     wow64_wine_server_handle_to_fd,
     wow64_wine_spawnvp,
     system_time_precise,
+#ifdef __wasm64__
+    wow64_debug_event,
+#endif
 };
 
 #endif  /* _WIN64 */
@@ -1904,6 +1913,9 @@ static void load_ntdll_wow64_functions( HMODULE module )
 #undef GET_FUNC
 
     p__wine_ctrl_routine = (void *)find_named_export( module, exports, "__wine_ctrl_routine" );
+#ifdef __wasm64__
+    pDbgUiRemoteBreakinWow64 = find_named_export( module, exports, "DbgUiRemoteBreakin" );
+#endif
 
 #ifdef _WIN64
     {

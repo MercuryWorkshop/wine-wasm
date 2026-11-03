@@ -71,6 +71,26 @@ __ASM_GLOBAL_FUNC(call_thiscall_func,
 #define call_func2(func,this,a) ((void* (WINAPI*)(void*,void*,void*))&call_thiscall_func)(func,this,a)
 #define call_func3(func,this,a,b) ((void* (WINAPI*)(void*,void*,void*,unsigned int))&call_thiscall_func)(func,this,a,b)
 
+#elif defined(__wasm32__)
+#include "wine/gex/runtime.h"
+
+/* msvcr's ConcRT methods, as GetProcAddress gives them: native code (a
+ * function table index) is called as C, `this` first; one at a guest
+ * address is i386 thiscall, `this` in ECX and the rest on the stack. */
+static inline UINT call_guest_thiscall( void *func, void *this, UINT a, UINT b, UINT n )
+{
+    UINT words[2] = { a, b };
+
+    return __gexw_guest_call_regs( PtrToUlong( func ), PtrToUlong( this ), 0, words, n );
+}
+
+#define call_func1(func,this) (__gexw_is_native(func) ? func(this) : \
+        (__typeof__(func(this)))call_guest_thiscall(func,this,0,0,0))
+#define call_func2(func,this,a) (__gexw_is_native(func) ? func(this,a) : \
+        (__typeof__(func(this,a)))call_guest_thiscall(func,this,PtrToUlong(a),0,1))
+#define call_func3(func,this,a,b) (__gexw_is_native(func) ? func(this,a,b) : \
+        (__typeof__(func(this,a,b)))call_guest_thiscall(func,this,PtrToUlong(a),b,2))
+
 #else /* __i386__ */
 
 #define call_func1(func,this) func(this)

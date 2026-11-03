@@ -850,17 +850,24 @@ void WINAPI RtlRaiseException( EXCEPTION_RECORD *rec )
 
     TRACE( "code=%lx flags=%lx addr=%p\n", rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress );
 
-    if (!NtCurrentTeb()->Peb->BeingDebugged)
+    /* under a debugger, its first chance: continued, the raise returns;
+     * else the exception is dispatched in place, as without one, and only
+     * an unhandled one goes to it again (the last chance) */
+    if (NtCurrentTeb()->Peb->BeingDebugged)
     {
-        status = dispatch_exception_in_place( rec, &context );
-        if (status == STATUS_SUCCESS)
-        {
-            /* a handler that resumes elsewhere (its own frame) */
-            if (context.Rip != rip || context.Rsp != rsp || context.Rbp != rbp) NtContinue( &context, FALSE );
-            return;
-        }
-        if (status != STATUS_UNHANDLED_EXCEPTION) RtlRaiseStatus( status );
+        struct debug_event_params params = { rec, &context };
+
+        status = WINE_UNIX_CALL( unix_debug_event, &params );
+        if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED) return;
     }
+    status = dispatch_exception_in_place( rec, &context );
+    if (status == STATUS_SUCCESS)
+    {
+        /* a handler that resumes elsewhere (its own frame) */
+        if (context.Rip != rip || context.Rsp != rsp || context.Rbp != rbp) NtContinue( &context, FALSE );
+        return;
+    }
+    if (status != STATUS_UNHANDLED_EXCEPTION) RtlRaiseStatus( status );
     RtlRaiseStatus( NtRaiseException( rec, &context, FALSE ));
 }
 

@@ -303,7 +303,7 @@ extern void *__wine_syscall_dispatcher __asm__("ntdll.dll!__wine_syscall_dispatc
 extern unsigned long long gex_wow64_syscall32( uint32_t id, uint32_t args, uint32_t esp )
     __attribute__((import_module("env"), import_name("wow64cpu.dll!__wine_gex_syscall32")));
 
-extern uint32_t gex_wow64_unix_call32( unsigned long long handle, uint32_t code, uint32_t args )
+extern uint32_t gex_wow64_unix_call32( unsigned long long handle, uint32_t code, uint32_t args, uint32_t esp )
     __attribute__((import_module("env"), import_name("wow64cpu.dll!__wine_gex_unix_call32")));
 #define WOW64_STOP_UNIX 0x3ffff7u
 
@@ -385,11 +385,18 @@ static void run_until( int ctx, uint32_t stop, uint32_t limit )
          * since that entry is dead. Drop them; the entry returns 0 and the
          * guest goes on from the context. */
         if (limit && in_mode( ctx ) && gp_reg( ctx, R_ESP ) >= limit) __gexw_throw_unwind();
+        uint32_t esp = gp_reg( ctx, R_ESP );
         GEX_C64( GEX_CTX_LAST_TARGET ) = pc;
         if (GEX_FTAB( gex_ftab_idx( pc ))( ctx, depth, 0xffffffffu, stop )) return;
         /* a trap through native frames inside it skipped their entries'
          * restores */
         gexw_set_entry_esp( limit );
+        /* Left where it was entered, with the stack as it was: its depth
+         * guard, the nest it was called in being full. That nest is ours
+         * and cannot be left, so the guest goes on in a new nest from here,
+         * at depth 0, as gex's own nested loops start one; called again at
+         * this depth it would leave again, forever. */
+        if ((uint32_t)GEX_C64( GEX_CTX_PC ) == pc && gp_reg( ctx, R_ESP ) == esp) depth = 0;
     }
 }
 
@@ -457,9 +464,11 @@ uint64_t __gexw_guest_call( uint32_t target, const uint32_t *words, uint32_t n )
     }
 
     /* With gex's native wow64cpu, ntdll's dispatcher is its Unix call
-     * thunk: a direct call into it instead */
+     * thunk: a direct call into it instead, with the 32-bit stack below
+     * these native frames for a callback the call makes */
     if (target == WOW64_STOP_UNIX && n == 4)
-        return gex_wow64_unix_call32( words[0] | ((unsigned long long)words[1] << 32), words[2], words[3] );
+        return gex_wow64_unix_call32( words[0] | ((unsigned long long)words[1] << 32), words[2], words[3],
+                                      (gexw_get_sp() - 64) & ~15u );
 
     sp0 = gp_reg( ctx, R_ESP );
     /* below everything native code has live */

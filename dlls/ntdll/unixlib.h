@@ -76,6 +76,14 @@ enum ntdll_unix_funcs
     unix_wine_server_handle_to_fd,
     unix_wine_spawnvp,
     unix_system_time_precise,
+    unix_debug_event,
+};
+
+/* unix_debug_event (wasm): a native raise's first chance for a debugger */
+struct debug_event_params
+{
+    EXCEPTION_RECORD *rec;
+    CONTEXT          *context;
 };
 
 extern unixlib_handle_t __wine_unixlib_handle;

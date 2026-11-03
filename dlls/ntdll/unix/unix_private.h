@@ -201,6 +201,9 @@ static const LONG teb_offset = 0x2000;
 
 /* callbacks to PE ntdll from the Unix side */
 extern void *pDbgUiRemoteBreakin;
+#ifdef __wasm64__
+extern ULONG_PTR pDbgUiRemoteBreakinWow64;
+#endif
 extern void *pKiRaiseUserExceptionDispatcher;
 extern void *pKiUserExceptionDispatcher;
 extern void *pKiUserApcDispatcher;
@@ -331,6 +334,10 @@ extern NTSTATUS get_thread_context( HANDLE handle, void *context, BOOL *self, US
 extern unsigned int alloc_object_attributes( const OBJECT_ATTRIBUTES *attr, struct object_attributes **ret,
                                              data_size_t *ret_len );
 extern NTSTATUS system_time_precise( void *args );
+#ifdef __wasm64__
+extern NTSTATUS debug_event( void *args );
+extern NTSTATUS wow64_debug_event( void *args );
+#endif
 
 extern void *anon_mmap_fixed( void *start, size_t size, int prot, int flags );
 extern void *anon_mmap_alloc( size_t size, int prot );
