@@ -180,6 +180,8 @@ typedef unsigned long __msvcrt_ulong;
 #ifndef _INTPTR_T_DEFINED
 #ifdef  _WIN64
 typedef __int64 intptr_t;
+#elif defined(__cplusplus) && defined(__wasm32__)
+typedef __INTPTR_TYPE__ intptr_t;
 #else
 typedef int intptr_t;
 #endif
@@ -189,6 +191,8 @@ typedef int intptr_t;
 #ifndef _UINTPTR_T_DEFINED
 #ifdef  _WIN64
 typedef unsigned __int64 uintptr_t;
+#elif defined(__cplusplus) && defined(__wasm32__)
+typedef __UINTPTR_TYPE__ uintptr_t;
 #else
 typedef unsigned int uintptr_t;
 #endif
@@ -198,6 +202,8 @@ typedef unsigned int uintptr_t;
 #ifndef _PTRDIFF_T_DEFINED
 #ifdef _WIN64
 typedef __int64 ptrdiff_t;
+#elif defined(__cplusplus) && defined(__wasm32__)
+typedef __PTRDIFF_TYPE__ ptrdiff_t;
 #else
 typedef int ptrdiff_t;
 #endif
@@ -207,6 +213,11 @@ typedef int ptrdiff_t;
 #ifndef _SIZE_T_DEFINED
 #ifdef _WIN64
 typedef unsigned __int64 size_t;
+#elif defined(__cplusplus) && defined(__wasm32__)
+/* C++ on wasm32: the compiler's own types of a pointer's width (long, 32 bits
+ * wide, as int is), which C++ requires of operator new, std::align_val_t
+ * and the library's overloads (above too) */
+typedef __SIZE_TYPE__ size_t;
 #else
 typedef unsigned int size_t;
 #endif

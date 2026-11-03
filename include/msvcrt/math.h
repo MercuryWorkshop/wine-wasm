@@ -505,5 +505,71 @@ static inline long double sqrtl(long double x) { return sqrt(x); }
 static inline long double tanhl(long double x) { return tanh(x); }
 static inline long double tanl(long double x) { return tan(x); }
 
+#elif defined(__wasm32__) && defined(__cplusplus)
+
+/* wasm32's long double is 128 bits wide, where Windows' is a double: the C
+ * runtime has no long double functions C++ code could import, so each is
+ * its double function's, in the caller's module (libc++'s cmath names them) */
+static inline float nexttowardf(float x, long double y) { return nextafterf(x, (float)y); }
+static inline double nexttoward(double x, long double y) { return nextafter(x, (double)y); }
+static inline long double nexttowardl(long double x, long double y) { return nextafter(x, y); }
+static inline long double acoshl(long double x) { return acosh(x); }
+static inline long double asinhl(long double x) { return asinh(x); }
+static inline long double atanhl(long double x) { return atanh(x); }
+static inline long double cbrtl(long double x) { return cbrt(x); }
+static inline long double copysignl(long double x, long double y) { return copysign(x, y); }
+static inline long double coshl(long double x) { return cosh(x); }
+static inline long double erfcl(long double x) { return erfc(x); }
+static inline long double erfl(long double x) { return erf(x); }
+static inline long double exp2l(long double x) { return exp2(x); }
+static inline long double expm1l(long double x) { return expm1(x); }
+static inline long double fdiml(long double x, long double y) { return fdim(x, y); }
+static inline long double fmal(long double x, long double y, long double z) { return fma(x, y, z); }
+static inline long double fmaxl(long double x, long double y) { return fmax(x, y); }
+static inline long double fminl(long double x, long double y) { return fmin(x, y); }
+static inline int ilogbl(long double x) { return ilogb(x); }
+static inline long double lgammal(long double x) { return lgamma(x); }
+static inline __int64 llrintl(long double x) { return llrint(x); }
+static inline __int64 llroundl(long double x) { return llround(x); }
+static inline __msvcrt_long lrintl(long double x) { return lrint(x); }
+static inline __msvcrt_long lroundl(long double x) { return lround(x); }
+static inline long double log1pl(long double x) { return log1p(x); }
+static inline long double log2l(long double x) { return log2(x); }
+static inline long double logbl(long double x) { return logb(x); }
+static inline long double nanl(const char *s) { return nan(s); }
+static inline long double nearbyintl(long double x) { return nearbyint(x); }
+static inline long double nextafterl(long double x, long double y) { return nextafter(x, y); }
+static inline long double remainderl(long double x, long double y) { return remainder(x, y); }
+static inline long double remquol(long double x, long double y, int *q) { return remquo(x, y, q); }
+static inline long double rintl(long double x) { return rint(x); }
+static inline long double roundl(long double x) { return round(x); }
+static inline long double scalblnl(long double x, __msvcrt_long n) { return scalbln(x, n); }
+static inline long double scalbnl(long double x, int n) { return scalbn(x, n); }
+static inline long double tgammal(long double x) { return tgamma(x); }
+static inline long double truncl(long double x) { return trunc(x); }
+
+static inline long double acosl(long double x) { return acos(x); }
+static inline long double asinl(long double x) { return asin(x); }
+static inline long double atan2l(long double y, long double x) { return atan2(y, x); }
+static inline long double atanl(long double x) { return atan(x); }
+static inline long double ceill(long double x) { return ceil(x); }
+static inline long double cosl(long double x) { return cos(x); }
+static inline long double expl(long double x) { return exp(x); }
+static inline long double fabsl(long double x) { return fabs(x); }
+static inline long double floorl(long double x) { return floor(x); }
+static inline long double fmodl(long double x, long double y) { return fmod(x, y); }
+static inline long double frexpl(long double x, int *y) { return frexp(x, y); }
+static inline long double hypotl(long double x, long double y) { return _hypot(x, y); }
+static inline long double ldexpl(long double x, int y) { return ldexp(x, y); }
+static inline long double log10l(long double x) { return log10(x); }
+static inline long double logl(long double x) { return log(x); }
+static inline long double modfl(long double x, long double *y) { double i, r = modf(x, &i); *y = i; return r; }
+static inline long double powl(long double x, long double y) { return pow(x, y); }
+static inline long double sinhl(long double x) { return sinh(x); }
+static inline long double sinl(long double x) { return sin(x); }
+static inline long double sqrtl(long double x) { return sqrt(x); }
+static inline long double tanhl(long double x) { return tanh(x); }
+static inline long double tanl(long double x) { return tan(x); }
+
 #endif
 #endif /* __WINE_MATH_H */
