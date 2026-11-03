@@ -455,9 +455,15 @@ static const struct opengl_drawable_funcs framebuffer_surface_funcs =
 
 static struct opengl_drawable *framebuffer_surface_create( int format, struct client_surface *client )
 {
+    const struct opengl_funcs *funcs = &display_funcs;
     struct wgl_pixel_format draw_desc = pixel_formats[format - 1], read_desc = draw_desc;
     struct framebuffer_surface *surface;
 
+    if (!funcs->p_glCreateFramebuffers || !funcs->p_glCreateRenderbuffers || !funcs->p_glGetNamedFramebufferAttachmentParameteriv)
+    {
+        WARN( "No GL 4.5 framebuffer functions, no framebuffer surface\n" );
+        return NULL;
+    }
     if (!(surface = opengl_drawable_create( sizeof(*surface), &framebuffer_surface_funcs, format, client ))) return NULL;
 
     opengl_drawable_map_buffer( &surface->base, GL_FRONT_LEFT, GL_COLOR_ATTACHMENT0 );
