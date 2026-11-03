@@ -223,7 +223,9 @@ static struct menu_item* add_shell_item(struct menu_item* parent, LPITEMIDLIST p
         item->icon_i = sfi.iIcon;
     }
 
-    if (item->folder && shell_folder_is_empty(item->folder))
+    /* The root's one shell item is the Control Panel: always shown; finding it empty would load
+     * every applet on each menu build. */
+    if (item->folder && parent->pidl && shell_folder_is_empty(item->folder))
     {
         IShellFolder_Release(item->folder);
         free( item->displayname );
