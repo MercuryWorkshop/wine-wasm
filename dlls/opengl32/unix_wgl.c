@@ -1286,6 +1286,9 @@ BOOL wrap_wglMakeContextCurrentARB( TEB *teb, HDC draw_hdc, HDC read_hdc, HGLRC 
     else
     {
         const struct opengl_funcs *funcs = teb->glTable;
+        /* no context was ever made current on this thread (its table is still
+         * null_opengl_funcs, with no wglMakeContextCurrentARB): nothing to release */
+        if (!funcs->p_wglMakeContextCurrentARB) return TRUE;
         if (!funcs->p_wglMakeContextCurrentARB( NULL, NULL, NULL )) return FALSE;
     }
 
