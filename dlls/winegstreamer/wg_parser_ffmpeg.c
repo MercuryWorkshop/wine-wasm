@@ -50,6 +50,18 @@ WINE_DEFAULT_DEBUG_CHANNEL(quartz);
 #define IO_SIZE (64 << 10)
 #define TIME_100NS ((AVRational){1, 10000000})
 
+struct queued_buffer
+{
+    struct queued_buffer *next;
+    BYTE *data;
+    struct wg_parser_buffer info;
+};
+
+/* buffers a stream holds before the demuxer waits for it to be read, unless
+ * another enabled stream has none (a demuxer reading on for one stream while
+ * another is not read, as GStreamer's multiqueue lets it) */
+#define QUEUE_MAX 4
+
 struct wg_parser_stream
 {
     struct wg_parser *parser;
@@ -64,11 +76,13 @@ struct wg_parser_stream
     SwrContext *swr;
     AVFrame *frame;
 
-    /* the held buffer */
+    /* the buffer being made */
     BYTE *data;
     UINT32 size, capacity;
-    struct wg_parser_buffer info;
-    bool has_buffer, discont;
+    bool discont;
+    /* the buffers made and not yet released, oldest first */
+    struct queued_buffer *head, **tail;
+    unsigned int queued;
 
     uint64_t duration;
     char *tags[WG_PARSER_TAG_COUNT];
@@ -117,6 +131,22 @@ static struct wg_parser_stream *get_stream(wg_parser_stream_t stream)
 }
 
 /* avio read: a read request the PE side answers (mutex not held) */
+static void flush_queue(struct wg_parser_stream *stream)
+{
+    struct queued_buffer *b, *next;
+
+    for (b = stream->head; b; b = next)
+    {
+        next = b->next;
+        free(b->data);
+        free(b);
+    }
+    stream->head = NULL;
+    stream->tail = &stream->head;
+    stream->queued = 0;
+    stream->get_buffer_called = false;
+}
+
 static int io_read(void *opaque, uint8_t *buf, int size)
 {
     struct wg_parser *parser = opaque;
@@ -290,7 +320,7 @@ NTSTATUS wg_parser_stream_disable(void *args)
 
     pthread_mutex_lock(&parser->mutex);
     stream->enabled = false;
-    stream->has_buffer = false;
+    flush_queue(stream);
     pthread_mutex_unlock(&parser->mutex);
     pthread_cond_broadcast(&parser->empty_cond);
     pthread_cond_broadcast(&parser->buffer_cond);
@@ -299,7 +329,7 @@ NTSTATUS wg_parser_stream_disable(void *args)
 
 static bool stream_waiting(struct wg_parser_stream *stream)
 {
-    return stream->enabled && !stream->has_buffer && !stream->eos;
+    return stream->enabled && !stream->head && !stream->eos;
 }
 
 NTSTATUS wg_parser_stream_get_buffer(void *args)
@@ -317,8 +347,10 @@ NTSTATUS wg_parser_stream_get_buffer(void *args)
     }
     if (stream)
     {
+        /* (the demuxer reads on past a full stream for one that waits) */
+        if (stream_waiting(stream)) pthread_cond_broadcast(&parser->empty_cond);
         while (stream_waiting(stream)) pthread_cond_wait(&parser->buffer_cond, &parser->mutex);
-        if (!stream->has_buffer) stream = NULL;
+        if (!stream->head) stream = NULL;
     }
     else
     {
@@ -329,13 +361,14 @@ NTSTATUS wg_parser_stream_get_buffer(void *args)
             bool wait = false;
             for (i = 0; i < parser->stream_count; ++i) wait |= stream_waiting(parser->streams[i]);
             if (!wait) break;
+            pthread_cond_broadcast(&parser->empty_cond);
             pthread_cond_wait(&parser->buffer_cond, &parser->mutex);
         }
         for (i = 0; i < parser->stream_count; ++i)
         {
             struct wg_parser_stream *s = parser->streams[i];
-            if (!s->enabled || !s->has_buffer) continue;
-            if (!earliest || (s->info.has_pts && (!earliest->info.has_pts || s->info.pts < earliest->info.pts)))
+            if (!s->enabled || !s->head) continue;
+            if (!earliest || (s->head->info.has_pts && (!earliest->head->info.has_pts || s->head->info.pts < earliest->head->info.pts)))
                 earliest = s;
         }
         stream = earliest;
@@ -345,7 +378,7 @@ NTSTATUS wg_parser_stream_get_buffer(void *args)
         pthread_mutex_unlock(&parser->mutex);
         return S_FALSE;
     }
-    *params->buffer = stream->info;
+    *params->buffer = stream->head->info;
     stream->get_buffer_called = true;
     pthread_mutex_unlock(&parser->mutex);
     return S_OK;
@@ -358,13 +391,13 @@ NTSTATUS wg_parser_stream_copy_buffer(void *args)
     struct wg_parser *parser = stream->parser;
 
     pthread_mutex_lock(&parser->mutex);
-    if (!stream->has_buffer || !stream->get_buffer_called)
+    if (!stream->head || !stream->get_buffer_called)
     {
         pthread_mutex_unlock(&parser->mutex);
         return VFW_E_WRONG_STATE;
     }
-    assert(params->offset + params->size <= stream->size);
-    memcpy(params->data, stream->data + params->offset, params->size);
+    assert(params->offset + params->size <= stream->head->info.size);
+    memcpy(params->data, stream->head->data + params->offset, params->size);
     pthread_mutex_unlock(&parser->mutex);
     return S_OK;
 }
@@ -375,7 +408,14 @@ NTSTATUS wg_parser_stream_release_buffer(void *args)
     struct wg_parser *parser = stream->parser;
 
     pthread_mutex_lock(&parser->mutex);
-    stream->has_buffer = false;
+    if (stream->head && stream->get_buffer_called)
+    {
+        struct queued_buffer *b = stream->head;
+        if (!(stream->head = b->next)) stream->tail = &stream->head;
+        stream->queued--;
+        free(b->data);
+        free(b);
+    }
     stream->get_buffer_called = false;
     pthread_mutex_unlock(&parser->mutex);
     pthread_cond_broadcast(&parser->empty_cond);
@@ -424,8 +464,7 @@ NTSTATUS wg_parser_stream_seek(void *args)
         if (!(params->start_flags & AM_SEEKING_NoFlush))
             for (i = 0; i < parser->stream_count; ++i)
             {
-                parser->streams[i]->has_buffer = false;
-                parser->streams[i]->get_buffer_called = false;
+                flush_queue(parser->streams[i]);
                 parser->streams[i]->eos = false;
             }
     }
@@ -455,11 +494,22 @@ static int64_t to_100ns(struct wg_parser_stream *stream, int64_t ts)
     return av_rescale_q(ts, stream->av->time_base, TIME_100NS);
 }
 
-/* waits (mutex held) until the stream's buffer slot is free; false on a
+/* another enabled stream waits for a buffer (mutex held) */
+static bool other_waiting(struct wg_parser *parser, struct wg_parser_stream *stream)
+{
+    unsigned int i;
+
+    for (i = 0; i < parser->stream_count; ++i)
+        if (parser->streams[i] != stream && stream_waiting(parser->streams[i])) return true;
+    return false;
+}
+
+/* waits (mutex held) until the stream has room for a buffer; false on a
  * flush (seek), a disable or a disconnect */
 static bool wait_slot(struct wg_parser *parser, struct wg_parser_stream *stream)
 {
-    while (stream->has_buffer && stream->enabled && !parser->quit && !parser->seek_pending)
+    while (stream->queued >= QUEUE_MAX && !other_waiting(parser, stream)
+            && stream->enabled && !parser->quit && !parser->seek_pending)
         pthread_cond_wait(&parser->empty_cond, &parser->mutex);
     return stream->enabled && !parser->quit && !parser->seek_pending;
 }
@@ -467,15 +517,24 @@ static bool wait_slot(struct wg_parser *parser, struct wg_parser_stream *stream)
 static void post_buffer(struct wg_parser *parser, struct wg_parser_stream *stream,
         int64_t pts, int64_t duration, bool delta)
 {
-    memset(&stream->info, 0, sizeof(stream->info));
-    if ((stream->info.has_pts = pts != AV_NOPTS_VALUE)) stream->info.pts = to_100ns(stream, pts);
-    if ((stream->info.has_duration = duration > 0)) stream->info.duration = to_100ns(stream, duration);
-    stream->info.delta = delta;
-    stream->info.discontinuity = stream->discont;
-    stream->info.size = stream->size;
-    stream->info.stream = stream->number;
+    struct queued_buffer *b;
+
+    /* the queue takes the buffer made; the next is made in a new one */
+    if (!(b = calloc(1, sizeof(*b))))
+        return;
+    b->data = stream->data;
+    stream->data = NULL;
+    stream->capacity = 0;
+    if ((b->info.has_pts = pts != AV_NOPTS_VALUE)) b->info.pts = to_100ns(stream, pts);
+    if ((b->info.has_duration = duration > 0)) b->info.duration = to_100ns(stream, duration);
+    b->info.delta = delta;
+    b->info.discontinuity = stream->discont;
+    b->info.size = stream->size;
+    b->info.stream = stream->number;
     stream->discont = false;
-    stream->has_buffer = true;
+    *stream->tail = b;
+    stream->tail = &b->next;
+    stream->queued++;
     pthread_cond_broadcast(&parser->buffer_cond);
 }
 
@@ -679,6 +738,7 @@ static void *parser_thread(void *arg)
         if (!(stream = calloc(1, sizeof(*stream)))) goto fail;
         stream->parser = parser;
         stream->number = parser->stream_count;
+        stream->tail = &stream->head;
         stream->av = av;
         wg_ffmpeg_format_from_codec(par, fps, &stream->codec_format);
         /* the decoded format: what the decoder makes (its pixel or sample format) */
@@ -734,6 +794,7 @@ static void free_streams(struct wg_parser *parser)
         av_frame_free(&s->frame);
         sws_freeContext(s->sws);
         swr_free(&s->swr);
+        flush_queue(s);
         free(s->data);
         for (j = 0; j < WG_PARSER_TAG_COUNT; ++j) free(s->tags[j]);
         free(s);
