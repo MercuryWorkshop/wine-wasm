@@ -1292,6 +1292,9 @@ static const unixlib_entry_t unix_call_funcs[] =
     unixcall_wine_server_handle_to_fd,
     unixcall_wine_spawnvp,
     system_time_precise,
+#ifdef __wasm64__
+    debug_event,
+#endif
 };
 
 
@@ -1310,6 +1313,9 @@ const unixlib_entry_t unix_call_wow64_funcs[] =
     wow64_wine_server_handle_to_fd,
     wow64_wine_spawnvp,
     system_time_precise,
+#ifdef __wasm64__
+    wow64_debug_event,
+#endif
 };
 
 #endif  /* _WIN64 */

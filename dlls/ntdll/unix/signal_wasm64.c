@@ -428,6 +428,59 @@ void *get_wow_context( CONTEXT *context )
 
 
 /***********************************************************************
+ *              debug_event
+ *
+ * A native raise's first chance for a debugger (unix_debug_event): the
+ * debug event and its reply, the thread going on where it is. DBG_CONTINUE
+ * or DBG_EXCEPTION_HANDLED: the raise returns; anything else: the exception
+ * is dispatched in place, as without a debugger.
+ */
+NTSTATUS debug_event( void *args )
+{
+    struct debug_event_params *params = args;
+
+    return send_debug_event( get_thread_data(), params->rec, params->context, TRUE, FALSE );
+}
+
+
+/***********************************************************************
+ *              wow64_debug_event
+ *
+ * The same for a WoW64 thread's native 32-bit code: the debugger sees its
+ * 32-bit context, as the CPU area has it for the event (the area is put
+ * back after: native 32-bit code's state is gex's while it runs).
+ */
+NTSTATUS wow64_debug_event( void *args )
+{
+    const struct { ULONG rec, context; } *params32 = args;
+    const EXCEPTION_RECORD32 *rec32 = ULongToPtr( params32->rec );
+    struct thread_data *data = get_thread_data();
+    I386_CONTEXT *area = get_cpu_area( data, IMAGE_FILE_MACHINE_I386 ), saved;
+    EXCEPTION_RECORD rec;
+    CONTEXT context;
+    NTSTATUS status;
+    DWORD i;
+
+    if (!area) return STATUS_INVALID_PARAMETER;
+    rec.ExceptionCode    = rec32->ExceptionCode;
+    rec.ExceptionFlags   = rec32->ExceptionFlags;
+    rec.ExceptionRecord  = ULongToPtr( rec32->ExceptionRecord );
+    rec.ExceptionAddress = ULongToPtr( rec32->ExceptionAddress );
+    rec.NumberParameters = min( rec32->NumberParameters, EXCEPTION_MAXIMUM_PARAMETERS );
+    for (i = 0; i < rec.NumberParameters; i++) rec.ExceptionInformation[i] = rec32->ExceptionInformation[i];
+
+    saved = *area;
+    *area = *(const I386_CONTEXT *)ULongToPtr( params32->context );
+    memset( &context, 0, sizeof(context) );
+    context.ContextFlags = CONTEXT_AMD64;
+    context.SegCs = cs64_sel;  /* in 64-bit code: get_wow_context gives the area */
+    status = send_debug_event( data, &rec, &context, TRUE, FALSE );
+    *area = saved;
+    return status;
+}
+
+
+/***********************************************************************
  *              NtSetContextThread  (NTDLL.@)
  *              ZwSetContextThread  (NTDLL.@)
  */

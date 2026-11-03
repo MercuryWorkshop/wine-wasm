@@ -537,6 +537,14 @@ void WINAPI RtlRaiseException( EXCEPTION_RECORD *rec )
 
     TRACE( "code=%lx flags=%lx addr=%p\n", rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress );
 
+    /* under a debugger, its first chance (signal_wasm64.c) */
+    if (NtCurrentTeb()->Peb->BeingDebugged)
+    {
+        struct debug_event_params params = { rec, &context };
+
+        status = WINE_UNIX_CALL( unix_debug_event, &params );
+        if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED) return;
+    }
     status = dispatch_exception_in_place( rec, &context );
 
     if (status == STATUS_SUCCESS)
