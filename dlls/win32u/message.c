@@ -4058,6 +4058,7 @@ LRESULT WINAPI NtUserDispatchMessage( const MSG *msg )
         if (!init_win_proc_params( &params, msg->hwnd, msg->message,
                                    msg->wParam, NtGetTickCount(), FALSE ))
             return 0;
+        params.mapping = WMCHAR_MAP_TIMERPROC;
         return dispatch_win_proc_params( &params, sizeof(params), NULL, NULL );
     }
     if (msg->message == WM_SYSTIMER)

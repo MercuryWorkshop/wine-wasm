@@ -821,8 +821,7 @@ LRESULT WINAPI DECLSPEC_HOTPATCH DispatchMessageA( const MSG* msg )
     {
         __TRY
         {
-            retval = CallWindowProcA( (WNDPROC)msg->lParam, msg->hwnd,
-                                      msg->message, msg->wParam, GetTickCount() );
+            retval = WINPROC_CallTimerProc( msg, TRUE );
         }
         __EXCEPT_ALL
         {
@@ -873,8 +872,7 @@ LRESULT WINAPI DECLSPEC_HOTPATCH DispatchMessageW( const MSG* msg )
         {
             __TRY
             {
-                retval = CallWindowProcW( (WNDPROC)msg->lParam, msg->hwnd,
-                                          msg->message, msg->wParam, GetTickCount() );
+                retval = WINPROC_CallTimerProc( msg, FALSE );
             }
             __EXCEPT_ALL
             {
