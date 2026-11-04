@@ -914,7 +914,12 @@ static struct
     struct dir_data dir[16];
     struct sec_data sec[8];
     struct exp_data exp[8];
+    unsigned int   *relocs;       /* RVAs of 64-bit absolute addresses, ascending */
+    unsigned int    reloc_count;
 } pe;
+
+/* the preferred base output_pe_file gives a 64-bit image */
+#define PE64_IMAGE_BASE 0x180000000ull
 
 static void set_dir( unsigned int idx, unsigned int rva, unsigned int size )
 {
@@ -1163,7 +1168,25 @@ static void output_pe_file( DLLSPEC *spec, const char signature[32] )
     }
 
     /* .reloc section */
-    if (code_size)
+    if (code_size && pe.reloc_count)
+    {
+        /* one block per page: IMAGE_REL_BASED_DIR64 entries, padded to a
+         * dword with an IMAGE_REL_BASED_ABSOLUTE one */
+        unsigned int i = 0, j, n;
+        while (i < pe.reloc_count)
+        {
+            unsigned int page = pe.relocs[i] & ~0xfff;
+            for (n = 0; i + n < pe.reloc_count && (pe.relocs[i + n] & ~0xfff) == page; n++);
+            put_dword( page );                       /* VirtualAddress */
+            put_dword( 8 + 2 * ((n + 1) & ~1) );     /* SizeOfBlock */
+            for (j = 0; j < n; j++) put_word( 0xa000 | (pe.relocs[i + j] & 0xfff) );
+            if (n & 1) put_word( 0 );
+            i += n;
+        }
+        flush_output_to_section( ".reloc", 5 /* IMAGE_DIRECTORY_ENTRY_BASERELOC */,
+                                 0x42000040 /* CNT_INITIALIZED_DATA|MEM_DISCARDABLE|MEM_READ */ );
+    }
+    else if (code_size)
     {
         put_dword( 0 );  /* VirtualAddress */
         put_dword( 0 );  /* Size */
@@ -1238,8 +1261,8 @@ static void output_pe_file( DLLSPEC *spec, const char signature[32] )
     }
     else
     {
-        put_dword( 0x80000000 );                     /* ImageBase */
-        put_dword( 0x00000001 );
+        put_dword( (unsigned int)PE64_IMAGE_BASE );  /* ImageBase */
+        put_dword( (unsigned int)(PE64_IMAGE_BASE >> 32) );
     }
     put_dword( pe.section_align );                   /* SectionAlignment */
     put_dword( pe.file_align );                      /* FileAlignment */
@@ -1307,9 +1330,15 @@ static void output_pe_file( DLLSPEC *spec, const char signature[32] )
  *
  * wasm32: the DLL's PE file is a skeleton gex binds the wasm module at
  * (docs/wine-native.md §3.2 in the gex tree):
- *   .text     the entry point and one 4-byte stub per exported function
- *             (ud2; ud2), never run: gex binds the module's gexp_<name>
- *             adapter at each
+ *   .text     the entry point and one stub per exported function, never
+ *             run: gex binds the module's gexp_<name> adapter at each.
+ *             32-bit: ud2; ud2 (4 bytes). 64-bit: 16 bytes a hooking
+ *             library can patch, jmp [rip+0] to the address after it, then
+ *             that address (the stub's alias, at stub+14) and int3; int3.
+ *             The jmp is one instruction of 14 bytes with its operand, so a
+ *             hook's trampoline copies it whole, and gex binds the adapter
+ *             at the alias too once the stub is rewritten: the original
+ *             reached through the trampoline is the native export
  *   .edata    the exports: functions at their stubs, data exports in
  *             .wasmdat, forwarders as usual
  *   .wasmdat  the module's data (__memory_base is its start); data exports
@@ -1342,14 +1371,31 @@ static void output_wasm_skeleton( DLLSPEC *spec )
     /* .text: the entry point first (AddressOfEntryPoint is .text's start) */
     text_rva = current_rva();
     stub_rva = xmalloc( (exports->limit + 2) * sizeof(*stub_rva) );
+    pe.relocs = xmalloc( (exports->limit + 2) * sizeof(*pe.relocs) );
+    pe.reloc_count = 0;
     put_dword( 0x0b0f0b0f );
+    if (get_ptr_size() == 8)
+    {
+        put_dword( 0xcccccccc );  /* the stubs 16-byte aligned */
+        put_dword( 0xcccccccc );
+        put_dword( 0xcccccccc );
+    }
     for (i = exports->base; i <= exports->limit; i++)
     {
         ORDDEF *odp = exports->ordinals[i];
         stub_rva[i] = 0;
         if (!odp || (odp->flags & FLAG_FORWARD) || odp->type == TYPE_EXTERN) continue;
         stub_rva[i] = text_rva + output_buffer_pos;
-        put_dword( 0x0b0f0b0f );  /* ud2; ud2 */
+        if (get_ptr_size() == 8)
+        {
+            put_word( 0x25ff );   /* jmp [rip+0] */
+            put_dword( 0 );
+            pe.relocs[pe.reloc_count++] = stub_rva[i] + 6;
+            put_dword( (unsigned int)(PE64_IMAGE_BASE + stub_rva[i] + 14) );
+            put_dword( (unsigned int)((PE64_IMAGE_BASE + stub_rva[i] + 14) >> 32) );
+            put_word( 0xcccc );   /* the alias: int3; int3 */
+        }
+        else put_dword( 0x0b0f0b0f );  /* ud2; ud2 */
     }
     flush_output_to_section( ".text", -1, 0x60000020 /* CNT_CODE|MEM_EXECUTE|MEM_READ */ );
 
