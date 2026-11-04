@@ -2187,7 +2187,12 @@ static LRESULT on_wm_initdialog(HWND hwnd, LPARAM lParam)
         events_OnTypeChange(This);
 
     if ((hitem = GetDlgItem(This->dlg_hwnd, IDC_FILENAME)))
+    {
         SetFocus(hitem);
+        /* As the dialog manager selects an edit it gives the focus: a name
+         * typed replaces the one the program set. */
+        SendMessageW(hitem, EM_SETSEL, 0, -1);
+    }
 
     return FALSE;
 }
