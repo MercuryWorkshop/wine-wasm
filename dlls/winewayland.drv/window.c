@@ -176,7 +176,8 @@ static void reapply_cursor_clipping(void)
     NtUserSetThreadDpiAwarenessContext(context);
 }
 
-static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *data, struct wayland_surface *owner_surface)
+static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *data, struct wayland_surface *owner_surface,
+                                                    UINT swp_flags)
 {
     struct wayland_surface *surface;
     enum wayland_surface_role role;
@@ -193,6 +194,14 @@ static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *dat
 
     visible = ((NtUserGetWindowLongW(data->hwnd, GWL_STYLE) & WS_VISIBLE) == WS_VISIBLE) &&
                (!(exstyle & WS_EX_LAYERED) || data->layered_attribs_set);
+    /* A shown window stays mapped until it is hidden (SWP_HIDEWINDOW), as
+     * with the X11 driver: WM_SETREDRAW clears WS_VISIBLE while a program
+     * fills a window, and unmapping it then loses its frame's pixels, which
+     * nothing paints again once WS_VISIBLE comes back. */
+    if (!visible && !(swp_flags & SWP_HIDEWINDOW) && (surface = data->wayland_surface) &&
+        ((surface->role == WAYLAND_SURFACE_ROLE_TOPLEVEL && surface->xdg_toplevel) ||
+         (surface->role == WAYLAND_SURFACE_ROLE_SUBSURFACE && surface->wl_subsurface)))
+        visible = TRUE;
 
     if (!visible) role = WAYLAND_SURFACE_ROLE_NONE;
     else if (owner_surface) role = WAYLAND_SURFACE_ROLE_SUBSURFACE;
@@ -481,7 +490,7 @@ void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UIN
             data->wayland_surface = NULL;
         }
     }
-    else if (wayland_win_data_create_wayland_surface(data, owner_surface))
+    else if (wayland_win_data_create_wayland_surface(data, owner_surface, swp_flags))
     {
         wayland_win_data_update_wayland_state(data);
         if (data->wayland_surface->gex_placement)
