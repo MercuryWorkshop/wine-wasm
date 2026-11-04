@@ -846,6 +846,11 @@ static uint64_t syscall_enter( int ctx, uint32_t id, const uint64_t *w, uint32_t
 
     GQ( sp ) = GEXW_RETURN_PAD;
     GQ( sp + 8 ) = GEXW_RETURN_PAD;
+    /* where the guest entered native code (gexrt64.h): the call's home
+     * slots, past the frame's RSP of sp + 8 */
+    GQ( sp + 0x10 ) = gexw_get_entry_rsp();
+    GQ( sp + 0x18 ) = gexw_get_entry_context();
+    GQ( sp + 0x20 ) = GQ( sp + 0x10 ) ^ GQ( sp + 0x18 ) ^ GEXW_ENTRY_CHECK;
     for (i = 4; i < n; i++) GQ( sp + 0x30 + 8 * (uint64_t)(i - 4) ) = w[i];
     REG( X_RAX ) = id;
     REG( X_R10 ) = REG( X_RCX ) = n > 0 ? w[0] : 0;

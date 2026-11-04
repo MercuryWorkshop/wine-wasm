@@ -63,6 +63,28 @@ struct gexw_callout
  * between runs may find a stale value. */
 #define GEXW_TEB_WOW64_SP 0x250
 
+/* A thread in a system call native code made, as another thread gets its
+ * context (SuspendThread, GetThreadContext): where the guest entered native
+ * code, which the Unix side reports in place of gex's return pad or marker
+ * (signal_wasm64.c's suspend), as a caller's address in its module rather
+ * than one in none.
+ *
+ * - x86-64 (__gexw_syscall64 and the like): in the call's home slots, at
+ *   RSP + 8 the guest's RSP at that entry (its return address there), at
+ *   RSP + 0x10 the CONTEXT it was made with or 0, at RSP + 0x18 the two
+ *   xor GEXW_ENTRY_CHECK (RSP the system call's, at the return pad);
+ * - WoW64, a system call of native 32-bit code (wow64cpu's
+ *   __wine_gex_syscall32): the innermost, in TEB->SystemReserved1[28], each
+ *   linking to the next outer one. */
+#define GEXW_ENTRY_CHECK 0x6765786e74727921ull
+#define GEXW_TEB_WOW64_CALL 0x270
+struct gexw_syscall32
+{
+    unsigned long long prev;
+    unsigned int esp;        /* the system call's ESP (the area's, at the marker) */
+    unsigned int entry_esp;  /* the guest's ESP at its entry into native code */
+};
+
 /* The thread in 64-bit mode (CS 0x33) for a direct call from native 32-bit
  * code; returns the mode to put back with __gexw_mode64_leave. */
 extern unsigned int __gexw_mode64_enter(void);
