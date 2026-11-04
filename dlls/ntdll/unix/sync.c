@@ -2969,6 +2969,27 @@ NTSTATUS WINAPI NtQueryIoCompletion( HANDLE handle, IO_COMPLETION_INFORMATION_CL
 }
 
 
+#ifdef __wasm__
+/* gex: the server reads the image's headers, export name or version
+ * resource, CLR and load-config headers and shared sections when it maps it
+ * (server/mapping.c get_image_params), inside a door call: under the lock
+ * every process's server calls take. A lazy file (one the page fetches as it
+ * is read) fetched there held all of them for as long as the fetch took (a
+ * 22 MB DLL's 16 MiB readahead run, 24 s at 0.7 MB/s). gex's own fadvise
+ * advice fetches exactly those parts now, before the request, and is
+ * nothing for a file that is all here. */
+#define GEX_FADV_IMAGE 0x47450001
+
+static void fetch_image_parts( HANDLE file )
+{
+    int fd, needs_close;
+
+    if (server_get_unix_fd( file, FILE_READ_DATA, &fd, &needs_close, NULL, NULL )) return;
+    posix_fadvise( fd, 0, 0, GEX_FADV_IMAGE );
+    if (needs_close) close( fd );
+}
+#endif
+
 /***********************************************************************
  *             NtCreateSection (NTDLL.@)
  */
@@ -3006,6 +3027,9 @@ NTSTATUS WINAPI NtCreateSection( HANDLE *handle, ACCESS_MASK access, const OBJEC
 
     if ((ret = alloc_object_attributes( attr, &objattr, &len ))) return ret;
 
+#ifdef __wasm__
+    if ((sec_flags & SEC_IMAGE) && file) fetch_image_parts( file );
+#endif
     SERVER_START_REQ( create_mapping )
     {
         req->access      = access;

@@ -79,6 +79,37 @@ struct _PROC_THREAD_ATTRIBUTE_LIST
     struct proc_thread_attr attrs[];
 };
 
+#if defined(__wasm32__) || defined(__wasm64__)
+#include "wine/gex/runtime.h"
+
+/* A start for a thread of another process that is a native function of
+ * kernelbase (a function-table index, meaningful only in this process): the
+ * guest address of the same export, at the same place in every process.
+ * Any other start is returned unchanged; another native one is refused by
+ * the process that would run it. */
+static LPTHREAD_START_ROUTINE remote_start( HANDLE process, LPTHREAD_START_ROUTINE start )
+{
+    static const struct { void *func; const char *name; } exports[] =
+    {
+        { LoadLibraryA, "LoadLibraryA" },
+        { LoadLibraryW, "LoadLibraryW" },
+        { FreeLibrary, "FreeLibrary" },
+    };
+    HMODULE module;
+    FARPROC addr;
+    unsigned int i;
+
+    if (process == GetCurrentProcess() || !__gexw_is_native( start )) return start;
+    for (i = 0; i < ARRAY_SIZE(exports); i++)
+    {
+        if (exports[i].func != (void *)start) continue;
+        if ((module = GetModuleHandleW( L"kernelbase.dll" )) && (addr = GetProcAddress( module, exports[i].name )))
+            return (LPTHREAD_START_ROUTINE)addr;
+    }
+    return start;
+}
+#endif
+
 /***************************************************************************
  *           CreateRemoteThreadEx   (kernelbase.@)
  */
@@ -141,6 +172,9 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateRemoteThreadEx( HANDLE process, SECURITY_A
 
     RtlGetActiveActivationContext( &actctx );
 
+#if defined(__wasm32__) || defined(__wasm64__)
+    start = remote_start( process, start );
+#endif
     if (!set_ntstatus( NtCreateThreadEx( &handle, THREAD_ALL_ACCESS, &attr, process,
                                          (PRTL_THREAD_START_ROUTINE)start, param,
                                          THREAD_CREATE_FLAGS_CREATE_SUSPENDED, 0,
@@ -1033,6 +1067,16 @@ static void WINAPI switch_fiber( CONTEXT *old, CONTEXT *new )
     RtlCaptureContext( old );
     NtContinue( new, FALSE );
 }
+#elif defined(__wasm32__)
+/* Fibers are i386 guest code: the old fiber's context is the guest's state
+ * at its call to SwitchToFiber, as that call returns (its argument popped),
+ * and loading the new one drops the native frames down to that call. */
+static void WINAPI switch_fiber( CONTEXT *old, CONTEXT *new )
+{
+    RtlCaptureContext( old );
+    old->Esp += sizeof(ULONG);
+    NtContinue( new, FALSE );
+}
 #else
 static void WINAPI switch_fiber( CONTEXT *old, CONTEXT *new )
 {
@@ -1041,6 +1085,7 @@ static void WINAPI switch_fiber( CONTEXT *old, CONTEXT *new )
 }
 #endif
 
+#ifndef __wasm32__
 /* call the fiber initial function once we have switched stack */
 static void CDECL start_fiber(void)
 {
@@ -1058,6 +1103,7 @@ static void CDECL start_fiber(void)
     }
     __ENDTRY
 }
+#endif
 
 static void init_fiber_context( struct fiber_data *fiber )
 {
@@ -1087,6 +1133,32 @@ static void init_fiber_context( struct fiber_data *fiber )
 #elif defined(__aarch64__)
     fiber->context.Sp = (ULONG_PTR)fiber->stack_base;
     fiber->context.Pc = (ULONG_PTR)start_fiber;
+#elif defined(__wasm32__)
+    /* The fiber starts in its guest start routine, as if called with its
+     * parameter by a caller that returns to RtlExitUserThread( 1 ), as
+     * start_fiber does; the addresses are the guest's, and the segment
+     * registers the thread's own (32-bit Wine's or WoW64's). */
+    static ULONG exit_thread;
+    ULONG *esp = (ULONG *)fiber->stack_base - 4;
+    CONTEXT self;
+
+    if (!exit_thread)
+        exit_thread = PtrToUlong( GetProcAddress( GetModuleHandleW( L"ntdll.dll" ), "RtlExitUserThread" ));
+    esp[0] = exit_thread;
+    esp[1] = PtrToUlong( fiber->param );
+    esp[2] = 0;
+    esp[3] = 1;
+    RtlCaptureContext( &self );
+    fiber->context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_SEGMENTS;
+    fiber->context.Esp = PtrToUlong( esp );
+    fiber->context.Eip = PtrToUlong( fiber->start );
+    fiber->context.EFlags = 0x202;
+    fiber->context.SegCs = self.SegCs;
+    fiber->context.SegDs = self.SegDs;
+    fiber->context.SegEs = self.SegEs;
+    fiber->context.SegSs = self.SegSs;
+    fiber->context.SegFs = self.SegFs;
+    fiber->context.SegGs = self.SegGs;
 #endif
 }
 

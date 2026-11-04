@@ -78,6 +78,9 @@
 #include "wine/server.h"
 #include "wine/debug.h"
 #include "unix_private.h"
+#if defined(__wasm32__) || defined(__wasm64__)
+#include "wine/gex/runtime.h"
+#endif
 #include "ddk/wdm.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(server);
@@ -872,6 +875,18 @@ static void invoke_system_apc( const union apc_call *call, union apc_result *res
         if (reserve == call->create_thread.reserve && commit == call->create_thread.commit &&
             (ULONG_PTR)func == call->create_thread.func && (ULONG_PTR)arg == call->create_thread.arg)
         {
+#if defined(__wasm32__) || defined(__wasm64__)
+            /* a native function of another process's (a function-table index
+             * of its instance) would be called here as whatever this one has
+             * there; checked before the hack below puts in a native start of
+             * this process's own */
+            if (!self && __gexw_is_native( func ))
+            {
+                ERR( "refusing a thread whose start %p is another process's native function\n", func );
+                result->create_thread.status = STATUS_INVALID_PARAMETER;
+                break;
+            }
+#endif
             /* FIXME: hack for debugging 32-bit process without a 64-bit ntdll */
             if (is_old_wow64() && func == (void *)0x7ffe1000) func = pDbgUiRemoteBreakin;
             attr->TotalLength = sizeof(buffer);
