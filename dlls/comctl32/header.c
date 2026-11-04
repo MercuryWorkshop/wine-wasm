@@ -248,7 +248,17 @@ HEADER_SetItemBounds (HEADER_INFO *infoPtr)
 static LRESULT
 HEADER_Size (HEADER_INFO *infoPtr)
 {
+    RECT rest;
+
     HEADER_SetItemBounds(infoPtr);
+    /* The space after the last item is drawn as one piece to the right edge
+     * (its themed background ends in a divider there): painted again whole,
+     * not only the strip the new width uncovers, which left the divider of
+     * every width the header had while it grew. */
+    GetClientRect(infoPtr->hwndSelf, &rest);
+    if (infoPtr->uNumItem > 0)
+        rest.left = infoPtr->items[HEADER_OrderToIndex(infoPtr, infoPtr->uNumItem - 1)].rect.right;
+    InvalidateRect(infoPtr->hwndSelf, &rest, FALSE);
     return 0;
 }
 
