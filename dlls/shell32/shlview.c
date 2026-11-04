@@ -734,16 +734,24 @@ static LRESULT ShellView_OnCreate(IShellViewImpl *This)
         hr = IPersistFolder2_GetCurFolder(ppf2, &raw_pidl);
         if(SUCCEEDED(hr))
         {
-            LPITEMIDLIST computer_pidl;
+            LPITEMIDLIST computer_pidl, path_pidl;
+            WCHAR path[MAX_PATH];
             SHGetFolderLocation(NULL,CSIDL_DRIVES,NULL,0,&computer_pidl);
             if(ILIsParent(computer_pidl,raw_pidl,FALSE))
             {
                 /* Normalize the pidl to unixfs to workaround an issue with
                  * sending notifications on dos paths
                  */
-                WCHAR path[MAX_PATH];
                 SHGetPathFromIDListW(raw_pidl,path);
                 SHParseDisplayName(path,NULL,(LPITEMIDLIST*)&ntreg.pidl,0,NULL);
+                SHFree(raw_pidl);
+            }
+            /* A folder the desktop names (Documents) is told of changes by path
+             * too (SHCNF_PATHW makes a My Computer pidl): watch its path's pidl. */
+            else if(!_ILIsDesktop(raw_pidl) && SHGetPathFromIDListW(raw_pidl,path) &&
+                    SUCCEEDED(SHParseDisplayName(path,NULL,&path_pidl,0,NULL)))
+            {
+                ntreg.pidl = path_pidl;
                 SHFree(raw_pidl);
             }
             else
