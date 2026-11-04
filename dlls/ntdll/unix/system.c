@@ -3010,7 +3010,8 @@ static time_t find_dst_change(time_t start, time_t end, int *is_dst)
     return min;
 }
 
-static BOOL get_tz_info_from_zoneinfo_name( RTL_DYNAMIC_TIME_ZONE_INFORMATION *tzi, const char *name, int year )
+static BOOL get_tz_info_from_zoneinfo_name( RTL_DYNAMIC_TIME_ZONE_INFORMATION *tzi, const char *name, int year,
+                                            BOOL need_file )
 {
     static const WCHAR wine_tz_map[] = { '\\','R','e','g','i','s','t','r','y','\\',
         'M','a','c','h','i','n','e','\\',
@@ -3033,15 +3034,18 @@ static BOOL get_tz_info_from_zoneinfo_name( RTL_DYNAMIC_TIME_ZONE_INFORMATION *t
 
     if (strlen(name) >= ARRAY_SIZE(nameW)) return FALSE;
 
-    if (!tzinfo_dir) tzinfo_dir = default_tzinfo_dir;
-    snprintf( buf, sizeof(buf), "%s/%s", tzinfo_dir, name );
-
-    if (!(f = fopen( buf, "r" )))
+    if (need_file)
     {
-        WARN( "Could not open %s.\n", debugstr_a( buf ));
-        return FALSE;
+        if (!tzinfo_dir) tzinfo_dir = default_tzinfo_dir;
+        snprintf( buf, sizeof(buf), "%s/%s", tzinfo_dir, name );
+
+        if (!(f = fopen( buf, "r" )))
+        {
+            WARN( "Could not open %s.\n", debugstr_a( buf ));
+            return FALSE;
+        }
+        fclose( f );
     }
-    fclose( f );
 
     init_unicode_string( &key_name, wine_tz_map );
     InitializeObjectAttributes( &attr, &key_name, 0, NULL, NULL );
@@ -3067,17 +3071,29 @@ static BOOL get_system_config_tz_info( RTL_DYNAMIC_TIME_ZONE_INFORMATION *tzi, i
     const char *str;
     int len;
 
+#ifdef __wasm__
+    /* gex's page gives the libc its zone as a POSIX rule string in TZ, which
+     * names no zoneinfo file (a page has none), and the zone's name beside
+     * it: without the name each process searched every zone in the registry
+     * for one matching the rules, a few hundred server calls at its start.
+     * No TZ and no /etc/localtime is the libc's UTC. The match against the
+     * libc's rules, in the caller, still decides. */
+    if ((str = getenv( "WINEGEX_TZNAME" )) && *str)
+        return get_tz_info_from_zoneinfo_name( tzi, str, year, FALSE );
+    if (!getenv( "TZ" ) && !realpath( "/etc/localtime", path ))
+        return get_tz_info_from_zoneinfo_name( tzi, "Etc/UTC", year, FALSE );
+#endif
     if ((str = getenv( "TZ" )))
     {
         if (*str == ':') ++str;
-        return get_tz_info_from_zoneinfo_name( tzi, str, year );
+        return get_tz_info_from_zoneinfo_name( tzi, str, year, TRUE );
     }
 
     if (!realpath( "/etc/localtime", path )) return FALSE;
     len = sizeof( default_tzinfo_dir ) - 1;
     if (strncmp( path, default_tzinfo_dir, len )) return FALSE;
     if (path[len] != '/') return FALSE;
-    return get_tz_info_from_zoneinfo_name( tzi, path + len + 1, year );
+    return get_tz_info_from_zoneinfo_name( tzi, path + len + 1, year, TRUE );
 }
 
 static LONG64 get_current_tz_bias(void)
