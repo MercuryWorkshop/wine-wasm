@@ -160,7 +160,12 @@ const char *output_adapter64( const ORDDEF *odp, const char *wasm_sig )
      * the signature is the .spec's, where every argument but int64 and
      * floating point is an int. The .spec says which are pointers; taken as
      * ints, one above 4 GiB (a 64-bit memory's stack or image) lost its high
-     * half. A wasm signature the objects do have (a call to it) is kept as
+     * half. A long is Win64's register word (WPARAM, LPARAM, a handle) and
+     * so is the result (LRESULT): as ints, unicows' SendMessageW (user32's
+     * through it) and user32's CallNextHookEx (win32u's) handed back an
+     * LB_ERR zero-extended and a negative WPARAM sign-extended from 32 bits.
+     * The link narrows a word to an int where the definition takes one.
+     * A wasm signature the objects do have (a call to it) is kept as
      * it is: the adapter's declaration must match the call's at the link,
      * and the code's types are right where a .spec's differ from them
      * (ntoskrnl's RtlCreateUserThread, a ULONG the .spec calls ptr). */
@@ -173,9 +178,11 @@ const char *output_adapter64( const ORDDEF *odp, const char *wasm_sig )
             switch (odp->u.func.args[j])
             {
             case ARG_PTR: case ARG_STR: case ARG_WSTR: s.params[j].k = 'p'; break;
+            case ARG_LONG: s.params[j].k = 'I'; break;
             default: break;
             }
         }
+        if (s.ret.k == 'i') s.ret.k = 'I';
     }
     if (s.ret.k == 'X') return NULL;
     sret_reg = s.ret.k == 's' && small_struct( s.ret.size );
