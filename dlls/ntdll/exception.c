@@ -235,8 +235,19 @@ static LONG call_vectored_handlers( EXCEPTION_RECORD *rec, CONTEXT *context )
 
 /*******************************************************************
  *		dispatch_exception
+ *
+ * wasm32 and wasm64: two copies of its body, one for each caller (the
+ * Unix side's entry and the exported KiUserExceptionDispatcher). With one
+ * caller each, wasm-opt inlines it into its caller, so that neither holds
+ * a frame more of the host's stack in every nested fault's dispatch. The
+ * entry's copy takes an argument the other does not (apart, unused), as
+ * wasm-opt merges identical functions before it inlines.
  */
+#if defined(__wasm32__) || defined(__wasm64__)
+static inline __attribute__((always_inline)) NTSTATUS dispatch_exception_body( EXCEPTION_RECORD *rec, CONTEXT *context )
+#else
 NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
+#endif
 {
     NTSTATUS status;
     DWORD i;
@@ -303,6 +314,18 @@ NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
     return NtRaiseException( rec, context, FALSE );
 }
 
+#if defined(__wasm32__) || defined(__wasm64__)
+NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
+{
+    return dispatch_exception_body( rec, context );
+}
+
+NTSTATUS dispatch_exception_entry( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL apart )
+{
+    return dispatch_exception_body( rec, context );
+}
+#endif
+
 
 #if defined(__wasm32__) || defined(__wasm64__)
 /*******************************************************************
@@ -344,25 +367,33 @@ EXCEPTION_DISPOSITION WINAPI user_callback_handler( EXCEPTION_RECORD *record, vo
 /*******************************************************************
  *		dispatch_user_callback
  *
- * Implementation of KiUserCallbackDispatcher.
+ * Implementation of KiUserCallbackDispatcher. On wasm32 and wasm64 two
+ * copies of one body, one for each caller (the Unix side's entry and the
+ * exported KiUserCallbackDispatcher), as dispatch_exception's, but made by
+ * a macro: clang's always_inline cannot inline past __TRY's setjmp.
  */
-NTSTATUS WINAPI dispatch_user_callback( void *args, ULONG len, ULONG id )
-{
-    NTSTATUS status;
-
-    __TRY
-    {
-        KERNEL_CALLBACK_PROC func = NtCurrentTeb()->Peb->KernelCallbackTable[id];
-        status = func( args, len );
-    }
-    __EXCEPT_ALL
-    {
-        status = GetExceptionCode();
-        ERR( "ignoring exception %lx\n", status );
-    }
-    __ENDTRY
-    return status;
+#define DEFINE_DISPATCH_USER_CALLBACK(name, params) \
+NTSTATUS WINAPI name params \
+{ \
+    NTSTATUS status; \
+ \
+    __TRY \
+    { \
+        KERNEL_CALLBACK_PROC func = NtCurrentTeb()->Peb->KernelCallbackTable[id]; \
+        status = func( args, len ); \
+    } \
+    __EXCEPT_ALL \
+    { \
+        status = GetExceptionCode(); \
+        ERR( "ignoring exception %lx\n", status ); \
+    } \
+    __ENDTRY \
+    return status; \
 }
+DEFINE_DISPATCH_USER_CALLBACK( dispatch_user_callback, (void *args, ULONG len, ULONG id) )
+#if defined(__wasm32__) || defined(__wasm64__)
+DEFINE_DISPATCH_USER_CALLBACK( dispatch_user_callback_entry, (void *args, ULONG len, ULONG id, BOOL apart) )
+#endif
 
 #endif
 

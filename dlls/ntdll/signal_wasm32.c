@@ -310,7 +310,7 @@ NTSTATUS call_seh_handlers( EXCEPTION_RECORD *rec, CONTEXT *context )
 static int ki_user_exception_dispatcher( int ctx, int depth, unsigned int need, unsigned long long ret )
 {
     ULONG esp = CTX_REG( ctx, R_ESP );
-    dispatch_exception( ULongToPtr( guest_word( esp )), ULongToPtr( guest_word( esp + 4 )));
+    dispatch_exception_entry( ULongToPtr( guest_word( esp )), ULongToPtr( guest_word( esp + 4 )), TRUE );
     return 0;  /* dispatch_exception does not return */
 }
 

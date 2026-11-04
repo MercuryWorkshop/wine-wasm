@@ -56,6 +56,10 @@ extern NTSTATUS call_seh_handlers( EXCEPTION_RECORD *rec, CONTEXT *context );
 extern NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context );
 #if defined(__wasm32__) || defined(__wasm64__)
 extern NTSTATUS dispatch_exception_in_place( EXCEPTION_RECORD *rec, CONTEXT *context );
+/* the Unix side's entries' copies of dispatch_exception and dispatch_user_callback
+ * (apart: unused, see dispatch_exception) */
+extern NTSTATUS dispatch_exception_entry( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL apart );
+extern NTSTATUS WINAPI dispatch_user_callback_entry( void *args, ULONG len, ULONG id, BOOL apart );
 extern void *wasm32_ntdll_address;
 #endif
 extern NTSTATUS WINAPI dispatch_user_callback( void *args, ULONG len, ULONG id );

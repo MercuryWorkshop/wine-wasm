@@ -501,7 +501,7 @@ static int ki_user_exception_dispatcher( int ctx, int depth, unsigned int need, 
     if (pWow64PrepareForException)
         pWow64PrepareForException( (EXCEPTION_RECORD *)(ULONG_PTR)(rsp + 0x4f0), context );
     prune_callouts( context->Rsp );
-    dispatch_exception( (EXCEPTION_RECORD *)(ULONG_PTR)(rsp + 0x4f0), context );
+    dispatch_exception_entry( (EXCEPTION_RECORD *)(ULONG_PTR)(rsp + 0x4f0), context, TRUE );
     return 0;  /* dispatch_exception does not return */
 }
 
@@ -568,8 +568,8 @@ static int ki_user_callback_dispatcher( int ctx, int depth, unsigned int need, u
     ULONG64 rsp = CTX_REG( ctx, R_RSP );
     NTSTATUS status;
 
-    status = dispatch_user_callback( *(void **)(ULONG_PTR)(rsp + 0x20), *(ULONG *)(ULONG_PTR)(rsp + 0x28),
-                                     *(ULONG *)(ULONG_PTR)(rsp + 0x2c) );
+    status = dispatch_user_callback_entry( *(void **)(ULONG_PTR)(rsp + 0x20), *(ULONG *)(ULONG_PTR)(rsp + 0x28),
+                                           *(ULONG *)(ULONG_PTR)(rsp + 0x2c), TRUE );
     status = NtCallbackReturn( NULL, 0, status );
     for (;;) RtlRaiseStatus( status );
 }
@@ -935,25 +935,35 @@ ULONG WINAPI RtlWalkFrameChain( void **buffer, ULONG count, ULONG flags )
 
 /***********************************************************************
  *           call_thread_func
+ *
+ * Two copies of one body, one for each caller (the Unix side's entry and
+ * the exported RtlUserThreadStart), as dispatch_exception's (exception.c),
+ * made by a macro: clang's always_inline cannot inline past __TRY's setjmp.
+ * Not static: clang would drop a static copy's unused argument, and
+ * wasm-opt then merge the two.
  */
-static void call_thread_func( PRTL_THREAD_START_ROUTINE entry, void *arg )
-{
-    __TRY
-    {
-        /* a native entry (RtlCreateUserThread's wrapper: a function-table
-         * index) is called here, not by kernel32's BaseThreadInitThunk,
-         * which may be guest code */
-        if ((ULONG_PTR)entry < 0x3f0000)
-            ((LPTHREAD_START_ROUTINE)entry)( arg );
-        else
-            pBaseThreadInitThunk( 0, (LPTHREAD_START_ROUTINE)entry, arg );
-    }
-    __EXCEPT(call_unhandled_exception_filter)
-    {
-        NtTerminateProcess( GetCurrentProcess(), GetExceptionCode() );
-    }
-    __ENDTRY
+#define DEFINE_CALL_THREAD_FUNC(name, params) \
+extern void name params; \
+void name params \
+{ \
+    __TRY \
+    { \
+        /* a native entry (RtlCreateUserThread's wrapper: a function-table \
+         * index) is called here, not by kernel32's BaseThreadInitThunk, \
+         * which may be guest code */ \
+        if ((ULONG_PTR)entry < 0x3f0000) \
+            ((LPTHREAD_START_ROUTINE)entry)( arg ); \
+        else \
+            pBaseThreadInitThunk( 0, (LPTHREAD_START_ROUTINE)entry, arg ); \
+    } \
+    __EXCEPT(call_unhandled_exception_filter) \
+    { \
+        NtTerminateProcess( GetCurrentProcess(), GetExceptionCode() ); \
+    } \
+    __ENDTRY \
 }
+DEFINE_CALL_THREAD_FUNC( call_thread_func, (PRTL_THREAD_START_ROUTINE entry, void *arg) )
+DEFINE_CALL_THREAD_FUNC( call_thread_func_entry, (PRTL_THREAD_START_ROUTINE entry, void *arg, BOOL apart) )
 
 
 /***********************************************************************
@@ -964,8 +974,8 @@ static void call_thread_func( PRTL_THREAD_START_ROUTINE entry, void *arg )
  */
 static int rtl_user_thread_start( int ctx, int depth, unsigned int need, unsigned long long ret )
 {
-    call_thread_func( (PRTL_THREAD_START_ROUTINE)(ULONG_PTR)CTX_REG( ctx, R_RCX ),
-                      (void *)(ULONG_PTR)CTX_REG( ctx, R_RDX ));
+    call_thread_func_entry( (PRTL_THREAD_START_ROUTINE)(ULONG_PTR)CTX_REG( ctx, R_RCX ),
+                            (void *)(ULONG_PTR)CTX_REG( ctx, R_RDX ), TRUE );
     RtlExitUserThread( 0 );
 }
 
