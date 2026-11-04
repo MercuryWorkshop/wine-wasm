@@ -1143,6 +1143,11 @@ static void do_show_systray(void)
     start_button_width = size.cx;
     SetWindowPos( tray_window, 0, 0, GetSystemMetrics( SM_CYSCREEN ) - tray_height,
                   tray_width, tray_height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW );
+    {
+        /* the screen above the taskbar is the work area: maximised windows stop at it */
+        RECT work = { 0, 0, tray_width, GetSystemMetrics( SM_CYSCREEN ) - tray_height };
+        SystemParametersInfoW( SPI_SETWORKAREA, 0, &work, SPIF_SENDCHANGE );
+    }
     sync_taskbar_buttons();
     set_clock_timer();
 }
