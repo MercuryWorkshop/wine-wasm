@@ -435,6 +435,26 @@ static pid_t fork_call( int (*func)(void *), void *arg )
     return pid;
 }
 
+/* fork_call's clone sharing the address space (CLONE_VM): gex runs such a
+ * child in the calling thread's Worker, on the stack made here, until its
+ * exec, which starts the new process's Worker; the calling thread waits and
+ * the process's other threads run on. Nothing is copied and no Worker is
+ * started for the child. The child must not change the address space
+ * (mmap, munmap, mprotect, brk, a clone of its own): only system calls on
+ * memory the parent prepared, then exec or _exit, which spawn_grandchild
+ * keeps to. */
+static pid_t vfork_call( int (*func)(void *), void *arg )
+{
+    const size_t size = 256 * 1024;
+    char *stack = mmap( NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0 );
+    pid_t pid;
+
+    if (stack == MAP_FAILED) return -1;
+    pid = clone( func, stack + size, CLONE_VM | CLONE_VFORK | SIGCHLD, arg );
+    munmap( stack, size );
+    return pid;
+}
+
 struct spawn_args
 {
     const RTL_USER_PROCESS_PARAMETERS *params;
@@ -584,7 +604,7 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
         }
         a.plan = &plan;
         gex_stage( "spawn clone" );
-        pid = fork_call( spawn_grandchild, &a );
+        pid = vfork_call( spawn_grandchild, &a );
         gex_stage( "spawn clone returned" );
         free_wineloader_exec( &plan );
         free( argv );
