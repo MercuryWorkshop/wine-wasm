@@ -26,6 +26,7 @@
 #include "config.h"
 
 #include <assert.h>
+#include <dirent.h>
 #include <errno.h>
 #include <locale.h>
 #include <langinfo.h>
@@ -1533,6 +1534,49 @@ static WCHAR *build_command_line( WCHAR **wargv )
 }
 
 
+#ifdef __wasm__
+/***********************************************************************
+ *           link_dos_drives
+ *
+ * The \??\X: links mountmgr would make for the prefix's drives
+ * (dosdevices/x:), for a session that starts no services: listing the
+ * drives (GetLogicalDrives) reads them. Paths on a drive resolve through
+ * dosdevices, not through these links.
+ */
+static void link_dos_drives(void)
+{
+    char *path;
+    struct dirent *de;
+    unsigned int volume = 0;
+    DIR *dir;
+
+    if (asprintf( &path, "%s/dosdevices", config_dir ) == -1) return;
+    dir = opendir( path );
+    free( path );
+    if (!dir) return;
+    while ((de = readdir( dir )))
+    {
+        WCHAR linkW[] = {'\\','?','?','\\','A',':',0}, targetW[40];
+        UNICODE_STRING link, target;
+        OBJECT_ATTRIBUTES attr;
+        char target_str[40];
+        HANDLE handle;
+        int i;
+
+        if (de->d_name[0] < 'a' || de->d_name[0] > 'z' || de->d_name[1] != ':' || de->d_name[2]) continue;
+        linkW[4] = de->d_name[0] - 'a' + 'A';
+        snprintf( target_str, sizeof(target_str), "\\Device\\HarddiskVolume%u", ++volume );
+        for (i = 0; (targetW[i] = (unsigned char)target_str[i]); i++) ;
+        init_unicode_string( &link, linkW );
+        init_unicode_string( &target, targetW );
+        InitializeObjectAttributes( &attr, &link, OBJ_CASE_INSENSITIVE | OBJ_PERMANENT, 0, NULL );
+        if (!NtCreateSymbolicLinkObject( &handle, STANDARD_RIGHTS_REQUIRED | 0x1 /* SYMBOLIC_LINK_ALL_ACCESS */, &attr, &target )) NtClose( handle );
+    }
+    closedir( dir );
+}
+#endif
+
+
 /***********************************************************************
  *           run_wineboot
  */
@@ -1576,6 +1620,7 @@ static void run_wineboot( WCHAR *env, SIZE_T size )
         const char *skip = getenv( "WINEGEX_NO_WINEBOOT" );
         if (skip && *skip)
         {
+            link_dos_drives();
             NtSetEvent( handles[0], NULL );
             return;
         }
