@@ -65,6 +65,7 @@ struct console_window
 
     RECT              update;          /* screen buffer update rect */
     enum update_state update_state;    /* update state */
+    COORD             restore_sb;      /* screen buffer size before the window was maximised */
 };
 
 struct console_config
@@ -1963,13 +1964,18 @@ static BOOL config_dialog( struct console *console, BOOL current )
     return TRUE;
 }
 
-static void resize_window( struct console *console, int width, int height )
+static void resize_window( struct console *console, int width, int height, const COORD *sb )
 {
     struct console_config config;
 
     current_config( console, &config );
     config.win_width  = width;
     config.win_height = height;
+    if (sb && sb->X && sb->Y)
+    {
+        config.sb_width  = sb->X;
+        config.sb_height = sb->Y;
+    }
 
     /* auto size screen-buffer if it's now smaller than window */
     if (config.sb_width < config.win_width)
@@ -2231,9 +2237,23 @@ static LRESULT WINAPI window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 
     case WM_SIZE:
         if (console->window && console->window->update_state != UPDATE_BUSY)
+        {
+            struct console_window *window = console->window;
+
+            /* A maximised window's buffer grows to fill it; restored, the
+             * buffer is the size it was, not one wider than the window
+             * (which then had a horizontal scroll bar). */
+            if (wparam == SIZE_MAXIMIZED && !window->restore_sb.X)
+            {
+                window->restore_sb.X = console->active->width;
+                window->restore_sb.Y = console->active->height;
+            }
             resize_window( console,
                            max( LOWORD(lparam) / console->active->font.width, 20 ),
-                           max( HIWORD(lparam) / console->active->font.height, 20 ));
+                           max( HIWORD(lparam) / console->active->font.height, 20 ),
+                           wparam == SIZE_RESTORED ? &window->restore_sb : NULL );
+            if (wparam == SIZE_RESTORED) window->restore_sb.X = window->restore_sb.Y = 0;
+        }
         break;
 
     case WM_HSCROLL:
