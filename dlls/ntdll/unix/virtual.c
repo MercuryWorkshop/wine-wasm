@@ -4170,6 +4170,17 @@ void virtual_init(void)
 #ifdef W64_CODE_SPLIT
     user_shared_data = (void *)(ULONG_PTR)gex_kuser_address();
     gex_compact = user_shared_data != (void *)0x7ffe0000;
+    /* The compact space's entry page (signal_wasm64.c's init_entry_page),
+     * the one after the folded USD, is taken now: the space reserved below
+     * ends at the USD, so a mapping without an address before the page is
+     * filled (the heap's, in a WoW64 process loading its 32-bit side) could
+     * get the page, and lose what it held to the fixed mapping there. */
+    if (gex_compact && anon_mmap_tryfixed( (char *)user_shared_data + page_size, page_size,
+                                           PROT_READ | PROT_WRITE | PROT_EXEC, 0 ) == MAP_FAILED)
+    {
+        ERR( "cannot map the system call page at %p\n", (char *)user_shared_data + page_size );
+        exit(1);
+    }
 #endif
 
     kernel_writewatch_init();
