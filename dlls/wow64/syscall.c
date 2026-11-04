@@ -1245,16 +1245,17 @@ static void thread_init(void)
 /**********************************************************************
  *           free_temp_data
  */
-static void free_temp_data(void)
+static void free_temp_data( TEB *teb )
 {
     struct mem_header *next, *mem;
 
-    for (mem = NtCurrentTeb()->TlsSlots[WOW64_TLS_TEMPLIST]; mem; mem = next)
+    if (!(mem = teb->TlsSlots[WOW64_TLS_TEMPLIST])) return;
+    for (; mem; mem = next)
     {
         next = mem->next;
         RtlFreeHeap( GetProcessHeap(), 0, mem );
     }
-    NtCurrentTeb()->TlsSlots[WOW64_TLS_TEMPLIST] = NULL;
+    teb->TlsSlots[WOW64_TLS_TEMPLIST] = NULL;
 }
 
 
@@ -1293,21 +1294,26 @@ __ASM_GLOBAL_FUNC( wow64_syscall_handler,
                    "ldp x29, x30, [sp], #16\n\t"
                    "ret" )
 #elif defined __wasm64__
+/* __TRY with __EXCEPT_ALL written out, the TEB read once (every system call
+ * of the process's 32-bit code comes through here): the handler unwinds to
+ * the setjmp with the frame already popped. */
 typedef NTSTATUS (WINAPI *wow64_syscall_thunk)( UINT *args );
-NTSTATUS wow64_syscall( UINT *args, ULONG_PTR thunk )
+static NTSTATUS wow64_syscall( NT_TIB *tib, UINT *args, ULONG_PTR thunk )
 {
+    __WINE_FRAME frame;
     NTSTATUS status;
 
-    __TRY
+    frame.frame.Handler = __wine_exception_handler_all;
+    if (__wine_setjmpex( &frame.jmp, &frame.frame ))
     {
-        status = ((wow64_syscall_thunk)thunk)( args );
-    }
-    __EXCEPT_ALL
-    {
-        status = GetExceptionCode();
+        status = frame.ExceptionCode;
         if (status == STATUS_INVALID_HANDLE) call_raise_user_exception_dispatcher( status );
+        return status;
     }
-    __ENDTRY
+    frame.frame.Prev = tib->ExceptionList;
+    tib->ExceptionList = &frame.frame;
+    status = ((wow64_syscall_thunk)thunk)( args );
+    tib->ExceptionList = frame.frame.Prev;
     return status;
 }
 #else
@@ -1353,8 +1359,17 @@ NTSTATUS WINAPI Wow64SystemServiceEx( UINT num, UINT *args )
         ERR( "unsupported syscall %04x\n", num );
         return STATUS_INVALID_SYSTEM_SERVICE;
     }
+#ifdef __wasm64__
+    {
+        TEB *teb = NtCurrentTeb();
+
+        status = wow64_syscall( &teb->Tib, args, table->ServiceTable[id] );
+        free_temp_data( teb );
+    }
+#else
     status = wow64_syscall( args, table->ServiceTable[id] );
-    free_temp_data();
+    free_temp_data( NtCurrentTeb() );
+#endif
     return status;
 }
 

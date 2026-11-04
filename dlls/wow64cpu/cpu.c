@@ -452,13 +452,14 @@ void WINAPI BTCpuSimulate(void)
  * thread is to go on elsewhere (an APC, NtContinue): the gex context is then
  * the area's, to be run until it is back at the marker.
  */
-struct syscall32_params { ULONG id, args, esp; };
+struct syscall32_params { ULONG id, args, esp; WOW64_CPURESERVED *area; };
 
-static ULONG64 syscall32( void *arg )
+__attribute__((visibility("hidden"))) ULONG64 __wine_gex_syscall32_body( const struct syscall32_params *p );
+ULONG64 __wine_gex_syscall32_body( const struct syscall32_params *p )
 {
-    const struct syscall32_params *p = arg;
-    ULONG id = p->id, args = p->args, esp = p->esp;
-    I386_CONTEXT *ctx = cpu_context();
+    ULONG esp = p->esp;
+    WOW64_CPURESERVED *area = p->area;
+    I386_CONTEXT *ctx = (I386_CONTEXT *)(area + 1);
     NTSTATUS status;
     BOOL moved;
 
@@ -467,13 +468,13 @@ static ULONG64 syscall32( void *arg )
     ctx->Eip = WOW64_RETURN_MARK;
     ctx->SegCs = cs32_sel;
     ctx->SegSs = ss32_sel;
-    cpu_area()->Flags &= ~WOW64_CPURESERVED_FLAG_RESET_STATE;
-    status = Wow64SystemServiceEx( id, ULongToPtr( args ));
+    area->Flags &= ~WOW64_CPURESERVED_FLAG_RESET_STATE;
+    status = Wow64SystemServiceEx( p->id, ULongToPtr( p->args ));
     /* as upstream's thunk: the status is the context's EAX, also when the
      * context was reset (NtContinue back to this call after an APC) */
     ctx->Eax = status;
     moved = ctx->Eip != WOW64_RETURN_MARK || ctx->Esp != esp ||
-            (cpu_area()->Flags & WOW64_CPURESERVED_FLAG_RESET_STATE);
+            (area->Flags & WOW64_CPURESERVED_FLAG_RESET_STATE);
     if (moved) __gexw_i386_to_ctx( ctx );
     return (ULONG)status | ((ULONG64)moved << 32);
 }
@@ -496,11 +497,42 @@ static ULONG64 on_64bit_stack( ULONG64 (*fn)( void * ), void *arg )
     return ret;
 }
 
+/* __wine_gex_syscall32_body(P) with the C stack pointer at SP, put back
+ * after: on_64bit_stack's switch for the system call, a direct call */
+extern __attribute__((visibility("hidden"))) ULONG64 syscall32_on_stack( ULONG64 sp, const struct syscall32_params *p );
+__asm__(
+    "\t.globaltype __stack_pointer, i64\n"
+    "\t.functype __wine_gex_syscall32_body (i64) -> (i64)\n"
+    "\t.globl syscall32_on_stack\n"
+    "\t.hidden syscall32_on_stack\n"
+    "\t.type syscall32_on_stack,@function\n"
+    "syscall32_on_stack:\n"
+    "\t.functype syscall32_on_stack (i64, i64) -> (i64)\n"
+    "\t.local i64, i64\n"
+    "\tglobal.get __stack_pointer\n"
+    "\tlocal.set 2\n"
+    "\tlocal.get 0\n"
+    "\tglobal.set __stack_pointer\n"
+    "\tlocal.get 1\n"
+    "\tcall __wine_gex_syscall32_body\n"
+    "\tlocal.set 3\n"
+    "\tlocal.get 2\n"
+    "\tglobal.set __stack_pointer\n"
+    "\tlocal.get 3\n"
+    "\tend_function\n" );
+
+/* as on_64bit_stack, the TEB read once */
 ULONG64 WINAPI __wine_gex_syscall32( ULONG id, ULONG args, ULONG esp )
 {
-    struct syscall32_params p = { id, args, esp };
+    TEB *teb = NtCurrentTeb();
+    ULONG64 *slot = (ULONG64 *)((char *)teb + GEXW_TEB_WOW64_SP), sp = *slot, ret;
+    struct syscall32_params p = { id, args, esp, teb->TlsSlots[WOW64_TLS_CPURESERVED] };
+    unsigned int cs = __gexw_mode64_enter();
 
-    return on_64bit_stack( syscall32, &p );
+    ret = sp ? syscall32_on_stack( sp, &p ) : __wine_gex_syscall32_body( &p );
+    *slot = sp;
+    __gexw_mode64_leave( cs );
+    return ret;
 }
 
 /**********************************************************************
