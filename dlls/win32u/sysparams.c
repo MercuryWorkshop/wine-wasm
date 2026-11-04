@@ -294,7 +294,6 @@ union sysparam_all_entry
 
 static const struct ratio no_dpi;
 UINT system_dpi;
-static RECT work_area;
 static DWORD process_layout = ~0u;
 
 static HDC display_dc;
@@ -2936,6 +2935,47 @@ BOOL update_display_cache( BOOL force )
     if (gex_no_desktop()) gex_fit_desktop( get_user_thread_info()->top_window );
 #endif
     return TRUE;
+}
+
+/* SPI_SETWORKAREA: the primary monitor's work area, kept with the monitor in
+ * the registry as the display driver writes it, so that every process's
+ * monitors and maximised windows follow it. Writing it again into the
+ * display device map makes the other processes read the monitors anew. */
+static BOOL set_primary_work_area( const RECT *rect )
+{
+    static const WCHAR work_areaW[] = {'W','i','n','e','W','o','r','k','A','r','e','a',0};
+    struct monitor *monitor;
+    HKEY hkey, subkey;
+    BOOL ret = FALSE;
+    RECT work;
+
+    if (!lock_display_devices( FALSE )) return FALSE;
+    LIST_FOR_EACH_ENTRY( monitor, &monitors, struct monitor, entry )
+    {
+        if (!is_monitor_primary( monitor )) continue;
+        work = map_monitor_rect( monitor, *rect, get_thread_dpi(), MDT_DEFAULT, no_dpi, MDT_RAW_DPI );
+        {
+            RECT rc_monitor = monitor_get_rect( monitor, no_dpi, MDT_RAW_DPI );
+            if (!intersect_rect( &work, &work, &rc_monitor )) break;
+        }
+        TRACE( "work area %s\n", wine_dbgstr_rect( &work ) );
+        if (!(hkey = reg_open_ascii_key( enum_key, monitor->path ))) break;
+        if ((subkey = reg_create_ascii_key( hkey, wine_devpropkey_monitor_rcworkA, 0, NULL )))
+        {
+            ret = set_reg_value( subkey, NULL, 0xffff0000 | DEVPROP_TYPE_BINARY, &work, sizeof(work) );
+            NtClose( subkey );
+        }
+        NtClose( hkey );
+        if (ret)
+        {
+            monitor->rc_work = work;
+            if (video_key) set_reg_value( video_key, work_areaW, REG_BINARY, &work, sizeof(work) );
+            set_winstation_monitors( TRUE );
+        }
+        break;
+    }
+    unlock_display_devices();
+    return ret;
 }
 
 static HDC get_display_dc(void)
@@ -5735,15 +5775,6 @@ static USERPREF_ENTRY( CLIENTAREAANIMATION,      4, 0x02 );
 static USERPREF_ENTRY( CLEARTYPE,                4, 0x10 );
 static USERPREF_ENTRY( SPEECHRECOGNITION,        4, 0x20 );
 
-/* System parameter indexes */
-enum spi_index
-{
-    SPI_SETWORKAREA_IDX,
-    SPI_INDEX_COUNT
-};
-
-/* indicators whether system parameter value is loaded */
-static char spi_loaded[SPI_INDEX_COUNT];
 
 static struct sysparam_rgb_entry system_colors[] =
 {
@@ -6129,7 +6160,6 @@ BOOL WINAPI NtUserSystemParametersInfo( UINT action, UINT val, void *ptr, UINT w
         break
 
     BOOL ret = user_driver->pSystemParametersInfo( action, val, ptr, winini );
-    unsigned spi_idx = 0;
 
     if (!ret) switch (action)
     {
@@ -6370,10 +6400,7 @@ BOOL WINAPI NtUserSystemParametersInfo( UINT action, UINT val, void *ptr, UINT w
     case SPI_SETWORKAREA:
     {
         if (!ptr) return FALSE;
-        spi_idx = SPI_SETWORKAREA_IDX;
-        work_area = *(RECT*)ptr;
-        spi_loaded[spi_idx] = TRUE;
-        ret = TRUE;
+        ret = set_primary_work_area( ptr );
         break;
     }
     case SPI_GETWORKAREA:
@@ -6383,8 +6410,7 @@ BOOL WINAPI NtUserSystemParametersInfo( UINT action, UINT val, void *ptr, UINT w
 
         if (!ptr) return FALSE;
 
-        spi_idx = SPI_SETWORKAREA_IDX;
-        if (!spi_loaded[spi_idx])
+        /* the primary monitor's, which every process shares (set_primary_work_area) */
         {
             struct monitor *monitor;
 
@@ -6394,16 +6420,14 @@ BOOL WINAPI NtUserSystemParametersInfo( UINT action, UINT val, void *ptr, UINT w
             {
                 if (!is_monitor_primary( monitor )) continue;
                 monitor_get_info( monitor, &info, dpi );
-                work_area = info.rcWork;
                 break;
             }
 
             unlock_display_devices();
-            spi_loaded[spi_idx] = TRUE;
         }
-        *(RECT *)ptr = work_area;
+        *(RECT *)ptr = info.rcWork;
         ret = TRUE;
-        TRACE("work area %s\n", wine_dbgstr_rect( &work_area ));
+        TRACE("work area %s\n", wine_dbgstr_rect( &info.rcWork ));
         break;
     }
 
