@@ -925,6 +925,17 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
     }
 
     if (target.cpu == CPU_WASM64) output_entry64( spec, spec->init_func && find_func_sig( spec->init_func ));
+    /* a driver's entry point: DriverEntry(driver, registry path), stdcall,
+     * which ntoskrnl calls */
+    else if (spec->init_func && !(spec->characteristics & IMAGE_FILE_DLL) && spec->subsystem == IMAGE_SUBSYSTEM_NATIVE)
+    {
+        output( "int %s(int, int);\n", spec->init_func );
+        output( "static int gexp__entry_body(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
+        output( "    int r = %s((int)__gexw_arg32(ctx, 0), (int)__gexw_arg32(ctx, 4));\n", spec->init_func );
+        output( "    return __gexw_ret32(ctx, ret, 8, (unsigned int)r);\n}\n\n" );
+        output( "int gexp__entry(int ctx, int depth, unsigned int need, unsigned long long ret)\n{\n" );
+        output( "    return __gexw_entry(ctx, depth, need, ret, gexp__entry_body);\n}\n\n" );
+    }
     /* a program's entry point: mainCRTStartup(void), cdecl (its caller
      * keeps its own stack pointer) */
     else if (spec->init_func && !(spec->characteristics & IMAGE_FILE_DLL))

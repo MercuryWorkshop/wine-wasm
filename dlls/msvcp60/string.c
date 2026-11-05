@@ -637,10 +637,11 @@ basic_string_char* __thiscall MSVCP_basic_string_char_copy_ctor(
 /* ??1?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@XZ */
 /* ??1?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QEAA@XZ */
 DEFINE_THISCALL_WRAPPER(MSVCP_basic_string_char_dtor, 4)
-void __thiscall MSVCP_basic_string_char_dtor(basic_string_char *this)
+void* __thiscall MSVCP_basic_string_char_dtor(basic_string_char *this)
 {
     TRACE("%p\n", this);
     basic_string_char__Tidy(this, TRUE);
+    return NULL;
 }
 
 /* ?compare@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEHIIPBDI@Z */
@@ -2174,10 +2175,11 @@ basic_string_wchar* __thiscall basic_string_wchar_copy_ctor(
 /* ??1?$basic_string@GU?$char_traits@G@std@@V?$allocator@G@2@@std@@QAE@XZ */
 /* ??1?$basic_string@GU?$char_traits@G@std@@V?$allocator@G@2@@std@@QEAA@XZ */
 DEFINE_THISCALL_WRAPPER(MSVCP_basic_string_wchar_dtor, 4)
-void __thiscall MSVCP_basic_string_wchar_dtor(basic_string_wchar *this)
+void* __thiscall MSVCP_basic_string_wchar_dtor(basic_string_wchar *this)
 {
     TRACE("%p\n", this);
     basic_string_wchar__Tidy(this, TRUE);
+    return NULL;
 }
 
 /* ?compare@?$basic_string@GU?$char_traits@G@std@@V?$allocator@G@2@@std@@QBEHIIPBGI@Z */
