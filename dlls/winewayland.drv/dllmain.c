@@ -93,10 +93,22 @@ static DWORD WINAPI clipboard_thread(void *arg)
     return 0;
 }
 
+/* The driver is often loaded while the process is still initializing, from
+ * a DllMain run before the program's own entry point. A thread started then
+ * would run the program's TLS callbacks while its C runtime is still
+ * uninitialized, so the driver threads skip the thread attach notifications:
+ * neither runs code of the program or of other DLLs that needs them. */
+static void start_driver_thread(LPTHREAD_START_ROUTINE proc)
+{
+    HANDLE thread;
+
+    if (!NtCreateThreadEx(&thread, THREAD_ALL_ACCESS, NULL, GetCurrentProcess(), (PRTL_THREAD_START_ROUTINE)proc, NULL,
+                          THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH, 0, 0, 0, NULL))
+        CloseHandle(thread);
+}
+
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void *reserved)
 {
-    DWORD tid;
-
     if (reason != DLL_PROCESS_ATTACH) return TRUE;
 
     DisableThreadLibraryCalls(instance);
@@ -106,10 +118,10 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void *reserved)
         return FALSE;
 
     /* Read wayland events from a dedicated thread. */
-    CloseHandle(CreateThread(NULL, 0, wayland_read_events_thread, NULL, 0, &tid));
+    start_driver_thread(wayland_read_events_thread);
     /* Handle clipboard events in a dedicated thread, if needed. */
     if (!WAYLANDDRV_UNIX_CALL(init_clipboard, NULL))
-        CloseHandle(CreateThread(NULL, 0, clipboard_thread, NULL, 0, &tid));
+        start_driver_thread(clipboard_thread);
 
     return TRUE;
 }
