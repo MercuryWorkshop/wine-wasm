@@ -5992,7 +5992,21 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
         *size_ptr = size;
     }
     else if (status == STATUS_NO_MEMORY)
+    {
         ERR( "out of memory for allocation, base %p size %08lx\n", base, size );
+#ifdef __wasm64__
+        /* More than gex's largest memory (a 64-bit one, 16 GiB) can hold:
+         * no memory flavour runs this program (a Chromium-based one's
+         * 32 GiB allocator pools). Said once, whatever the debug channels. */
+        if (size > ((SIZE_T)16 << 30))
+        {
+            static LONG said;
+            if (!InterlockedExchange( &said, 1 ))
+                MESSAGE( "wine: %s needs more than 16 GiB of address space (a reservation of %lu GiB did not fit)\n",
+                         debugstr_us( &peb->ProcessParameters->ImagePathName ), (unsigned long)(size >> 30) );
+        }
+#endif
+    }
 
     return status;
 }
