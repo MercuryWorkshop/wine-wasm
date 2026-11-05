@@ -22,7 +22,7 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(atlthunk);
 
-#if defined(__i386__) || defined(__x86_64__) || defined(__aarch64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__aarch64__) || defined(__wasm__)  /* wasm32 serves i386 programs, wasm64 x86-64 ones */
 
 struct AtlThunkData_t {
     struct thunk_pool *pool;
@@ -34,12 +34,12 @@ struct AtlThunkData_t {
 #pragma pack(push,1)
 struct thunk_code
 {
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__wasm64__)
     BYTE  mov_rip_rcx[3];     /* mov mov_offset(%rip), %rcx */
     DWORD mov_offset;
     WORD  jmp_rip;            /* jmp *jmp_offset(%rip) */
     DWORD jmp_offset;
-#elif defined(__i386__)
+#elif defined(__i386__) || defined(__wasm32__)
     BYTE  mov_data_addr_eax;  /* movl data_addr, %eax */
     DWORD data_addr;
     DWORD mov_eax_esp;        /* movl %eax, 4(%esp) */
@@ -78,14 +78,14 @@ static struct thunk_pool *alloc_thunk_pool(void)
     for (i = 0; i < ARRAY_SIZE(thunks->thunks); i++)
     {
         struct thunk_code *thunk = &thunks->thunks[i];
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__wasm64__)
         thunk->mov_rip_rcx[0]    = 0x48;    /* mov mov_offset(%rip), %rcx */
         thunk->mov_rip_rcx[1]    = 0x8b;
         thunk->mov_rip_rcx[2]    = 0x0d;
         thunk->mov_offset = (const BYTE *)&thunks->data[i].arg - (const BYTE *)(&thunk->mov_offset + 1);
         thunk->jmp_rip           = 0x25ff;  /* jmp *jmp_offset(%rip) */
         thunk->jmp_offset = (const BYTE *)&thunks->data[i].proc - (const BYTE *)(&thunk->jmp_offset + 1);
-#elif defined(__i386__)
+#elif defined(__i386__) || defined(__wasm32__)
         thunk->mov_data_addr_eax = 0xa1;       /* movl data_addr, %eax */
         thunk->data_addr         = (DWORD)&thunks->data[i].arg;
         thunk->mov_eax_esp       = 0x04244489; /* movl %eax, 4(%esp) */
