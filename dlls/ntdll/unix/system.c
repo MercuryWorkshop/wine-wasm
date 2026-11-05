@@ -1775,6 +1775,9 @@ static SYSTEM_CPU_INFORMATION get_cpuinfo(void)
         .ProcessorArchitecture = PROCESSOR_ARCHITECTURE_INTEL,
 #elif defined(__x86_64__)
         .ProcessorArchitecture = PROCESSOR_ARCHITECTURE_AMD64,
+#elif defined(__wasm__)
+        /* native wasm under gex: the machine the server runs Windows code as */
+        .ProcessorArchitecture = native_machine == IMAGE_FILE_MACHINE_AMD64 ? PROCESSOR_ARCHITECTURE_AMD64 : PROCESSOR_ARCHITECTURE_INTEL,
 #endif
     };
 
