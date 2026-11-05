@@ -24,6 +24,8 @@
 #include <ntuser.h>
 #include <commctrl.h>
 #include <shellapi.h>
+#include <uxtheme.h>
+#include <vssym32.h>
 
 #include <wine/debug.h>
 #include <wine/list.h>
@@ -117,6 +119,32 @@ static BOOL no_tray_items; /* hide the systray and all systray icons */
 static int icon_cx, icon_cy, tray_width, tray_height;
 static int start_button_width, taskbar_button_width, clock_width;
 static HFONT clock_font;
+
+/* The visual style's taskbar parts, when it has them: none of these is open without a theme, and then the
+ * taskbar is drawn as before (DrawFrameControl, DrawCaptionTempW, the class brush). */
+static HTHEME taskbar_theme, tray_notify_theme, start_theme, band_theme;
+
+static void close_taskbar_themes(void)
+{
+    HTHEME *t[] = { &taskbar_theme, &tray_notify_theme, &start_theme, &band_theme };
+    unsigned int i;
+
+    for (i = 0; i < ARRAY_SIZE(t); i++)
+    {
+        if (*t[i]) CloseThemeData( *t[i] );
+        *t[i] = NULL;
+    }
+}
+
+static void open_taskbar_themes( HWND hwnd )
+{
+    close_taskbar_themes();
+    if (!IsThemeActive()) return;
+    taskbar_theme = OpenThemeData( hwnd, L"Taskbar" );
+    tray_notify_theme = OpenThemeData( hwnd, L"TrayNotify" );
+    start_theme = OpenThemeData( hwnd, L"Start::Button" );
+    band_theme = OpenThemeData( hwnd, L"TaskBand::Toolbar" );
+}
 static WCHAR start_label[50];
 
 static struct icon *balloon_icon;
@@ -989,6 +1017,66 @@ static void remove_taskbar_button( HWND hwnd )
     free( win );
 }
 
+/* a taskbar button in the visual style: its background part, then the window's icon and title (the Start
+ * button's label) in the part's font and text color */
+static BOOL paint_themed_button( const DRAWITEMSTRUCT *dis, struct taskbar_button *win )
+{
+    HTHEME theme = win->hwnd ? band_theme : start_theme;
+    int part = win->hwnd ? TP_BUTTON : BP_PUSHBUTTON, state;
+    LRESULT bst = SendMessageW( dis->hwndItem, BM_GETSTATE, 0, 0 );
+    BOOL pressed = (dis->itemState & ODS_SELECTED) || (bst & BST_PUSHED), hot = !!(bst & BST_HOT);
+    WCHAR title[256];
+    const WCHAR *text = title;
+    HICON icon = NULL;
+    RECT rect, content;
+    LOGFONTW lf;
+    HFONT font = NULL, old = NULL;
+    int cx = GetSystemMetrics( SM_CXSMICON ), cy = GetSystemMetrics( SM_CYSMICON );
+
+    if (!theme) return FALSE;
+    if (win->hwnd)
+        state = pressed ? TS_PRESSED : win->active ? (hot ? TS_HOTCHECKED : TS_CHECKED) : hot ? TS_HOT : TS_NORMAL;
+    else
+        state = pressed ? PBS_PRESSED : hot ? PBS_HOT : PBS_NORMAL;
+
+    GetClientRect( dis->hwndItem, &rect );
+    if (IsThemeBackgroundPartiallyTransparent( theme, part, state ))
+        DrawThemeParentBackground( dis->hwndItem, dis->hDC, &rect );
+    DrawThemeBackground( theme, dis->hDC, part, state, &rect, NULL );
+    if (FAILED(GetThemeBackgroundContentRect( theme, dis->hDC, part, state, &rect, &content ))) content = rect;
+
+    if (win->hwnd)
+    {
+        if (!InternalGetWindowText( win->hwnd, title, ARRAY_SIZE(title) )) title[0] = 0;
+        icon = (HICON)SendMessageW( win->hwnd, WM_GETICON, ICON_SMALL2, 0 );
+        if (!icon) icon = (HICON)GetClassLongPtrW( win->hwnd, GCLP_HICONSM );
+    }
+    else
+    {
+        text = start_label;
+        icon = LoadImageW( 0, (const WCHAR *)IDI_WINLOGO, IMAGE_ICON, cx, cy, LR_SHARED );
+    }
+    content.left += 2;
+    if (icon)
+    {
+        DrawIconEx( dis->hDC, content.left, (content.top + content.bottom - cy) / 2, icon, cx, cy, 0, 0, DI_NORMAL );
+        content.left += cx + 4;
+    }
+    if (SUCCEEDED(GetThemeFont( theme, dis->hDC, part, state, TMT_FONT, &lf )))
+    {
+        font = CreateFontIndirectW( &lf );
+        old = SelectObject( dis->hDC, font );
+    }
+    DrawThemeText( theme, dis->hDC, part, state, text, -1,
+                   DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_LEFT, 0, &content );
+    if (font)
+    {
+        SelectObject( dis->hDC, old );
+        DeleteObject( font );
+    }
+    return TRUE;
+}
+
 static void paint_taskbar_button( const DRAWITEMSTRUCT *dis )
 {
     RECT rect;
@@ -996,6 +1084,7 @@ static void paint_taskbar_button( const DRAWITEMSTRUCT *dis )
     struct taskbar_button *win = find_taskbar_button( LongToHandle( dis->CtlID ));
 
     if (!win) return;
+    if (paint_themed_button( dis, win )) return;
     GetClientRect( dis->hwndItem, &rect );
     DrawFrameControl( dis->hDC, &rect, DFC_BUTTON, DFCS_BUTTONPUSH | DFCS_ADJUSTRECT |
                       ((dis->itemState & ODS_SELECTED) ? DFCS_PUSHED : 0 ));
@@ -1084,10 +1173,22 @@ static void paint_clock( HDC hdc )
     if (!GetTimeFormatEx( LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, NULL, NULL, text, ARRAY_SIZE(text) ))
         return;
     get_clock_rect( &rect );
-    DrawEdge( hdc, &rect, BDR_SUNKENOUTER, BF_RECT | BF_ADJUST );
+    if (tray_notify_theme)
+    {
+        COLORREF color;
+
+        DrawThemeBackground( tray_notify_theme, hdc, TNP_BACKGROUND, 0, &rect, NULL );
+        if (FAILED(GetThemeColor( tray_notify_theme, TNP_BACKGROUND, 0, TMT_TEXTCOLOR, &color )))
+            color = GetSysColor( COLOR_BTNTEXT );
+        SetTextColor( hdc, color );
+    }
+    else
+    {
+        DrawEdge( hdc, &rect, BDR_SUNKENOUTER, BF_RECT | BF_ADJUST );
+        SetTextColor( hdc, GetSysColor( COLOR_BTNTEXT ));
+    }
     old = SelectObject( hdc, clock_font );
     SetBkMode( hdc, TRANSPARENT );
-    SetTextColor( hdc, GetSysColor( COLOR_BTNTEXT ));
     DrawTextW( hdc, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE );
     SelectObject( hdc, old );
 }
@@ -1179,6 +1280,28 @@ static LRESULT WINAPI shell_traywnd_proc( HWND hwnd, UINT msg, WPARAM wparam, LP
     case WM_MOVE:
         update_systray_balloon_position();
         break;
+
+    case WM_ERASEBKGND:
+        if (taskbar_theme)
+        {
+            RECT rect;
+
+            GetClientRect( hwnd, &rect );
+            DrawThemeBackground( taskbar_theme, (HDC)wparam, TBP_BACKGROUNDBOTTOM, 0, &rect, NULL );
+            return 1;
+        }
+        return DefWindowProcW( hwnd, msg, wparam, lparam );
+
+    case WM_THEMECHANGED:
+    {
+        struct taskbar_button *win;
+
+        open_taskbar_themes( hwnd );
+        LIST_FOR_EACH_ENTRY( win, &taskbar_buttons, struct taskbar_button, entry )
+            InvalidateRect( win->button, NULL, TRUE );
+        InvalidateRect( hwnd, NULL, TRUE );
+        break;
+    }
 
     case WM_PAINT:
     {
@@ -1347,6 +1470,7 @@ void initialize_systray( BOOL arg_using_root, BOOL arg_enable_shell, BOOL arg_sh
     }
 
     LoadStringW( NULL, IDS_START_LABEL, start_label, ARRAY_SIZE( start_label ));
+    if (enable_taskbar) open_taskbar_themes( tray_window );
 
     add_taskbar_button( 0 );
 
