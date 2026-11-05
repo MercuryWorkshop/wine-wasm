@@ -59,7 +59,6 @@
 #include "unix_private.h"
 #include "wine/debug.h"
 #include "wine/gex/gex_abi.h"
-#include "wine/gex/gexrt64.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
 
@@ -1583,103 +1582,6 @@ static void context_to_sc( const CONTEXT *context, struct gex_x86_64_sigcontext 
 }
 
 /* the thread's state at the signal, the guest's or the syscall frame's */
-/* A thread suspended in a system call native code made: its context has
- * gex's return pad (x86-64) or the WoW64 marker (native 32-bit code) for an
- * address, in no module. Another thread getting the context (a GC's or a
- * sampler's SuspendThread and GetThreadContext) is given the guest's at its
- * entry into native code instead, as Windows gives the return address in
- * ntdll's system call stub: the address the native code returns to, with
- * the stack past it (gexrt64.h). Undone after the wait for the values it
- * put in that are still there. */
-struct suspend_fixup
-{
-    ULONG64 rip, rsp, new_rip, new_rsp;
-    ULONG eip, esp, new_eip, new_esp;
-    I386_CONTEXT *wow;
-};
-
-static BOOL in_stack( ULONG_PTR p, ULONG_PTR size, const void *limit, const void *base )
-{
-    return p >= (ULONG_PTR)limit && p + size >= p && p + size <= (ULONG_PTR)base;
-}
-
-static void suspend_fixup_enter( TEB *teb, CONTEXT *context, struct suspend_fixup *f )
-{
-    I386_CONTEXT *wow = is_wow64() ? get_cpu_area( get_thread_data(), IMAGE_FILE_MACHINE_I386 ) : NULL;
-
-    memset( f, 0, sizeof(*f) );
-    if (wow && wow->Eip == WOW64_RETURN_MARK)
-    {
-        const TEB32 *teb32 = get_wow_teb( teb );
-        ULONG64 p = *(ULONG64 *)((char *)teb + GEXW_TEB_WOW64_CALL);
-        unsigned int i;
-
-        /* records left by calls a callback return skipped link to live ones */
-        for (i = 0; p && i < 64; i++)
-        {
-            const struct gexw_syscall32 *rec = (const struct gexw_syscall32 *)(ULONG_PTR)p;
-
-            if ((p & 7) || !in_stack( p, sizeof(*rec), teb->DeallocationStack, teb->Tib.StackBase )) break;
-            if (rec->esp == wow->Esp)
-            {
-                if (teb32 && in_stack( rec->entry_esp, 4, ULongToPtr( teb32->DeallocationStack ),
-                                       ULongToPtr( teb32->Tib.StackBase )))
-                {
-                    f->wow = wow;
-                    f->eip = wow->Eip;
-                    f->esp = wow->Esp;
-                    f->new_eip = wow->Eip = *(ULONG *)(ULONG_PTR)rec->entry_esp;
-                    f->new_esp = wow->Esp = rec->entry_esp + 4;
-                }
-                break;
-            }
-            p = rec->prev;
-        }
-        return;  /* the 64-bit side of a WoW64 thread is native code only */
-    }
-    if (context->Rip == GEX_RETURN_PAD && !(context->Rsp & 7) &&
-        in_stack( context->Rsp + 8, 0x18, teb->DeallocationStack, teb->Tib.StackBase ))
-    {
-        const ULONG64 *slot = (const ULONG64 *)(ULONG_PTR)(context->Rsp + 8);
-        ULONG64 rip, rsp;
-
-        if ((slot[0] ^ slot[1] ^ GEXW_ENTRY_CHECK) != slot[2]) return;
-        if (slot[1])
-        {
-            const CONTEXT *entry = (const CONTEXT *)(ULONG_PTR)slot[1];
-
-            if (!in_stack( slot[1], sizeof(*entry), teb->DeallocationStack, teb->Tib.StackBase )) return;
-            rip = entry->Rip;
-            rsp = entry->Rsp;
-        }
-        else
-        {
-            if (!in_stack( slot[0], 8, teb->DeallocationStack, teb->Tib.StackBase )) return;
-            rip = *(const ULONG64 *)(ULONG_PTR)slot[0];
-            rsp = slot[0] + 8;
-        }
-        if (rip == GEX_RETURN_PAD) return;
-        f->rip = context->Rip;
-        f->rsp = context->Rsp;
-        f->new_rip = context->Rip = rip;
-        f->new_rsp = context->Rsp = rsp;
-    }
-}
-
-static void suspend_fixup_leave( CONTEXT *context, const struct suspend_fixup *f )
-{
-    if (f->new_rip && context->Rip == f->new_rip && context->Rsp == f->new_rsp)
-    {
-        context->Rip = f->rip;
-        context->Rsp = f->rsp;
-    }
-    if (f->wow && f->wow->Eip == f->new_eip && f->wow->Esp == f->new_esp)
-    {
-        f->wow->Eip = f->eip;
-        f->wow->Esp = f->esp;
-    }
-}
-
 static void signal_wait_suspend( void *ucontext )
 {
     struct thread_data *data = get_thread_data();
@@ -1718,14 +1620,11 @@ static void signal_wait_suspend( void *ucontext )
     else
     {
         struct xcontext context;
-        struct suspend_fixup fixup;
 
         memset( &context, 0, sizeof(context) );
         context.c.ContextFlags = CONTEXT_FULL | CONTEXT_EXCEPTION_REQUEST;
         NtGetContextThread( GetCurrentThread(), &context.c );
-        suspend_fixup_enter( data->teb, &context.c, &fixup );
         wait_suspend( &context.c );
-        suspend_fixup_leave( &context.c, &fixup );
         NtSetContextThread( GetCurrentThread(), &context.c );
     }
 }

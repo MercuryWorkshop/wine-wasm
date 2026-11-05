@@ -294,15 +294,13 @@ extern void *__wine_syscall_dispatcher __asm__("ntdll.dll!__wine_syscall_dispatc
 /* A WoW64 process: this i386 ntdll has wow64 below it. */
 /* With gex's native wow64cpu (wasm64), whose syscall thunk is gex's stop
  * address: a direct call into it, the same wasm type in both modules (it
- * saves this state into its CPU area, with eip its return marker, and
- * keeps the guest's ESP at its entry into native code for another thread's
- * look at the context, gexrt64.h's struct gexw_syscall32). Bit 32
+ * saves this state into its CPU area, with eip its return marker). Bit 32
  * of the result: wow64 sent the thread elsewhere, and the context is that
  * state, run here until it is back at the marker. */
 /* gex-kernel's win::tramp WOW64_STOP_SYSCALL, WOW64_RETURN_MARK */
 #define WOW64_STOP_SYSCALL 0x3ffff4u
 #define WOW64_RETURN_MARK  0x3ffffau
-extern unsigned long long gex_wow64_syscall32( uint32_t id, uint32_t args, uint32_t esp, uint32_t entry_esp )
+extern unsigned long long gex_wow64_syscall32( uint32_t id, uint32_t args, uint32_t esp )
     __attribute__((import_module("env"), import_name("wow64cpu.dll!__wine_gex_syscall32")));
 
 extern uint32_t gex_wow64_unix_call32( unsigned long long handle, uint32_t code, uint32_t args, uint32_t esp )
@@ -320,7 +318,7 @@ static uint32_t wow64_native_syscall( int ctx, uint32_t id, const uint32_t *word
     for (i = 0; i < n; i++) GW( sp + 8 + 4 * i ) = words[i];
     GW( sp ) = WOW64_RETURN_MARK;
     GW( sp + 4 ) = WOW64_RETURN_MARK;
-    r = gex_wow64_syscall32( id, sp + 8, sp, gexw_get_entry_esp() );
+    r = gex_wow64_syscall32( id, sp + 8, sp );
     ret = (uint32_t)r;
     if (r >> 32)
     {
@@ -757,7 +755,7 @@ uint32_t __gexw_syscall_resume( uint32_t id, const uint32_t *words, uint32_t n )
         for (i = 0; i < n; i++) GW( sp + 8 + 4 * i ) = words[i];
         GW( sp ) = WOW64_RETURN_MARK;
         GW( sp + 4 ) = WOW64_RETURN_MARK;
-        r = gex_wow64_syscall32( id, sp + 8, sp, gexw_get_entry_esp() );
+        r = gex_wow64_syscall32( id, sp + 8, sp );
         if (r >> 32) __gexw_throw_unwind();
         gp_set( ctx, R_ESP, esp0 );
         GEX_C64( GEX_CTX_PC ) = pc0;
