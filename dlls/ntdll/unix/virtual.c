@@ -2482,11 +2482,12 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
         if (limit_low < (ULONG_PTR)w64_code_space_start) limit_low = (ULONG_PTR)w64_code_space_start;
         if (limit_low >= limit_high) return STATUS_NO_MEMORY;
     }
-    /* a WoW64 process's memory placed anywhere goes no lower than the code
-     * space, whose floor its bottom-up allocations would start below: made
-     * executable later (a JIT's VirtualProtect), it could not be there. An
-     * address asked for keeps its place. */
-    else if (!base && is_wow64() && limit_low < (ULONG_PTR)w64_code_space_start &&
+    /* memory placed anywhere goes no lower than the code space, whose floor
+     * bottom-up allocations would start below (the reserved space from the
+     * address space's start, gex's NATIVE_FN_TOP): made executable later (a
+     * JIT's or a thunk allocator's VirtualProtect), it could not be there.
+     * An address asked for keeps its place. */
+    else if (!base && limit_low < (ULONG_PTR)w64_code_space_start &&
              (!limit_high || limit_high > (ULONG_PTR)w64_code_space_start))
         limit_low = (ULONG_PTR)w64_code_space_start;
 #endif
