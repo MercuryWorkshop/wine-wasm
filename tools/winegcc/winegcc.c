@@ -1440,13 +1440,14 @@ static void build(struct strarray input_files, const char *output)
     atexit( cleanup_output_files );
 
     /* wasm32: also the DLL (or program) as one relocatable object
-     * (OUTPUT.r.o) and its export list (OUTPUT.exports), for linking Wine's
-     * whole PE side as one module (tools/wine-wasm/pelink.py in the gex
-     * tree) */
+     * (OUTPUT.r.o), its export list (OUTPUT.exports) and the adapters
+     * winebuild made without their callee's signature (OUTPUT.adapters),
+     * for linking Wine's whole PE side as one module (wine/pelink.py in the
+     * gex tree) */
     if (is_wasm_target() && spec_objs.count)
     {
+        static const char * const lists[] = { "exports", "adapters" };
         struct strarray r_args = empty_strarray;
-        const char *exports = strmake( "%s.exports", spec_objs.str[0] );
         unsigned int i;
         for (i = 0; i < link_args.count; i++)
         {
@@ -1459,12 +1460,14 @@ static void build(struct strarray input_files, const char *output)
             strarray_add( &r_args, a );
         }
         spawn( r_args, 0 );
-        if (!access( exports, R_OK ))
+        for (i = 0; i < ARRAY_SIZE(lists); i++)
         {
+            const char *list = strmake( "%s.%s", spec_objs.str[0], lists[i] );
             struct strarray cp = empty_strarray;
+            if (access( list, R_OK )) continue;
             strarray_add( &cp, "cp" );
-            strarray_add( &cp, exports );
-            strarray_add( &cp, strmake( "%s.exports", output_file_name ));
+            strarray_add( &cp, list );
+            strarray_add( &cp, strmake( "%s.%s", output_file_name, lists[i] ));
             spawn( cp, 0 );
         }
     }
