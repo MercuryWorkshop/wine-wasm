@@ -136,7 +136,7 @@
 @ stdcall ExtractIconExW(wstr long ptr ptr long)
 @ stdcall ExtractIconW(long wstr long)
 @ stdcall FatalAppExitW(long wstr)
-@ stdcall FillConsoleOutputCharacterW(long long long long ptr)
+@ stdcall FillConsoleOutputCharacterW(long long long long ptr) kernel32.FillConsoleOutputCharacterW
 @ stdcall FindAtomW(wstr)
 @ stdcall FindExecutableW(wstr wstr wstr)
 @ stdcall FindFirstChangeNotificationW(wstr long long)
@@ -350,8 +350,8 @@
 @ stdcall RasSetSubEntryPropertiesW(wstr wstr long ptr long ptr long)
 @ stdcall RasValidateEntryNameW(wstr wstr)
 @ stdcall ReadConsoleInputW(long ptr long ptr)
-@ stdcall ReadConsoleOutputCharacterW(long ptr long long ptr)
-@ stdcall ReadConsoleOutputW(long ptr long long ptr)
+@ stdcall ReadConsoleOutputCharacterW(long ptr long long ptr) kernel32.ReadConsoleOutputCharacterW
+@ stdcall ReadConsoleOutputW(long ptr long long ptr) kernel32.ReadConsoleOutputW
 @ stdcall ReadConsoleW(long ptr long ptr ptr)
 @ stdcall RegConnectRegistryW(wstr long ptr)
 @ stdcall RegCreateKeyExW(long wstr long ptr long long ptr ptr ptr)
@@ -391,7 +391,7 @@
 @ stdcall SHGetFileInfoW(ptr long ptr long long)
 @ stdcall SHGetNewLinkInfoW(wstr wstr ptr long long)
 @ stdcall SHGetPathFromIDListW(ptr ptr)
-@ stdcall ScrollConsoleScreenBufferW(long ptr ptr ptr ptr)
+@ stdcall ScrollConsoleScreenBufferW(long ptr ptr ptr ptr) kernel32.ScrollConsoleScreenBufferW
 @ stdcall SearchPathW(wstr wstr wstr long ptr ptr)
 @ stdcall SendDlgItemMessageW(long long long long long)
 @ stdcall SendMessageCallbackW(long long long long ptr long)
@@ -463,8 +463,8 @@
 @ stdcall WideCharToMultiByte(long long wstr long ptr long ptr ptr)
 @ stdcall WinHelpW(long wstr long long)
 @ stdcall WriteConsoleInputW(long ptr long ptr)
-@ stdcall WriteConsoleOutputCharacterW(long ptr long long ptr)
-@ stdcall WriteConsoleOutputW(long ptr long long ptr)
+@ stdcall WriteConsoleOutputCharacterW(long ptr long long ptr) kernel32.WriteConsoleOutputCharacterW
+@ stdcall WriteConsoleOutputW(long ptr long long ptr) kernel32.WriteConsoleOutputW
 @ stdcall WriteConsoleW(long ptr long ptr ptr)
 @ stdcall WritePrivateProfileSectionW(wstr wstr wstr)
 @ stdcall WritePrivateProfileStringW(wstr wstr wstr wstr)

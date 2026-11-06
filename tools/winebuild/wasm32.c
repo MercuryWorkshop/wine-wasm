@@ -525,23 +525,44 @@ static int spec_arg_matches( enum arg_type t, char p )
     }
 }
 
-/* Parameters that are a one-word struct passed by value. The .spec spells
- * them as one long, which the counts below cannot tell from an int, but
- * wasm32 C takes the struct by pointer: passing the value made
- * GdiAlphaBlend read its BLENDFUNCTION from the address 0x01ff0000, so
- * every AlphaBlend from i386 code drew nothing. */
-static int word_struct_param( const ORDDEF *odp, unsigned int j )
+/* The size of parameter `j` of `link` if the ICALL pass's signature for it
+ * (gexw.sig64, which it writes on wasm32 too) says it is a struct passed by
+ * value, else 0. The .spec spells a one-word struct (BLENDFUNCTION, COORD)
+ * as an int, which the counts below cannot tell from one; wasm32 C takes
+ * it by pointer, and passing the value read the struct from an address
+ * made of it (GdiAlphaBlend's BLENDFUNCTION from 0x01ff0000, a 32-bit
+ * SetConsoleCursorPosition's COORD). */
+unsigned int wasm_sig_byval( const char *sig, unsigned int j )
 {
-    static const struct { const char *name; unsigned int param; } table[] =
-    {
-        { "GdiAlphaBlend", 10 },  /* BLENDFUNCTION */
-    };
-    const char *name = odp->name ? odp->name : get_link_name( odp );
-    unsigned int i;
+    const char *p;
+    unsigned int k = 0;
 
-    for (i = 0; i < sizeof(table) / sizeof(table[0]); i++)
-        if (table[i].param == j && !strcmp( table[i].name, name )) return 1;
+    if (!sig || !(p = strchr( sig, ':' ))) return 0;
+    for (p++; *p && *p != '.'; k++)
+    {
+        unsigned int size = 0;
+        char c = *p++;
+        if (c == 'b' || c == 's') size = strtoul( p, (char **)&p, 10 );
+        if (k == j) return c == 'b' ? size : 0;
+    }
     return 0;
+}
+
+/* The adapters made without the code's signature for what they call (a
+ * function this DLL exports for another, defined there): what each took
+ * every parameter as, `v` a value, `r` a struct by value through its slots'
+ * address, for pelink, which checks them against the defining DLL's
+ * signature (its .adapters file). */
+static struct strarray assumed;
+
+static void note_assumed( const ORDDEF *odp, const char *link, const char *mask )
+{
+    strarray_add( &assumed, strmake( "%s %s %s", odp->name ? odp->name : link, link, *mask ? mask : "-" ));
+}
+
+void wasm_note_assumed( const ORDDEF *odp, const char *link, const char *mask )
+{
+    note_assumed( odp, link, mask );
 }
 
 /* One entry adapter, or NULL when the .spec and the code do not agree.
@@ -565,7 +586,8 @@ static const char *output_adapter( const ORDDEF *odp, const char *sig )
     unsigned int first[MAX_ARGUMENTS + 1], count[MAX_ARGUMENTS + 1];
     int sret = 0, va_param = -1, va_wide = 0;
     unsigned int va_off = 0, va_fmt_off = 0;
-    const char *p, *ident;
+    const char *p, *ident, *sig64 = wasm_find_sig64( link );
+    char mask[MAX_ARGUMENTS + 2] = "";
 
     if (strlen( params ) == nargs + 1 && ret == 'v' && params[0] == 'i' &&
         (!nargs || !spec_arg_matches( odp->u.func.args[0], 'i' ) || nargs + 1 == strlen( params )))
@@ -658,6 +680,7 @@ static const char *output_adapter( const ORDDEF *odp, const char *sig )
         unsigned int bytes = 0, k;
         for (k = first[j]; k < first[j] + count[j]; k++) bytes += spec_arg_size( odp->u.func.args[k] );
         if (j) output( ", " );
+        mask[j] = 'v';
         if (j < regs) output( "(int)__gexw_reg(ctx, %u)", j == 0 ? 1 : 2 );  /* ECX, EDX */
         else
         {
@@ -666,8 +689,11 @@ static const char *output_adapter( const ORDDEF *odp, const char *sig )
             else if (params[j] == 'I' && count[j] == 2)
                 output( "(long long)__gexw_arg64(ctx, %u)", off );
             else if (count[j] > 1 || !spec_arg_matches( odp->u.func.args[first[j]], params[j] ) ||
-                     word_struct_param( odp, j ))
+                     wasm_sig_byval( sig64, j ))
+            {
                 output( "(int)__gexw_argptr(ctx, %u)", off );  /* a struct by value */
+                mask[j] = 'r';
+            }
             else switch (params[j])
             {
             case 'i': output( "(int)__gexw_arg32(ctx, %u)", off ); break;
@@ -690,6 +716,7 @@ static const char *output_adapter( const ORDDEF *odp, const char *sig )
     case 'd': output( "    return __gexw_ret_fp(ctx, ret, %u, r);\n", pop ); break;
     }
     output( "}\n\n" );
+    if (!sig64) note_assumed( odp, link, mask );
     return ident;
 }
 
@@ -1035,6 +1062,12 @@ void output_wasm_spec( DLLSPEC *spec, struct strarray files )
             free( base );
         }
     }
+    fclose( rsp );
+
+    /* the adapters made without their callee's signature (note_assumed) */
+    if (!(rsp = fopen( strmake( "%s.adapters", output_file_name ), "w" )))
+        fatal_error( "cannot create %s.adapters\n", output_file_name );
+    STRARRAY_FOR_EACH( line, &assumed ) fprintf( rsp, "%s\n", line );
     fclose( rsp );
 }
 

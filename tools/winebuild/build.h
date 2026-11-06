@@ -281,6 +281,8 @@ extern void wasm_module_layout( const void *info, unsigned int *mem_size, unsign
 /* shared with the wasm64 adapters */
 extern const char *find_func_sig( const char *name );
 extern const char *wasm_find_sig64( const char *name );
+extern unsigned int wasm_sig_byval( const char *sig, unsigned int j );
+extern void wasm_note_assumed( const ORDDEF *odp, const char *link, const char *mask );
 extern const char *c_type( char t );
 extern const char *adapter_symbol( const ORDDEF *odp );
 extern const char *output_adapter_header( const ORDDEF *odp );

@@ -258,6 +258,13 @@ const char *output_adapter64( const ORDDEF *odp, const char *wasm_sig )
     case 'd': output( "    return __gexw_ret_f64(ctx, ret, r);\n" ); break;
     }
     output( "}\n\n" );
+    if (!str)
+    {
+        char mask[MAX_ARGUMENTS + 2] = "";
+        for (j = 0; j < nfixed; j++)
+            mask[j] = s.params[j].k == 'b' && small_struct( s.params[j].size ) ? 'r' : 'v';
+        wasm_note_assumed( odp, link, mask );
+    }
     return ident;
 }
 
