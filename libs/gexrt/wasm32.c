@@ -488,7 +488,13 @@ uint64_t __gexw_guest_call( uint32_t target, const uint32_t *words, uint32_t n )
      * entry's (native code moves it only around its guest calls, and puts
      * it back): what the guest leaves the native frames by going above */
     limit = sp0;
-    if (!GEX_FTAB( gex_ftab_idx( target ))( ctx, gexw_get_depth() + 1, 0xffffffffu, ra ))
+    /* `need` names the argument bytes (gex_abi's NEED_ARGS): gex takes the
+     * guest for gone from this call once it is past them, where these
+     * native frames start, as when a catch block above them goes on. With
+     * no bytes named gex allows a margin, which native frames as small as
+     * user32's around a window procedure fit in: the call would stay open
+     * under the guest, one more for each such catch. */
+    if (!GEX_FTAB( gex_ftab_idx( target ))( ctx, gexw_get_depth() + 1, 4 * n, ra ))
     {
         gexw_set_entry_esp( limit );
         run_until( ctx, ra, limit );
