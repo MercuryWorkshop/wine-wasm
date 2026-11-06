@@ -1531,8 +1531,7 @@ then
                      esac])])
 fi
 WINE_NOTICE_WITH(pcsclite,[test "x$PCSCLITE_LIBS" = x],
-                 [libpcsclite not found, smart cards won't be supported.],
-                 [enable_winscard])
+                 [libpcsclite not found, smart cards won't be supported.])
 
 dnl **** Check for inotify ****
 if test "x$with_inotify" != "xno"

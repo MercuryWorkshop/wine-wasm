@@ -17300,7 +17300,6 @@ then :
   *)   as_fn_error $? "libpcsclite not found, smart cards won't be supported.
 This is an error since --with-pcsclite was requested." "$LINENO" 5 ;;
 esac
-enable_winscard=${enable_winscard:-no}
 fi
 
 if test "x$with_inotify" != "xno"

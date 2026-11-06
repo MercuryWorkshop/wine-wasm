@@ -30,7 +30,10 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(winscard);
 
-#define UNIX_CALL( func, params ) WINE_UNIX_CALL( unix_ ## func, params )
+static BOOL have_pcsc;
+
+/* with no PC/SC library, every call says the smart card service is not running */
+#define UNIX_CALL( func, params ) (have_pcsc ? WINE_UNIX_CALL( unix_ ## func, params ) : SCARD_E_NO_SERVICE)
 
 static HANDLE g_startedEvent;
 
@@ -972,7 +975,8 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, void *reserved )
     {
     case DLL_PROCESS_ATTACH:
         DisableThreadLibraryCalls( hinst );
-        if (__wine_init_unix_call()) ERR( "no pcsclite support, expect problems\n" );
+        have_pcsc = !__wine_init_unix_call() && !WINE_UNIX_CALL( unix_scard_available, NULL );
+        if (!have_pcsc) WARN( "no pcsclite support\n" );
 
         /* FIXME: for now, we act as if the pcsc daemon is always started */
         g_startedEvent = CreateEventW( NULL, TRUE, TRUE, NULL );

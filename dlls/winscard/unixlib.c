@@ -49,23 +49,25 @@ LONG SCardControl132( UINT32, UINT32, const void *, UINT32, void *, UINT32, UINT
 LONG SCardGetAttrib( UINT32, UINT32, BYTE *, UINT32 * );
 LONG SCardSetAttrib( UINT32, UINT32, const BYTE *, UINT32 );
 #else
-LONG SCardEstablishContext( UINT64, const void *, const void *, UINT64 * );
-LONG SCardReleaseContext( UINT64 );
-LONG SCardIsValidContext( UINT64 );
-LONG SCardGetStatusChange( UINT64, UINT64, void *, UINT64 );
-LONG SCardCancel( UINT64 );
-LONG SCardListReaders( UINT64, const char *, char *, UINT64 * );
-LONG SCardListReaderGroups( UINT64, char *, UINT64 * );
-LONG SCardConnect( UINT64, const char *, UINT64, UINT64, UINT64 *, UINT64 * );
-LONG SCardStatus( UINT64, char *, UINT64 *, UINT64 *, UINT64 *, BYTE *, UINT64 * );
-LONG SCardDisconnect( UINT64, UINT64 );
-LONG SCardReconnect( UINT64, UINT64, UINT64, UINT64, UINT64 * );
-LONG SCardBeginTransaction( UINT64 );
-LONG SCardEndTransaction( UINT64, UINT64 );
-LONG SCardTransmit( UINT64, const void *, const BYTE *, UINT64, void *, BYTE *, UINT64 * );
-LONG SCardControl( UINT64, UINT64, const void *, UINT64, void *, UINT64, UINT64 * );
-LONG SCardGetAttrib( UINT64, UINT64, BYTE *, UINT64 * );
-LONG SCardSetAttrib( UINT64, UINT64, const BYTE *, UINT64 );
+/* weak: built without libpcsclite too, when scard_available says they are not there */
+#define PCSC_WEAK __attribute__((weak))
+LONG SCardEstablishContext( UINT64, const void *, const void *, UINT64 * ) PCSC_WEAK;
+LONG SCardReleaseContext( UINT64 ) PCSC_WEAK;
+LONG SCardIsValidContext( UINT64 ) PCSC_WEAK;
+LONG SCardGetStatusChange( UINT64, UINT64, void *, UINT64 ) PCSC_WEAK;
+LONG SCardCancel( UINT64 ) PCSC_WEAK;
+LONG SCardListReaders( UINT64, const char *, char *, UINT64 * ) PCSC_WEAK;
+LONG SCardListReaderGroups( UINT64, char *, UINT64 * ) PCSC_WEAK;
+LONG SCardConnect( UINT64, const char *, UINT64, UINT64, UINT64 *, UINT64 * ) PCSC_WEAK;
+LONG SCardStatus( UINT64, char *, UINT64 *, UINT64 *, UINT64 *, BYTE *, UINT64 * ) PCSC_WEAK;
+LONG SCardDisconnect( UINT64, UINT64 ) PCSC_WEAK;
+LONG SCardReconnect( UINT64, UINT64, UINT64, UINT64, UINT64 * ) PCSC_WEAK;
+LONG SCardBeginTransaction( UINT64 ) PCSC_WEAK;
+LONG SCardEndTransaction( UINT64, UINT64 ) PCSC_WEAK;
+LONG SCardTransmit( UINT64, const void *, const BYTE *, UINT64, void *, BYTE *, UINT64 * ) PCSC_WEAK;
+LONG SCardControl( UINT64, UINT64, const void *, UINT64, void *, UINT64, UINT64 * ) PCSC_WEAK;
+LONG SCardGetAttrib( UINT64, UINT64, BYTE *, UINT64 * ) PCSC_WEAK;
+LONG SCardSetAttrib( UINT64, UINT64, const BYTE *, UINT64 ) PCSC_WEAK;
 #endif
 
 static NTSTATUS scard_establish_context( void *args )
@@ -332,6 +334,11 @@ static NTSTATUS scard_set_attrib( void *args )
     return SCardSetAttrib( params->handle, params->id, params->attr, params->attr_len );
 }
 
+static NTSTATUS scard_available( void *args )
+{
+    return SCardEstablishContext ? STATUS_SUCCESS : STATUS_NOT_SUPPORTED;
+}
+
 const unixlib_entry_t __wine_unix_call_funcs[] =
 {
     scard_establish_context,
@@ -351,6 +358,7 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     scard_control,
     scard_get_attrib,
     scard_set_attrib,
+    scard_available,
 };
 
 C_ASSERT( ARRAYSIZE(__wine_unix_call_funcs) == unix_funcs_count );
@@ -704,6 +712,7 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     wow64_scard_control,
     wow64_scard_get_attrib,
     wow64_scard_set_attrib,
+    scard_available,
 };
 
 C_ASSERT( ARRAYSIZE(__wine_unix_call_wow64_funcs) == unix_funcs_count );
