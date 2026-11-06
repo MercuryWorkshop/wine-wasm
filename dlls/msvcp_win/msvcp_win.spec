@@ -2606,18 +2606,18 @@
 @ stub ?id@?$messages@D@std@@2V0locale@2@A
 @ stub ?id@?$messages@G@std@@2V0locale@2@A
 @ stub ?id@?$messages@_W@std@@2V0locale@2@A
-@ stub ?id@?$money_get@DV?$istreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A
-@ stub ?id@?$money_get@GV?$istreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A
-@ stub ?id@?$money_get@_WV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A
-@ stub ?id@?$money_put@DV?$ostreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A
-@ stub ?id@?$money_put@GV?$ostreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A
-@ stub ?id@?$money_put@_WV?$ostreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A
-@ stub ?id@?$moneypunct@D$00@std@@2V0locale@2@A
-@ stub ?id@?$moneypunct@D$0A@@std@@2V0locale@2@A
-@ stub ?id@?$moneypunct@G$00@std@@2V0locale@2@A
-@ stub ?id@?$moneypunct@G$0A@@std@@2V0locale@2@A
-@ stub ?id@?$moneypunct@_W$00@std@@2V0locale@2@A
-@ stub ?id@?$moneypunct@_W$0A@@std@@2V0locale@2@A
+@ extern ?id@?$money_get@DV?$istreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A msvcp140.?id@?$money_get@DV?$istreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A
+@ extern ?id@?$money_get@GV?$istreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A msvcp140.?id@?$money_get@GV?$istreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A
+@ extern ?id@?$money_get@_WV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A msvcp140.?id@?$money_get@_WV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A
+@ extern ?id@?$money_put@DV?$ostreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A msvcp140.?id@?$money_put@DV?$ostreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A
+@ extern ?id@?$money_put@GV?$ostreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A msvcp140.?id@?$money_put@GV?$ostreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A
+@ extern ?id@?$money_put@_WV?$ostreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A msvcp140.?id@?$money_put@_WV?$ostreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A
+@ extern ?id@?$moneypunct@D$00@std@@2V0locale@2@A msvcp140.?id@?$moneypunct@D$00@std@@2V0locale@2@A
+@ extern ?id@?$moneypunct@D$0A@@std@@2V0locale@2@A msvcp140.?id@?$moneypunct@D$0A@@std@@2V0locale@2@A
+@ extern ?id@?$moneypunct@G$00@std@@2V0locale@2@A msvcp140.?id@?$moneypunct@G$00@std@@2V0locale@2@A
+@ extern ?id@?$moneypunct@G$0A@@std@@2V0locale@2@A msvcp140.?id@?$moneypunct@G$0A@@std@@2V0locale@2@A
+@ extern ?id@?$moneypunct@_W$00@std@@2V0locale@2@A msvcp140.?id@?$moneypunct@_W$00@std@@2V0locale@2@A
+@ extern ?id@?$moneypunct@_W$0A@@std@@2V0locale@2@A msvcp140.?id@?$moneypunct@_W$0A@@std@@2V0locale@2@A
 @ extern ?id@?$num_get@DV?$istreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A msvcp140.?id@?$num_get@DV?$istreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A
 @ extern ?id@?$num_get@GV?$istreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A msvcp140.?id@?$num_get@GV?$istreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A
 @ extern ?id@?$num_get@_WV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A msvcp140.?id@?$num_get@_WV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A
@@ -2696,12 +2696,12 @@
 @ cdecl -arch=arm ?init@?$basic_ios@_WU?$char_traits@_W@std@@@std@@IAAXPAV?$basic_streambuf@_WU?$char_traits@_W@std@@@2@_N@Z(ptr ptr long) msvcp140.?init@?$basic_ios@_WU?$char_traits@_W@std@@@std@@IAAXPAV?$basic_streambuf@_WU?$char_traits@_W@std@@@2@_N@Z
 @ thiscall -arch=i386 ?init@?$basic_ios@_WU?$char_traits@_W@std@@@std@@IAEXPAV?$basic_streambuf@_WU?$char_traits@_W@std@@@2@_N@Z(ptr ptr long) msvcp140.?init@?$basic_ios@_WU?$char_traits@_W@std@@@std@@IAEXPAV?$basic_streambuf@_WU?$char_traits@_W@std@@@2@_N@Z
 @ cdecl -arch=win64 ?init@?$basic_ios@_WU?$char_traits@_W@std@@@std@@IEAAXPEAV?$basic_streambuf@_WU?$char_traits@_W@std@@@2@_N@Z(ptr ptr long) msvcp140.?init@?$basic_ios@_WU?$char_traits@_W@std@@@std@@IEAAXPEAV?$basic_streambuf@_WU?$char_traits@_W@std@@@2@_N@Z
-@ stub ?intl@?$moneypunct@D$00@std@@2_NB
-@ stub ?intl@?$moneypunct@D$0A@@std@@2_NB
-@ stub ?intl@?$moneypunct@G$00@std@@2_NB
-@ stub ?intl@?$moneypunct@G$0A@@std@@2_NB
-@ stub ?intl@?$moneypunct@_W$00@std@@2_NB
-@ stub ?intl@?$moneypunct@_W$0A@@std@@2_NB
+@ extern ?intl@?$moneypunct@D$00@std@@2_NB msvcp140.?intl@?$moneypunct@D$00@std@@2_NB
+@ extern ?intl@?$moneypunct@D$0A@@std@@2_NB msvcp140.?intl@?$moneypunct@D$0A@@std@@2_NB
+@ extern ?intl@?$moneypunct@G$00@std@@2_NB msvcp140.?intl@?$moneypunct@G$00@std@@2_NB
+@ extern ?intl@?$moneypunct@G$0A@@std@@2_NB msvcp140.?intl@?$moneypunct@G$0A@@std@@2_NB
+@ extern ?intl@?$moneypunct@_W$00@std@@2_NB msvcp140.?intl@?$moneypunct@_W$00@std@@2_NB
+@ extern ?intl@?$moneypunct@_W$0A@@std@@2_NB msvcp140.?intl@?$moneypunct@_W$0A@@std@@2_NB
 @ cdecl -arch=arm ?ipfx@?$basic_istream@DU?$char_traits@D@std@@@std@@QAA_N_N@Z(ptr long) msvcp140.?ipfx@?$basic_istream@DU?$char_traits@D@std@@@std@@QAA_N_N@Z
 @ thiscall -arch=i386 ?ipfx@?$basic_istream@DU?$char_traits@D@std@@@std@@QAE_N_N@Z(ptr long) msvcp140.?ipfx@?$basic_istream@DU?$char_traits@D@std@@@std@@QAE_N_N@Z
 @ cdecl -arch=win64 ?ipfx@?$basic_istream@DU?$char_traits@D@std@@@std@@QEAA_N_N@Z(ptr long) msvcp140.?ipfx@?$basic_istream@DU?$char_traits@D@std@@@std@@QEAA_N_N@Z

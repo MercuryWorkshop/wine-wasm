@@ -2482,6 +2482,54 @@ static void test_exception_pointer(void)
     ok(ptr2.ref == (void *)2, "ptr2.ref = %p\n", ptr2.ref);
 }
 
+static void test_money_facets(void)
+{
+    /* moneypunct, money_get and money_put are header-only from msvcp100 on: a
+     * program's use_facet reads these ids, which locale::id numbers on first use. */
+    static const char * const ids[] =
+    {
+        "?id@?$moneypunct@D$0A@@std@@2V0locale@2@A",
+        "?id@?$moneypunct@D$00@std@@2V0locale@2@A",
+        "?id@?$moneypunct@_W$0A@@std@@2V0locale@2@A",
+        "?id@?$moneypunct@_W$00@std@@2V0locale@2@A",
+        "?id@?$moneypunct@G$0A@@std@@2V0locale@2@A",
+        "?id@?$moneypunct@G$00@std@@2V0locale@2@A",
+        "?id@?$money_get@DV?$istreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A",
+        "?id@?$money_get@_WV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A",
+        "?id@?$money_get@GV?$istreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A",
+        "?id@?$money_put@DV?$ostreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A",
+        "?id@?$money_put@_WV?$ostreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A",
+        "?id@?$money_put@GV?$ostreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A",
+    };
+    static const struct { const char *name; BOOLEAN value; } intl[] =
+    {
+        { "?intl@?$moneypunct@D$0A@@std@@2_NB", FALSE },
+        { "?intl@?$moneypunct@D$00@std@@2_NB", TRUE },
+        { "?intl@?$moneypunct@_W$0A@@std@@2_NB", FALSE },
+        { "?intl@?$moneypunct@_W$00@std@@2_NB", TRUE },
+        { "?intl@?$moneypunct@G$0A@@std@@2_NB", FALSE },
+        { "?intl@?$moneypunct@G$00@std@@2_NB", TRUE },
+    };
+    size_t *p[ARRAY_SIZE(ids)];
+    const BOOLEAN *b;
+    int i, j;
+
+    for (i = 0; i < ARRAY_SIZE(ids); i++)
+    {
+        p[i] = (size_t *)GetProcAddress(msvcp, ids[i]);
+        ok(p[i] != NULL, "%s not exported\n", ids[i]);
+        if (!p[i]) continue;
+        for (j = 0; j < i; j++)
+            ok(p[i] != p[j], "%s shares %s's id\n", ids[i], ids[j]);
+    }
+    for (i = 0; i < ARRAY_SIZE(intl); i++)
+    {
+        b = (const BOOLEAN *)GetProcAddress(msvcp, intl[i].name);
+        ok(b != NULL, "%s not exported\n", intl[i].name);
+        if (b) ok(*b == intl[i].value, "%s = %d\n", intl[i].name, *b);
+    }
+}
+
 START_TEST(msvcp140)
 {
     if(!init()) return;
@@ -2514,5 +2562,6 @@ START_TEST(msvcp140)
     test_codecvt_char16();
     test_thread_library_reference();
     test_exception_pointer();
+    test_money_facets();
     FreeLibrary(msvcp);
 }

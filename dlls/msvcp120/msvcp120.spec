@@ -2657,18 +2657,18 @@
 # extern ?id@?$messages@D@std@@2V0locale@2@A
 # extern ?id@?$messages@G@std@@2V0locale@2@A
 # extern ?id@?$messages@_W@std@@2V0locale@2@A
-# extern ?id@?$money_get@DV?$istreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A
-# extern ?id@?$money_get@GV?$istreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A
-# extern ?id@?$money_get@_WV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A
-# extern ?id@?$money_put@DV?$ostreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A
-# extern ?id@?$money_put@GV?$ostreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A
-# extern ?id@?$money_put@_WV?$ostreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A
-# extern ?id@?$moneypunct@D$00@std@@2V0locale@2@A
-# extern ?id@?$moneypunct@D$0A@@std@@2V0locale@2@A
-# extern ?id@?$moneypunct@G$00@std@@2V0locale@2@A
-# extern ?id@?$moneypunct@G$0A@@std@@2V0locale@2@A
-# extern ?id@?$moneypunct@_W$00@std@@2V0locale@2@A
-# extern ?id@?$moneypunct@_W$0A@@std@@2V0locale@2@A
+@ extern ?id@?$money_get@DV?$istreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A money_get_char_id
+@ extern ?id@?$money_get@GV?$istreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A money_get_short_id
+@ extern ?id@?$money_get@_WV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A money_get_wchar_id
+@ extern ?id@?$money_put@DV?$ostreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A money_put_char_id
+@ extern ?id@?$money_put@GV?$ostreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A money_put_short_id
+@ extern ?id@?$money_put@_WV?$ostreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A money_put_wchar_id
+@ extern ?id@?$moneypunct@D$00@std@@2V0locale@2@A moneypunct_char_intl_id
+@ extern ?id@?$moneypunct@D$0A@@std@@2V0locale@2@A moneypunct_char_id
+@ extern ?id@?$moneypunct@G$00@std@@2V0locale@2@A moneypunct_short_intl_id
+@ extern ?id@?$moneypunct@G$0A@@std@@2V0locale@2@A moneypunct_short_id
+@ extern ?id@?$moneypunct@_W$00@std@@2V0locale@2@A moneypunct_wchar_intl_id
+@ extern ?id@?$moneypunct@_W$0A@@std@@2V0locale@2@A moneypunct_wchar_id
 @ extern ?id@?$num_get@DV?$istreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A num_get_char_id
 @ extern ?id@?$num_get@GV?$istreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A num_get_short_id
 @ extern ?id@?$num_get@_WV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A num_get_wchar_id
@@ -2741,12 +2741,12 @@
 @ cdecl -arch=arm ?init@?$basic_ios@_WU?$char_traits@_W@std@@@std@@IAAXPAV?$basic_streambuf@_WU?$char_traits@_W@std@@@2@_N@Z(ptr ptr long) basic_ios_wchar_init
 @ thiscall -arch=i386 ?init@?$basic_ios@_WU?$char_traits@_W@std@@@std@@IAEXPAV?$basic_streambuf@_WU?$char_traits@_W@std@@@2@_N@Z(ptr ptr long) basic_ios_wchar_init
 @ cdecl -arch=win64 ?init@?$basic_ios@_WU?$char_traits@_W@std@@@std@@IEAAXPEAV?$basic_streambuf@_WU?$char_traits@_W@std@@@2@_N@Z(ptr ptr long) basic_ios_wchar_init
-# extern ?intl@?$moneypunct@D$00@std@@2_NB
-# extern ?intl@?$moneypunct@D$0A@@std@@2_NB
-# extern ?intl@?$moneypunct@G$00@std@@2_NB
-# extern ?intl@?$moneypunct@G$0A@@std@@2_NB
-# extern ?intl@?$moneypunct@_W$00@std@@2_NB
-# extern ?intl@?$moneypunct@_W$0A@@std@@2_NB
+@ extern ?intl@?$moneypunct@D$00@std@@2_NB moneypunct_intl_true
+@ extern ?intl@?$moneypunct@D$0A@@std@@2_NB moneypunct_intl_false
+@ extern ?intl@?$moneypunct@G$00@std@@2_NB moneypunct_intl_true
+@ extern ?intl@?$moneypunct@G$0A@@std@@2_NB moneypunct_intl_false
+@ extern ?intl@?$moneypunct@_W$00@std@@2_NB moneypunct_intl_true
+@ extern ?intl@?$moneypunct@_W$0A@@std@@2_NB moneypunct_intl_false
 @ cdecl -arch=arm ?ipfx@?$basic_istream@DU?$char_traits@D@std@@@std@@QAA_N_N@Z(ptr long) basic_istream_char_ipfx
 @ thiscall -arch=i386 ?ipfx@?$basic_istream@DU?$char_traits@D@std@@@std@@QAE_N_N@Z(ptr long) basic_istream_char_ipfx
 @ cdecl -arch=win64 ?ipfx@?$basic_istream@DU?$char_traits@D@std@@@std@@QEAA_N_N@Z(ptr long) basic_istream_char_ipfx

@@ -12427,6 +12427,43 @@ void __cdecl locale__Locimp__Makewloc(const _Locinfo *locinfo, category cat, loc
     }
 }
 
+/* From msvcp100 on, moneypunct, money_get and money_put are header-only templates:
+ * the program instantiates the facets itself, and the DLL only provides their
+ * locale ids (assigned on first use, like every other facet's) and intl. */
+/* ?id@?$moneypunct@D$0A@@std@@2V0locale@2@A */
+locale_id moneypunct_char_id = {0};
+/* ?id@?$moneypunct@D$00@std@@2V0locale@2@A */
+locale_id moneypunct_char_intl_id = {0};
+/* ?id@?$moneypunct@_W$0A@@std@@2V0locale@2@A */
+locale_id moneypunct_wchar_id = {0};
+/* ?id@?$moneypunct@_W$00@std@@2V0locale@2@A */
+locale_id moneypunct_wchar_intl_id = {0};
+/* ?id@?$moneypunct@G$0A@@std@@2V0locale@2@A */
+locale_id moneypunct_short_id = {0};
+/* ?id@?$moneypunct@G$00@std@@2V0locale@2@A */
+locale_id moneypunct_short_intl_id = {0};
+/* ?id@?$money_get@DV?$istreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A */
+locale_id money_get_char_id = {0};
+/* ?id@?$money_get@_WV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A */
+locale_id money_get_wchar_id = {0};
+/* ?id@?$money_get@GV?$istreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A */
+locale_id money_get_short_id = {0};
+/* ?id@?$money_put@DV?$ostreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A */
+locale_id money_put_char_id = {0};
+/* ?id@?$money_put@_WV?$ostreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A */
+locale_id money_put_wchar_id = {0};
+/* ?id@?$money_put@GV?$ostreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A */
+locale_id money_put_short_id = {0};
+
+/* ?intl@?$moneypunct@D$0A@@std@@2_NB */
+/* ?intl@?$moneypunct@_W$0A@@std@@2_NB */
+/* ?intl@?$moneypunct@G$0A@@std@@2_NB */
+const BOOLEAN moneypunct_intl_false = FALSE;
+/* ?intl@?$moneypunct@D$00@std@@2_NB */
+/* ?intl@?$moneypunct@_W$00@std@@2_NB */
+/* ?intl@?$moneypunct@G$00@std@@2_NB */
+const BOOLEAN moneypunct_intl_true = TRUE;
+
 /* ?_Makexloc@_Locimp@locale@std@@CAXABV_Locinfo@3@HPAV123@PBV23@@Z */
 /* ?_Makexloc@_Locimp@locale@std@@CAXAEBV_Locinfo@3@HPEAV123@PEBV23@@Z */
 /* List of missing facets:
