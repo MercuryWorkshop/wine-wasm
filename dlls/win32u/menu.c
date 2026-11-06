@@ -3069,6 +3069,72 @@ static void calc_popup_menu_size( struct menu *menu, UINT max_height )
     NtUserReleaseDC( 0, hdc );
 }
 
+/* The drop shadow under a popup menu (SPI_GETDROPSHADOW, a CS_DROPSHADOW class): a translucent band along
+ * its right and bottom edges, beside it rather than under it, as two layered windows the popup owns (they
+ * go with it). */
+static void show_popup_shadow( HWND popup, int x, int y, int cx, int cy )
+{
+    static const WCHAR messageW[] = {'M','e','s','s','a','g','e',0};
+    static const BLENDFUNCTION blend = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+    UNICODE_STRING class_name = RTL_CONSTANT_STRING(messageW);
+    int depth = 4 * get_system_dpi() / USER_DEFAULT_SCREEN_DPI;
+    BOOL shadow = FALSE;
+    RECT bands[2];
+    unsigned int i;
+
+    NtUserSystemParametersInfo( SPI_GETDROPSHADOW, 0, &shadow, 0 );
+    if (!shadow || depth < 1 || !(get_class_long( popup, GCL_STYLE, FALSE ) & CS_DROPSHADOW)) return;
+
+    SetRect( &bands[0], x + cx, y + depth, x + cx + depth, y + cy + depth );
+    SetRect( &bands[1], x + depth, y + cy, x + cx, y + cy + depth );
+    for (i = 0; i < ARRAY_SIZE(bands); i++)
+    {
+        BITMAPINFO info = {{ sizeof(BITMAPINFOHEADER) }};
+        SIZE size = { bands[i].right - bands[i].left, bands[i].bottom - bands[i].top };
+        POINT dst = { bands[i].left, bands[i].top }, src = { 0, 0 };
+        HBITMAP bitmap;
+        HGDIOBJ old;
+        DWORD *bits;
+        HWND hwnd;
+        HDC hdc;
+        int px, py;
+
+        if (size.cx <= 0 || size.cy <= 0) continue;
+        hwnd = NtUserCreateWindowEx( WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
+                                     WS_EX_TOPMOST, &class_name, NULL, NULL, WS_POPUP, dst.x, dst.y,
+                                     size.cx, size.cy, popup, 0, 0, NULL, 0, NULL, messageW, FALSE );
+        if (!hwnd) continue;
+
+        info.bmiHeader.biWidth = size.cx;
+        info.bmiHeader.biHeight = -size.cy;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        if (!(hdc = NtGdiCreateCompatibleDC( 0 ))) continue;
+        if ((bitmap = NtGdiCreateDIBSection( hdc, NULL, 0, &info, DIB_RGB_COLORS, 0, 0, 0, (void **)&bits )))
+        {
+            /* black, fading out away from the menu: premultiplied, so only the alpha byte */
+            for (py = 0; py < size.cy; py++)
+                for (px = 0; px < size.cx; px++)
+                {
+                    int out = i ? py : px, along = i ? px : py, len = i ? size.cx : size.cy;
+                    int a = 0x60 * (depth - out) / depth;
+
+                    if (along < depth) a = a * (along + 1) / (depth + 1);
+                    if (along >= len - depth) a = a * (len - along) / (depth + 1);
+                    bits[py * size.cx + px] = (DWORD)a << 24;
+                }
+            old = NtGdiSelectBitmap( hdc, bitmap );
+            NtUserUpdateLayeredWindow( hwnd, 0, &dst, &size, hdc, &src, 0, &blend, ULW_ALPHA, NULL );
+            NtGdiSelectBitmap( hdc, old );
+            NtGdiDeleteObjectApp( bitmap );
+        }
+        NtGdiDeleteObjectApp( hdc );
+        NtUserSetWindowPos( hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE );
+    }
+}
+
 static BOOL show_popup( HWND owner, HMENU hmenu, UINT id, UINT flags,
                         int x, int y, INT xanchor, INT yanchor )
 {
@@ -3130,6 +3196,7 @@ static BOOL show_popup( HWND owner, HMENU hmenu, UINT id, UINT flags,
     NtUserSetWindowPos( menu->hWnd, HWND_TOPMOST, x, y, menu->Width, menu->Height,
                         SWP_SHOWWINDOW | SWP_NOACTIVATE );
     NtUserRedrawWindow( menu->hWnd, NULL, 0, RDW_UPDATENOW | RDW_ALLCHILDREN );
+    show_popup_shadow( menu->hWnd, x, y, menu->Width, menu->Height );
     return TRUE;
 }
 
