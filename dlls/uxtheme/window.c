@@ -166,15 +166,11 @@ static HICON caption_icon(HWND hwnd, DWORD ex_style)
     return icon;
 }
 
-/* Whether a caption button is disabled: its style missing, or its system menu item gone or grayed. */
+/* Whether the maximize or minimize button is disabled: its style missing (win32u says for close). */
 static BOOL caption_button_disabled(HWND hwnd, DWORD style, UINT command)
 {
-    HMENU menu = GetSystemMenu(hwnd, FALSE);
-    UINT state = menu ? GetMenuState(menu, command, MF_BYCOMMAND) : 0xffffffff;
-
-    if (command == SC_MAXIMIZE && !(style & WS_MAXIMIZEBOX)) return TRUE;
-    if (command == SC_MINIMIZE && !(style & WS_MINIMIZEBOX)) return TRUE;
-    if (command == SC_CLOSE) return state == 0xffffffff || (state & (MF_DISABLED | MF_GRAYED));
+    if (command == SC_MAXIMIZE) return !(style & WS_MAXIMIZEBOX);
+    if (command == SC_MINIMIZE) return !(style & WS_MINIMIZEBOX);
     return FALSE;
 }
 
@@ -227,8 +223,8 @@ static void draw_frame(HTHEME theme, HWND hwnd, HDC hdc, const RECT *window, BOO
 
     if (style & WS_SYSMENU)
     {
-        BOOL disabled = caption_button_disabled(hwnd, style, SC_CLOSE);
-        int state = disabled ? CBS_DISABLED : hot == HTCLOSE ? CBS_HOT : CBS_NORMAL;
+        BOOL disabled = !!(hot & NC_THEMED_CLOSE_DISABLED);
+        int state = disabled ? CBS_DISABLED : LOWORD(hot) == HTCLOSE ? CBS_HOT : CBS_NORMAL;
 
         if (small)
         {
@@ -251,14 +247,14 @@ static void draw_frame(HTHEME theme, HWND hwnd, HDC hdc, const RECT *window, BOO
             int right = inside.right - cxsize;
 
             disabled = caption_button_disabled(hwnd, style, SC_MAXIMIZE);
-            state = disabled ? CBS_DISABLED : hot == HTMAXBUTTON ? CBS_HOT : CBS_NORMAL;
+            state = disabled ? CBS_DISABLED : LOWORD(hot) == HTMAXBUTTON ? CBS_HOT : CBS_NORMAL;
             SetRect(&r, right - cxsize, inside.top + 2, right - 2, inside.top + cysize - 2);
             draw_caption_button(theme, hdc, style, ex_style, caption_button_part(style, ex_style, NC_THEMED_MAX_BUTTON),
                                 state, active, &caption, &r);
 
             right -= cxsize - 2;
             disabled = caption_button_disabled(hwnd, style, SC_MINIMIZE);
-            state = disabled ? CBS_DISABLED : hot == HTMINBUTTON ? CBS_HOT : CBS_NORMAL;
+            state = disabled ? CBS_DISABLED : LOWORD(hot) == HTMINBUTTON ? CBS_HOT : CBS_NORMAL;
             SetRect(&r, right - cxsize, inside.top + 2, right - 2, inside.top + cysize - 2);
             draw_caption_button(theme, hdc, style, ex_style, caption_button_part(style, ex_style, NC_THEMED_MIN_BUTTON),
                                 state, active, &caption, &r);
@@ -296,6 +292,46 @@ static void draw_frame(HTHEME theme, HWND hwnd, HDC hdc, const RECT *window, BOO
     }
 }
 
+/* The window's shape in the visual style: the caption's transparent corners cut away, as XP's
+ * rounded top corners. Set once per window size; a region the program set itself is kept, and a
+ * maximized window has none. */
+static void update_window_region(HTHEME theme, HWND hwnd, DWORD style, DWORD ex_style, const RECT *window,
+                                 int cap_state)
+{
+    static const WCHAR prop[] = L"__wine_uxtheme_region";
+    int cx = window->right - window->left, cy = window->bottom - window->top;
+    ULONG_PTR want = (style & WS_MAXIMIZE) ? 0 : MAKELONG(cx, cy);
+    ULONG_PTR have = (ULONG_PTR)GetPropW(hwnd, prop);
+    RECT caption, inside;
+    HRGN region, rest;
+
+    if (have == want) return;
+    if (!have)
+    {
+        HRGN current = CreateRectRgn(0, 0, 0, 0);
+        int kind = GetWindowRgn(hwnd, current);
+
+        DeleteObject(current);
+        if (kind != ERROR) return;
+    }
+    if (!want)
+    {
+        RemovePropW(hwnd, prop);
+        SetWindowRgn(hwnd, NULL, TRUE);
+        return;
+    }
+
+    caption_rect(hwnd, style, ex_style, window, &caption, &inside);
+    if (FAILED(GetThemeBackgroundRegion(theme, NULL, caption_part(theme, style, ex_style), cap_state, &caption,
+                                        &region)))
+        return;
+    rest = CreateRectRgn(window->left, caption.bottom, window->right, window->bottom);
+    CombineRgn(region, region, rest, RGN_OR);
+    DeleteObject(rest);
+    SetPropW(hwnd, prop, (HANDLE)want);
+    if (!SetWindowRgn(hwnd, region, TRUE)) DeleteObject(region);
+}
+
 /* A captioned window's frame part in the visual style (win32u's NC_THEMED_* calls): FALSE when no
  * style is on, or the program asked for classic frames, win32u then drawing those. */
 BOOL WINAPI UXTHEME_NonClientThemedDraw(HWND hwnd, HDC hdc, enum NONCLIENT_BUTTON_TYPE type,
@@ -313,7 +349,10 @@ BOOL WINAPI UXTHEME_NonClientThemedDraw(HWND hwnd, HDC hdc, enum NONCLIENT_BUTTO
     style = GetWindowLongW(hwnd, GWL_STYLE);
     ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
     if (type == NC_THEMED_FRAME)
+    {
         draw_frame(theme, hwnd, hdc, &rect, down, grayed);
+        update_window_region(theme, hwnd, style, ex_style, &rect, down ? CS_ACTIVE : CS_INACTIVE);
+    }
     else
     {
         RECT window;

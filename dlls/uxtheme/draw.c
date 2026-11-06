@@ -365,7 +365,7 @@ static inline BOOL UXTHEME_StretchBlt(HDC hdcDst, int nXOriginDst, int nYOriginD
                               hdcSrc, nXOriginSrc, nYOriginSrc, abs(nWidthSrc), abs(nHeightSrc),
                               transcolor);
     } else if ((transparent == ALPHABLEND_NONE) ||
-        !AlphaBlend(hdcDst, nXOriginDst, nYOriginDst, nWidthDst, nHeightDst,
+        !GdiAlphaBlend(hdcDst, nXOriginDst, nYOriginDst, nWidthDst, nHeightDst,
                     hdcSrc, nXOriginSrc, nYOriginSrc, nWidthSrc, nHeightSrc,
                     blendFunc))
     {

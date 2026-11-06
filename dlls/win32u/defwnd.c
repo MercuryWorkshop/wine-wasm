@@ -1567,6 +1567,16 @@ static void draw_min_button( HWND hwnd, HDC hdc, BOOL down, BOOL grayed )
     draw_frame_caption( hdc, &rect, flags );
 }
 
+/* Whether the close button is grayed: no SC_CLOSE in the system menu, or a disabled one. */
+static BOOL close_button_disabled( HWND hwnd, DWORD style )
+{
+    UINT state;
+
+    if (!(style & WS_SYSMENU)) return TRUE;
+    state = get_menu_state( NtUserGetSystemMenu( hwnd, FALSE ), SC_CLOSE, MF_BYCOMMAND );
+    return (state & (MF_DISABLED | MF_GRAYED)) || state == 0xFFFFFFFF;
+}
+
 /* The caption button HTCLOSE, HTMAXBUTTON or HTMINBUTTON in the visual style, in the classic
  * button's place: state a CBS_* value (normal, hot, pushed, disabled). FALSE: no style is on. */
 static BOOL draw_themed_caption_button( HWND hwnd, HDC hdc, WORD ht, int state )
@@ -1589,6 +1599,7 @@ static BOOL draw_themed_caption_button( HWND hwnd, HDC hdc, WORD ht, int state )
     {
     case HTCLOSE:
         type = NC_THEMED_CLOSE_BUTTON;
+        if (close_button_disabled( hwnd, style )) state = 4 /* CBS_DISABLED */;
         if (ex_style & WS_EX_TOOLWINDOW)
         {
             int bmp = map_user_dpi( 11, get_dpi_for_window( hwnd ) );
@@ -1847,7 +1858,9 @@ static void nc_paint_dc( HWND hwnd, HDC hdc )
     /* A captioned window's frame and caption in the visual style, when one is on; the menu bar,
      * client edge and scroll bars below as ever. */
     if ((style & WS_CAPTION) == WS_CAPTION &&
-        draw_themed_nc( hwnd, hdc, NC_THEMED_FRAME, &rect, active, hot_hwnd == hwnd ? hot_ht : 0 ))
+        draw_themed_nc( hwnd, hdc, NC_THEMED_FRAME, &rect, active,
+                        (hot_hwnd == hwnd ? hot_ht : 0) |
+                        (close_button_disabled( hwnd, style ) ? NC_THEMED_CLOSE_DISABLED : 0) ))
     {
         get_inside_rect( hwnd, COORDS_WINDOW, &rect, style, ex_style );
         rect.top += get_system_metrics( (ex_style & WS_EX_TOOLWINDOW) ? SM_CYSMCAPTION : SM_CYCAPTION );

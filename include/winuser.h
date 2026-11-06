@@ -4863,7 +4863,8 @@ enum NONCLIENT_BUTTON_TYPE
     MENU_HELP_BUTTON,                /* Menu help button */
     /* A captioned window's frame, caption and caption buttons in the visual style
      * (pNonClientThemedDraw): rect is the window's rectangle in window coordinates,
-     * down whether it is active, grayed the hit-test code of the button under the mouse */
+     * down whether it is active, grayed the hit-test code of the button under the mouse,
+     * NC_THEMED_CLOSE_DISABLED added when the system menu has no enabled SC_CLOSE */
     NC_THEMED_FRAME = 0x100,
     /* One caption button in the visual style, in rect: down is its state (a CBS_* value:
      * normal, hot, pushed or disabled), grayed whether the window is active */
@@ -4871,6 +4872,8 @@ enum NONCLIENT_BUTTON_TYPE
     NC_THEMED_MAX_BUTTON,
     NC_THEMED_MIN_BUTTON,
 };
+
+#define NC_THEMED_CLOSE_DISABLED 0x10000
 
 struct user_api_hook
 {
