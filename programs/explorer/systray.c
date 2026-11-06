@@ -864,7 +864,10 @@ static void sync_taskbar_buttons(void)
         if (!win->hwnd) continue;  /* start button */
         if (win->visible && right - pos >= width)
         {
-            SetWindowPos( win->button, 0, pos, 0, width, tray_height,
+            /* in the visual style, XP's band: buttons 3 pixels (at 96 dpi) in from the bar's edges */
+            int gap = band_theme ? MulDiv( 3, GetDpiForSystem(), USER_DEFAULT_SCREEN_DPI ) : 0;
+
+            SetWindowPos( win->button, 0, pos + gap, gap, width - gap, tray_height - 2 * gap,
                           SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW );
             InvalidateRect( win->button, NULL, TRUE );
             pos += width;
@@ -1236,12 +1239,37 @@ static void do_show_systray(void)
     /* add some margins (FIXME) */
     size.cx += 12 + GetSystemMetrics( SM_CXSMICON );
     size.cy += 4;
-    ReleaseDC( 0, hdc );
-    DeleteObject( font );
-
     tray_width = GetSystemMetrics( SM_CXSCREEN );
     tray_height = max( icon_cy, size.cy );
     start_button_width = size.cx;
+    if (start_theme)
+    {
+        /* XP's: the taskbar 30 pixels at 96 dpi and the Start button as tall, as wide as its margins,
+         * icon and label in the part's font */
+        MARGINS margins = { 0 };
+        LOGFONTW lf;
+        HFONT theme_font = NULL, old_font = NULL;
+        RECT extent = { 0 };
+
+        tray_height = max( tray_height, MulDiv( 30, GetDpiForSystem(), USER_DEFAULT_SCREEN_DPI ));
+        if (SUCCEEDED(GetThemeFont( start_theme, hdc, BP_PUSHBUTTON, PBS_NORMAL, TMT_FONT, &lf )))
+        {
+            theme_font = CreateFontIndirectW( &lf );
+            old_font = SelectObject( hdc, theme_font );
+        }
+        GetThemeMargins( start_theme, hdc, BP_PUSHBUTTON, PBS_NORMAL, TMT_CONTENTMARGINS, NULL, &margins );
+        if (SUCCEEDED(GetThemeTextExtent( start_theme, hdc, BP_PUSHBUTTON, PBS_NORMAL, start_label, -1,
+                                          DT_SINGLELINE, NULL, &extent )))
+            start_button_width = margins.cxLeftWidth + GetSystemMetrics( SM_CXSMICON ) + 6 +
+                                 (extent.right - extent.left) + margins.cxRightWidth;
+        if (theme_font)
+        {
+            SelectObject( hdc, old_font );
+            DeleteObject( theme_font );
+        }
+    }
+    ReleaseDC( 0, hdc );
+    DeleteObject( font );
     SetWindowPos( tray_window, 0, 0, GetSystemMetrics( SM_CYSCREEN ) - tray_height,
                   tray_width, tray_height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW );
     {
@@ -1471,6 +1499,8 @@ void initialize_systray( BOOL arg_using_root, BOOL arg_enable_shell, BOOL arg_sh
 
     LoadStringW( NULL, IDS_START_LABEL, start_label, ARRAY_SIZE( start_label ));
     if (enable_taskbar) open_taskbar_themes( tray_window );
+    /* XP's styled Start button says it in lower case */
+    if (start_theme) CharLowerW( start_label );
 
     add_taskbar_button( 0 );
 
