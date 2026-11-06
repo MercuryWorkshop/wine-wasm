@@ -2528,6 +2528,76 @@ static void test_money_facets(void)
         ok(b != NULL, "%s not exported\n", intl[i].name);
         if (b) ok(*b == intl[i].value, "%s = %d\n", intl[i].name, *b);
     }
+
+    /* _Makeloc gives every locale its own moneypunct facets, so a program's
+     * use_facet never falls back to the one it built for the first locale. */
+    {
+        struct locimp { locale_facet facet; locale_facet **facetvec; size_t facet_cnt; char rest[256]; } locimp;
+        void *(__thiscall *p__Locinfo_ctor_cstr)(void *, const char *);
+        void (__thiscall *p__Locinfo_dtor)(void *);
+        void *(__thiscall *p__Locimp_ctor_transparent)(void *, BOOLEAN);
+        void (__thiscall *p__Locimp_dtor)(void *);
+        void *(__cdecl *p__Makeloc)(const void *, int, void *, const void *);
+        size_t (__thiscall *p_id_size_t)(size_t *);
+        typedef INT_PTR (__thiscall *int_func)(const locale_facet *);
+        typedef char *(__thiscall *pattern_func)(const locale_facet *, char *);
+        char locinfo[1024];
+
+        if (sizeof(void *) == 8)
+        {
+            SET(p__Locinfo_ctor_cstr, "??0_Locinfo@std@@QEAA@PEBD@Z");
+            SET(p__Locinfo_dtor, "??1_Locinfo@std@@QEAA@XZ");
+            SET(p__Locimp_ctor_transparent, "??0_Locimp@locale@std@@AEAA@_N@Z");
+            SET(p__Locimp_dtor, "??1_Locimp@locale@std@@MEAA@XZ");
+            SET(p__Makeloc, "?_Makeloc@_Locimp@locale@std@@CAPEAV123@AEBV_Locinfo@3@HPEAV123@PEBV23@@Z");
+            SET(p_id_size_t, "??Bid@locale@std@@QEAA_KXZ");
+        }
+        else
+        {
+            SET(p__Locinfo_ctor_cstr, "??0_Locinfo@std@@QAE@PBD@Z");
+            SET(p__Locinfo_dtor, "??1_Locinfo@std@@QAE@XZ");
+            SET(p__Locimp_ctor_transparent, "??0_Locimp@locale@std@@AAE@_N@Z");
+            SET(p__Locimp_dtor, "??1_Locimp@locale@std@@MAE@XZ");
+            SET(p__Makeloc, "?_Makeloc@_Locimp@locale@std@@CAPAV123@ABV_Locinfo@3@HPAV123@PBV23@@Z");
+            SET(p_id_size_t, "??Bid@locale@std@@QAEIXZ");
+        }
+        if (!p__Locinfo_ctor_cstr || !p__Locinfo_dtor || !p__Locimp_ctor_transparent || !p__Locimp_dtor
+                || !p__Makeloc || !p_id_size_t)
+            return;
+
+        call_func2(p__Locinfo_ctor_cstr, locinfo, "C");
+        call_func2(p__Locimp_ctor_transparent, &locimp, FALSE);
+        p__Makeloc(locinfo, 0x3f /* every category */, &locimp, NULL);
+
+        for (i = 0; i < 6; i++)
+        {
+            const locale_facet *fac;
+            int_func frac_digits;
+            pattern_func neg_format;
+            char pattern[4];
+            size_t id;
+
+            if (!p[i]) continue;
+            id = (size_t)call_func1(p_id_size_t, p[i]);
+            fac = id < locimp.facet_cnt ? locimp.facetvec[id] : NULL;
+            ok(fac != NULL, "no %s facet\n", ids[i]);
+            if (!fac) continue;
+            /* vector_dtor, _Incref, _Decref, do_decimal_point, do_thousands_sep, do_grouping,
+             * do_curr_symbol, do_positive_sign, do_negative_sign, do_frac_digits, do_pos_format,
+             * do_neg_format */
+            frac_digits = (int_func)fac->vtable[9];
+            neg_format = (pattern_func)fac->vtable[11];
+            j = (int)(INT_PTR)call_func1(frac_digits, fac);
+            ok(j == 0, "%s: frac_digits %d\n", ids[i], j);
+            memset(pattern, 0, sizeof(pattern));
+            ok((void *)call_func2(neg_format, fac, pattern) == pattern,
+                    "%s: neg_format ret\n", ids[i]);
+            ok(!memcmp(pattern, "$+xv", 4), "%s: neg_format %.4s\n", ids[i], pattern);
+        }
+
+        call_func1(p__Locimp_dtor, &locimp);
+        call_func1(p__Locinfo_dtor, locinfo);
+    }
 }
 
 START_TEST(msvcp140)

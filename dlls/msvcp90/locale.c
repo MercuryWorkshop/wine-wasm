@@ -12227,14 +12227,438 @@ locale__Locimp** __cdecl locale__Locimp__Clocptr_func(void)
     return NULL;
 }
 
+/* From msvcp100 on, moneypunct, money_get and money_put are header-only templates:
+ * the DLL provides their locale ids (assigned on first use, like every other
+ * facet's) and intl. */
+/* ?id@?$moneypunct@D$0A@@std@@2V0locale@2@A */
+locale_id moneypunct_char_id = {0};
+/* ?id@?$moneypunct@D$00@std@@2V0locale@2@A */
+locale_id moneypunct_char_intl_id = {0};
+/* ?id@?$moneypunct@_W$0A@@std@@2V0locale@2@A */
+locale_id moneypunct_wchar_id = {0};
+/* ?id@?$moneypunct@_W$00@std@@2V0locale@2@A */
+locale_id moneypunct_wchar_intl_id = {0};
+/* ?id@?$moneypunct@G$0A@@std@@2V0locale@2@A */
+locale_id moneypunct_short_id = {0};
+/* ?id@?$moneypunct@G$00@std@@2V0locale@2@A */
+locale_id moneypunct_short_intl_id = {0};
+/* ?id@?$money_get@DV?$istreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A */
+locale_id money_get_char_id = {0};
+/* ?id@?$money_get@_WV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A */
+locale_id money_get_wchar_id = {0};
+/* ?id@?$money_get@GV?$istreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A */
+locale_id money_get_short_id = {0};
+/* ?id@?$money_put@DV?$ostreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A */
+locale_id money_put_char_id = {0};
+/* ?id@?$money_put@_WV?$ostreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A */
+locale_id money_put_wchar_id = {0};
+/* ?id@?$money_put@GV?$ostreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A */
+locale_id money_put_short_id = {0};
+
+/* ?intl@?$moneypunct@D$0A@@std@@2_NB */
+/* ?intl@?$moneypunct@_W$0A@@std@@2_NB */
+/* ?intl@?$moneypunct@G$0A@@std@@2_NB */
+const BOOLEAN moneypunct_intl_false = FALSE;
+/* ?intl@?$moneypunct@D$00@std@@2_NB */
+/* ?intl@?$moneypunct@_W$00@std@@2_NB */
+/* ?intl@?$moneypunct@G$00@std@@2_NB */
+const BOOLEAN moneypunct_intl_true = TRUE;
+
+#if _MSVCP_VER >= 100
+/* moneypunct itself: from msvcp100 on the program's headers instantiate it only
+ * when a locale lacks it, and cache the first one they build for every later
+ * locale that lacks it too. So, as msvcp's own _Makexloc does, every locale
+ * carries a moneypunct built for its own name.
+ * money_get and money_put hold no locale data (they read the stream locale's
+ * moneypunct), so the program's own instances serve every locale. */
+
+typedef struct {
+    char field[4];
+} money_pattern;
+
+/* The layout of the headers' _Mpunct<char>. */
+typedef struct {
+    locale_facet facet;
+    const char *grouping;
+    char dp;
+    char sep;
+    const char *curr_symbol;
+    const char *pos_sign;
+    const char *neg_sign;
+    int frac_digits;
+    money_pattern pos_format;
+    money_pattern neg_format;
+    bool intl;
+    _Cvtvec cvt;
+} moneypunct_char;
+
+/* The layout of the headers' _Mpunct<wchar_t> and _Mpunct<unsigned short>. */
+typedef struct {
+    locale_facet facet;
+    const char *grouping;
+    wchar_t dp;
+    wchar_t sep;
+    const wchar_t *curr_symbol;
+    const wchar_t *pos_sign;
+    const wchar_t *neg_sign;
+    int frac_digits;
+    money_pattern pos_format;
+    money_pattern neg_format;
+    bool intl;
+    _Cvtvec cvt;
+} moneypunct_wchar;
+
+/* ??_7?$moneypunct@D$0A@@std@@6B@ */
+extern const vtable_ptr moneypunct_char_vtable;
+/* ??_7?$moneypunct@D$00@std@@6B@ */
+extern const vtable_ptr moneypunct_char_intl_vtable;
+/* ??_7?$moneypunct@_W$0A@@std@@6B@ */
+extern const vtable_ptr moneypunct_wchar_vtable;
+/* ??_7?$moneypunct@_W$00@std@@6B@ */
+extern const vtable_ptr moneypunct_wchar_intl_vtable;
+/* ??_7?$moneypunct@G$0A@@std@@6B@ */
+extern const vtable_ptr moneypunct_short_vtable;
+/* ??_7?$moneypunct@G$00@std@@6B@ */
+extern const vtable_ptr moneypunct_short_intl_vtable;
+
+/* The headers' _Mpunct::_Makpat. */
+static void moneypunct_make_pattern(money_pattern *pattern, bool intl,
+        unsigned int sep_by_space, unsigned int cs_precedes, unsigned int sign_posn)
+{
+    static const char patterns[] =
+        "+v$x" "+v$x" "v$+x" "v+$x" "v$+x"
+        "+$vx" "+$vx" "$v+x" "+$vx" "$+vx"
+        "+v $" "+v $" "v $+" "v +$" "v $+"
+        "+$ v" "+$ v" "$ v+" "+$ v" "$+ v"
+        "+xv$" "+ v$" "v$ +" "v+ $" "v$ +"
+        "+x$v" "+ $v" "$v +" "+ $v" "$ +v";
+
+    if(intl || sep_by_space > 2 || cs_precedes > 1 || sign_posn > 4)
+        memcpy(pattern->field, "$+xv", 4);
+    else
+        memcpy(pattern->field, patterns + sign_posn*4 + cs_precedes*20 + sep_by_space*40, 4);
+}
+
+static const char* moneypunct_strdup(const char *str)
+{
+    size_t len = strlen(str)+1;
+    char *ret = operator_new(len);
+
+    memcpy(ret, str, len);
+    return ret;
+}
+
+static const wchar_t* moneypunct_wcsdup(const char *str, const _Cvtvec *cvt)
+{
+    int len = MultiByteToWideChar(cvt->page, 0, str, -1, NULL, 0);
+    wchar_t *ret;
+
+    if(!len) {
+        ret = operator_new(sizeof(wchar_t));
+        *ret = 0;
+        return ret;
+    }
+    ret = operator_new(len*sizeof(wchar_t));
+    MultiByteToWideChar(cvt->page, 0, str, -1, ret, len);
+    return ret;
+}
+
+/* The values both element types share, from _Mpunct::_Init. */
+static void moneypunct_init_common(const struct lconv *lc, bool intl, bool isdef, const char **grouping,
+        int *frac_digits, money_pattern *pos_format, money_pattern *neg_format)
+{
+    int frac = intl ? lc->int_frac_digits : lc->frac_digits;
+
+    *grouping = moneypunct_strdup(lc->mon_grouping);
+    *frac_digits = (frac < 0 || frac >= 127) ? 0 : frac;
+    moneypunct_make_pattern(pos_format, intl, (unsigned char)lc->p_sep_by_space,
+            (unsigned char)lc->p_cs_precedes, (unsigned char)lc->p_sign_posn);
+    moneypunct_make_pattern(neg_format, intl, (unsigned char)lc->n_sep_by_space,
+            (unsigned char)lc->n_cs_precedes, (unsigned char)lc->n_sign_posn);
+    if(isdef) {
+        memcpy(pos_format->field, "$+xv", 4);
+        memcpy(neg_format->field, "$+xv", 4);
+    }
+}
+
+static moneypunct_char* moneypunct_char_ctor_locinfo(moneypunct_char *this,
+        const _Locinfo *locinfo, size_t refs, bool intl, bool isdef)
+{
+    const struct lconv *lc = _Locinfo__Getlconv(locinfo);
+
+    TRACE("(%p %p %Iu %d %d)\n", this, locinfo, refs, intl, isdef);
+
+    locale_facet_ctor_refs(&this->facet, refs);
+    this->facet.vtable = intl ? &moneypunct_char_intl_vtable : &moneypunct_char_vtable;
+    this->intl = intl;
+    _Locinfo__Getcvt(locinfo, &this->cvt);
+    moneypunct_init_common(lc, intl, isdef, &this->grouping, &this->frac_digits,
+            &this->pos_format, &this->neg_format);
+    this->curr_symbol = moneypunct_strdup(intl ? lc->int_curr_symbol : lc->currency_symbol);
+    this->pos_sign = moneypunct_strdup((unsigned char)lc->p_sign_posn > 4 ? "" : lc->positive_sign);
+    this->neg_sign = moneypunct_strdup((unsigned char)lc->n_sign_posn > 4 ? "-" : lc->negative_sign);
+    this->dp = lc->mon_decimal_point[0];
+    this->sep = lc->mon_thousands_sep[0];
+    return this;
+}
+
+static moneypunct_wchar* moneypunct_wchar_ctor_locinfo(moneypunct_wchar *this,
+        const _Locinfo *locinfo, size_t refs, bool intl, bool isdef, bool is_short)
+{
+    const struct lconv *lc = _Locinfo__Getlconv(locinfo);
+
+    TRACE("(%p %p %Iu %d %d %d)\n", this, locinfo, refs, intl, isdef, is_short);
+
+    locale_facet_ctor_refs(&this->facet, refs);
+    if(is_short)
+        this->facet.vtable = intl ? &moneypunct_short_intl_vtable : &moneypunct_short_vtable;
+    else
+        this->facet.vtable = intl ? &moneypunct_wchar_intl_vtable : &moneypunct_wchar_vtable;
+    this->intl = intl;
+    _Locinfo__Getcvt(locinfo, &this->cvt);
+    moneypunct_init_common(lc, intl, isdef, &this->grouping, &this->frac_digits,
+            &this->pos_format, &this->neg_format);
+    this->curr_symbol = moneypunct_wcsdup(intl ? lc->int_curr_symbol : lc->currency_symbol, &this->cvt);
+    this->pos_sign = moneypunct_wcsdup((unsigned char)lc->p_sign_posn > 4 ? "" : lc->positive_sign, &this->cvt);
+    this->neg_sign = moneypunct_wcsdup((unsigned char)lc->n_sign_posn > 4 ? "-" : lc->negative_sign, &this->cvt);
+    this->dp = mb_to_wc(lc->mon_decimal_point[0], &this->cvt);
+    this->sep = mb_to_wc(lc->mon_thousands_sep[0], &this->cvt);
+    return this;
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_char_vector_dtor, 8)
+moneypunct_char* __thiscall moneypunct_char_vector_dtor(moneypunct_char *this, unsigned int flags)
+{
+    TRACE("(%p %x)\n", this, flags);
+    if(flags & 2) {
+        /* we have an array, with the number of elements stored before the first object */
+        INT_PTR i, *ptr = (INT_PTR *)this-1;
+
+        for(i=*ptr-1; i>=0; i--) {
+            operator_delete((char*)this[i].grouping);
+            operator_delete((char*)this[i].curr_symbol);
+            operator_delete((char*)this[i].pos_sign);
+            operator_delete((char*)this[i].neg_sign);
+        }
+        operator_delete(ptr);
+    } else {
+        operator_delete((char*)this->grouping);
+        operator_delete((char*)this->curr_symbol);
+        operator_delete((char*)this->pos_sign);
+        operator_delete((char*)this->neg_sign);
+        if(flags & 1)
+            operator_delete(this);
+    }
+
+    return this;
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_wchar_vector_dtor, 8)
+moneypunct_wchar* __thiscall moneypunct_wchar_vector_dtor(moneypunct_wchar *this, unsigned int flags)
+{
+    TRACE("(%p %x)\n", this, flags);
+    if(flags & 2) {
+        /* we have an array, with the number of elements stored before the first object */
+        INT_PTR i, *ptr = (INT_PTR *)this-1;
+
+        for(i=*ptr-1; i>=0; i--) {
+            operator_delete((char*)this[i].grouping);
+            operator_delete((wchar_t*)this[i].curr_symbol);
+            operator_delete((wchar_t*)this[i].pos_sign);
+            operator_delete((wchar_t*)this[i].neg_sign);
+        }
+        operator_delete(ptr);
+    } else {
+        operator_delete((char*)this->grouping);
+        operator_delete((wchar_t*)this->curr_symbol);
+        operator_delete((wchar_t*)this->pos_sign);
+        operator_delete((wchar_t*)this->neg_sign);
+        if(flags & 1)
+            operator_delete(this);
+    }
+
+    return this;
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_char_do_decimal_point, 4)
+char __thiscall moneypunct_char_do_decimal_point(const moneypunct_char *this)
+{
+    TRACE("(%p)\n", this);
+    return this->dp;
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_wchar_do_decimal_point, 4)
+wchar_t __thiscall moneypunct_wchar_do_decimal_point(const moneypunct_wchar *this)
+{
+    TRACE("(%p)\n", this);
+    return this->dp;
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_char_do_thousands_sep, 4)
+char __thiscall moneypunct_char_do_thousands_sep(const moneypunct_char *this)
+{
+    TRACE("(%p)\n", this);
+    return this->sep;
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_wchar_do_thousands_sep, 4)
+wchar_t __thiscall moneypunct_wchar_do_thousands_sep(const moneypunct_wchar *this)
+{
+    TRACE("(%p)\n", this);
+    return this->sep;
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_char_do_grouping, 8)
+basic_string_char* __thiscall moneypunct_char_do_grouping(const moneypunct_char *this, basic_string_char *ret)
+{
+    TRACE("(%p)\n", this);
+    return MSVCP_basic_string_char_ctor_cstr(ret, this->grouping);
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_wchar_do_grouping, 8)
+basic_string_char* __thiscall moneypunct_wchar_do_grouping(const moneypunct_wchar *this, basic_string_char *ret)
+{
+    TRACE("(%p)\n", this);
+    return MSVCP_basic_string_char_ctor_cstr(ret, this->grouping);
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_char_do_curr_symbol, 8)
+basic_string_char* __thiscall moneypunct_char_do_curr_symbol(const moneypunct_char *this, basic_string_char *ret)
+{
+    TRACE("(%p)\n", this);
+    return MSVCP_basic_string_char_ctor_cstr(ret, this->curr_symbol);
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_wchar_do_curr_symbol, 8)
+basic_string_wchar* __thiscall moneypunct_wchar_do_curr_symbol(const moneypunct_wchar *this, basic_string_wchar *ret)
+{
+    TRACE("(%p)\n", this);
+    return MSVCP_basic_string_wchar_ctor_cstr(ret, this->curr_symbol);
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_char_do_positive_sign, 8)
+basic_string_char* __thiscall moneypunct_char_do_positive_sign(const moneypunct_char *this, basic_string_char *ret)
+{
+    TRACE("(%p)\n", this);
+    return MSVCP_basic_string_char_ctor_cstr(ret, this->pos_sign);
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_wchar_do_positive_sign, 8)
+basic_string_wchar* __thiscall moneypunct_wchar_do_positive_sign(const moneypunct_wchar *this, basic_string_wchar *ret)
+{
+    TRACE("(%p)\n", this);
+    return MSVCP_basic_string_wchar_ctor_cstr(ret, this->pos_sign);
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_char_do_negative_sign, 8)
+basic_string_char* __thiscall moneypunct_char_do_negative_sign(const moneypunct_char *this, basic_string_char *ret)
+{
+    TRACE("(%p)\n", this);
+    return MSVCP_basic_string_char_ctor_cstr(ret, this->neg_sign);
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_wchar_do_negative_sign, 8)
+basic_string_wchar* __thiscall moneypunct_wchar_do_negative_sign(const moneypunct_wchar *this, basic_string_wchar *ret)
+{
+    TRACE("(%p)\n", this);
+    return MSVCP_basic_string_wchar_ctor_cstr(ret, this->neg_sign);
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_char_do_frac_digits, 4)
+int __thiscall moneypunct_char_do_frac_digits(const moneypunct_char *this)
+{
+    TRACE("(%p)\n", this);
+    return this->frac_digits;
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_wchar_do_frac_digits, 4)
+int __thiscall moneypunct_wchar_do_frac_digits(const moneypunct_wchar *this)
+{
+    TRACE("(%p)\n", this);
+    return this->frac_digits;
+}
+
+/* pattern is a class: a member function returns it through a hidden pointer. */
+DEFINE_THISCALL_WRAPPER(moneypunct_char_do_pos_format, 8)
+money_pattern* __thiscall moneypunct_char_do_pos_format(const moneypunct_char *this, money_pattern *ret)
+{
+    TRACE("(%p)\n", this);
+    *ret = this->pos_format;
+    return ret;
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_wchar_do_pos_format, 8)
+money_pattern* __thiscall moneypunct_wchar_do_pos_format(const moneypunct_wchar *this, money_pattern *ret)
+{
+    TRACE("(%p)\n", this);
+    *ret = this->pos_format;
+    return ret;
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_char_do_neg_format, 8)
+money_pattern* __thiscall moneypunct_char_do_neg_format(const moneypunct_char *this, money_pattern *ret)
+{
+    TRACE("(%p)\n", this);
+    *ret = this->neg_format;
+    return ret;
+}
+
+DEFINE_THISCALL_WRAPPER(moneypunct_wchar_do_neg_format, 8)
+money_pattern* __thiscall moneypunct_wchar_do_neg_format(const moneypunct_wchar *this, money_pattern *ret)
+{
+    TRACE("(%p)\n", this);
+    *ret = this->neg_format;
+    return ret;
+}
+
+/* Adds the locale's moneypunct for one element type and intl to locimp: taken from
+ * loc when it has one, else built from locinfo (or loc's name). */
+static void moneypunct_add(const _Locinfo *locinfo, locale__Locimp *locimp, const locale *loc,
+        locale_id *id, int type, bool intl)
+{
+    const locale_facet *fac = NULL;
+    _Locinfo name_info;
+    locale_facet *add;
+
+    if(loc) {
+        fac = locale__Getfacet(loc, locale_id_operator_size_t(id));
+        if(fac) {
+            locale__Locimp__Addfac(locimp, (locale_facet*)fac, locale_id_operator_size_t(id));
+            return;
+        }
+        _Locinfo_ctor_cstr(&name_info, locale_string_char_c_str(&loc->ptr->name));
+        locinfo = &name_info;
+    }
+
+    if(type == 0) {
+        add = operator_new(sizeof(moneypunct_char));
+        moneypunct_char_ctor_locinfo((moneypunct_char*)add, locinfo, 0, intl, FALSE);
+    }else {
+        add = operator_new(sizeof(moneypunct_wchar));
+        moneypunct_wchar_ctor_locinfo((moneypunct_wchar*)add, locinfo, 0, intl, FALSE, type == 2);
+    }
+    locale__Locimp__Addfac(locimp, add, locale_id_operator_size_t(id));
+
+    if(loc)
+        _Locinfo_dtor(&name_info);
+}
+#endif
+
 /* ?_Makeushloc@_Locimp@locale@std@@CAXABV_Locinfo@3@HPAV123@PBV23@@Z */
 /* ?_Makeushloc@_Locimp@locale@std@@CAXAEBV_Locinfo@3@HPEAV123@PEBV23@@Z */
 /* List of missing facets:
- * messages, money_get, money_put, moneypunct, moneypunct, time_get
+ * messages, money_get, money_put, time_get
  */
 void __cdecl locale__Locimp__Makeushloc(const _Locinfo *locinfo, category cat, locale__Locimp *locimp, const locale *loc)
 {
     FIXME("(%p %d %p %p) semi-stub\n", locinfo, cat, locimp, loc);
+
+#if _MSVCP_VER >= 100
+    if(cat & (1<<(LC_MONETARY-1))) {
+        moneypunct_add(locinfo, locimp, loc, &moneypunct_short_id, 2, FALSE);
+        moneypunct_add(locinfo, locimp, loc, &moneypunct_short_intl_id, 2, TRUE);
+    }
+#endif
 
     if(cat & (1<<(ctype_short__Getcat(NULL, NULL)-1))) {
         ctype_wchar *ctype;
@@ -12324,11 +12748,18 @@ void __cdecl locale__Locimp__Makeushloc(const _Locinfo *locinfo, category cat, l
 /* ?_Makewloc@_Locimp@locale@std@@CAXABV_Locinfo@3@HPAV123@PBV23@@Z */
 /* ?_Makewloc@_Locimp@locale@std@@CAXAEBV_Locinfo@3@HPEAV123@PEBV23@@Z */
 /* List of missing facets:
- * messages, money_get, money_put, moneypunct, moneypunct
+ * messages, money_get, money_put
  */
 void __cdecl locale__Locimp__Makewloc(const _Locinfo *locinfo, category cat, locale__Locimp *locimp, const locale *loc)
 {
     FIXME("(%p %d %p %p) semi-stub\n", locinfo, cat, locimp, loc);
+
+#if _MSVCP_VER >= 100
+    if(cat & (1<<(LC_MONETARY-1))) {
+        moneypunct_add(locinfo, locimp, loc, &moneypunct_wchar_id, 1, FALSE);
+        moneypunct_add(locinfo, locimp, loc, &moneypunct_wchar_intl_id, 1, TRUE);
+    }
+#endif
 
     if(cat & (1<<(ctype_wchar__Getcat(NULL, NULL)-1))) {
         ctype_wchar *ctype;
@@ -12427,51 +12858,21 @@ void __cdecl locale__Locimp__Makewloc(const _Locinfo *locinfo, category cat, loc
     }
 }
 
-/* From msvcp100 on, moneypunct, money_get and money_put are header-only templates:
- * the program instantiates the facets itself, and the DLL only provides their
- * locale ids (assigned on first use, like every other facet's) and intl. */
-/* ?id@?$moneypunct@D$0A@@std@@2V0locale@2@A */
-locale_id moneypunct_char_id = {0};
-/* ?id@?$moneypunct@D$00@std@@2V0locale@2@A */
-locale_id moneypunct_char_intl_id = {0};
-/* ?id@?$moneypunct@_W$0A@@std@@2V0locale@2@A */
-locale_id moneypunct_wchar_id = {0};
-/* ?id@?$moneypunct@_W$00@std@@2V0locale@2@A */
-locale_id moneypunct_wchar_intl_id = {0};
-/* ?id@?$moneypunct@G$0A@@std@@2V0locale@2@A */
-locale_id moneypunct_short_id = {0};
-/* ?id@?$moneypunct@G$00@std@@2V0locale@2@A */
-locale_id moneypunct_short_intl_id = {0};
-/* ?id@?$money_get@DV?$istreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A */
-locale_id money_get_char_id = {0};
-/* ?id@?$money_get@_WV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A */
-locale_id money_get_wchar_id = {0};
-/* ?id@?$money_get@GV?$istreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A */
-locale_id money_get_short_id = {0};
-/* ?id@?$money_put@DV?$ostreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@2V0locale@2@A */
-locale_id money_put_char_id = {0};
-/* ?id@?$money_put@_WV?$ostreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@2V0locale@2@A */
-locale_id money_put_wchar_id = {0};
-/* ?id@?$money_put@GV?$ostreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@2V0locale@2@A */
-locale_id money_put_short_id = {0};
-
-/* ?intl@?$moneypunct@D$0A@@std@@2_NB */
-/* ?intl@?$moneypunct@_W$0A@@std@@2_NB */
-/* ?intl@?$moneypunct@G$0A@@std@@2_NB */
-const BOOLEAN moneypunct_intl_false = FALSE;
-/* ?intl@?$moneypunct@D$00@std@@2_NB */
-/* ?intl@?$moneypunct@_W$00@std@@2_NB */
-/* ?intl@?$moneypunct@G$00@std@@2_NB */
-const BOOLEAN moneypunct_intl_true = TRUE;
-
 /* ?_Makexloc@_Locimp@locale@std@@CAXABV_Locinfo@3@HPAV123@PBV23@@Z */
 /* ?_Makexloc@_Locimp@locale@std@@CAXAEBV_Locinfo@3@HPEAV123@PEBV23@@Z */
 /* List of missing facets:
- * messages, money_get, money_put, moneypunct, moneypunct
+ * messages, money_get, money_put
  */
 void __cdecl locale__Locimp__Makexloc(const _Locinfo *locinfo, category cat, locale__Locimp *locimp, const locale *loc)
 {
     FIXME("(%p %d %p %p) semi-stub\n", locinfo, cat, locimp, loc);
+
+#if _MSVCP_VER >= 100
+    if(cat & (1<<(LC_MONETARY-1))) {
+        moneypunct_add(locinfo, locimp, loc, &moneypunct_char_id, 0, FALSE);
+        moneypunct_add(locinfo, locimp, loc, &moneypunct_char_intl_id, 0, TRUE);
+    }
+#endif
 
     if(cat & (1<<(ctype_char__Getcat(NULL, NULL)-1))) {
         ctype_char *ctype;
@@ -13181,6 +13582,18 @@ DEFINE_RTTI_DATA(codecvt_short, 0, ".?AV?$codecvt@GDH@std@@", codecvt_base_rtti_
 DEFINE_RTTI_DATA(numpunct_char, 0, ".?AV?$numpunct@D@std@@", locale_facet_rtti_base_descriptor)
 DEFINE_RTTI_DATA(numpunct_wchar, 0, ".?AV?$numpunct@_W@std@@", locale_facet_rtti_base_descriptor)
 DEFINE_RTTI_DATA(numpunct_short, 0, ".?AV?$numpunct@G@std@@", locale_facet_rtti_base_descriptor)
+#if _MSVCP_VER >= 100
+DEFINE_RTTI_DATA(money_base, 0, ".?AUmoney_base@std@@", locale_facet_rtti_base_descriptor)
+DEFINE_RTTI_DATA(_Mpunct_char, 0, ".?AV?$_Mpunct@D@std@@", money_base_rtti_base_descriptor, locale_facet_rtti_base_descriptor)
+DEFINE_RTTI_DATA(_Mpunct_wchar, 0, ".?AV?$_Mpunct@_W@std@@", money_base_rtti_base_descriptor, locale_facet_rtti_base_descriptor)
+DEFINE_RTTI_DATA(_Mpunct_short, 0, ".?AV?$_Mpunct@G@std@@", money_base_rtti_base_descriptor, locale_facet_rtti_base_descriptor)
+DEFINE_RTTI_DATA(moneypunct_char, 0, ".?AV?$moneypunct@D$0A@@std@@", _Mpunct_char_rtti_base_descriptor, money_base_rtti_base_descriptor, locale_facet_rtti_base_descriptor)
+DEFINE_RTTI_DATA(moneypunct_char_intl, 0, ".?AV?$moneypunct@D$00@std@@", _Mpunct_char_rtti_base_descriptor, money_base_rtti_base_descriptor, locale_facet_rtti_base_descriptor)
+DEFINE_RTTI_DATA(moneypunct_wchar, 0, ".?AV?$moneypunct@_W$0A@@std@@", _Mpunct_wchar_rtti_base_descriptor, money_base_rtti_base_descriptor, locale_facet_rtti_base_descriptor)
+DEFINE_RTTI_DATA(moneypunct_wchar_intl, 0, ".?AV?$moneypunct@_W$00@std@@", _Mpunct_wchar_rtti_base_descriptor, money_base_rtti_base_descriptor, locale_facet_rtti_base_descriptor)
+DEFINE_RTTI_DATA(moneypunct_short, 0, ".?AV?$moneypunct@G$0A@@std@@", _Mpunct_short_rtti_base_descriptor, money_base_rtti_base_descriptor, locale_facet_rtti_base_descriptor)
+DEFINE_RTTI_DATA(moneypunct_short_intl, 0, ".?AV?$moneypunct@G$00@std@@", _Mpunct_short_rtti_base_descriptor, money_base_rtti_base_descriptor, locale_facet_rtti_base_descriptor)
+#endif
 DEFINE_RTTI_DATA(num_get_char, 0, ".?AV?$num_get@DV?$istreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@", locale_facet_rtti_base_descriptor)
 DEFINE_RTTI_DATA(num_get_wchar, 0, ".?AV?$num_get@_WV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@", locale_facet_rtti_base_descriptor)
 DEFINE_RTTI_DATA(num_get_short, 0, ".?AV?$num_get@GV?$istreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@", locale_facet_rtti_base_descriptor)
@@ -13437,6 +13850,98 @@ __ASM_BLOCK_BEGIN(locale_vtables)
             VTABLE_ADD_FUNC(numpunct_wchar_do_grouping)
             VTABLE_ADD_FUNC(numpunct_wchar_do_falsename)
             VTABLE_ADD_FUNC(numpunct_wchar_do_truename));
+#if _MSVCP_VER >= 100
+    __ASM_VTABLE(moneypunct_char,
+            VTABLE_ADD_FUNC(moneypunct_char_vector_dtor)
+#if _MSVCP_VER >= 110
+            VTABLE_ADD_FUNC(locale_facet__Incref)
+            VTABLE_ADD_FUNC(locale_facet__Decref)
+#endif
+            VTABLE_ADD_FUNC(moneypunct_char_do_decimal_point)
+            VTABLE_ADD_FUNC(moneypunct_char_do_thousands_sep)
+            VTABLE_ADD_FUNC(moneypunct_char_do_grouping)
+            VTABLE_ADD_FUNC(moneypunct_char_do_curr_symbol)
+            VTABLE_ADD_FUNC(moneypunct_char_do_positive_sign)
+            VTABLE_ADD_FUNC(moneypunct_char_do_negative_sign)
+            VTABLE_ADD_FUNC(moneypunct_char_do_frac_digits)
+            VTABLE_ADD_FUNC(moneypunct_char_do_pos_format)
+            VTABLE_ADD_FUNC(moneypunct_char_do_neg_format));
+    __ASM_VTABLE(moneypunct_char_intl,
+            VTABLE_ADD_FUNC(moneypunct_char_vector_dtor)
+#if _MSVCP_VER >= 110
+            VTABLE_ADD_FUNC(locale_facet__Incref)
+            VTABLE_ADD_FUNC(locale_facet__Decref)
+#endif
+            VTABLE_ADD_FUNC(moneypunct_char_do_decimal_point)
+            VTABLE_ADD_FUNC(moneypunct_char_do_thousands_sep)
+            VTABLE_ADD_FUNC(moneypunct_char_do_grouping)
+            VTABLE_ADD_FUNC(moneypunct_char_do_curr_symbol)
+            VTABLE_ADD_FUNC(moneypunct_char_do_positive_sign)
+            VTABLE_ADD_FUNC(moneypunct_char_do_negative_sign)
+            VTABLE_ADD_FUNC(moneypunct_char_do_frac_digits)
+            VTABLE_ADD_FUNC(moneypunct_char_do_pos_format)
+            VTABLE_ADD_FUNC(moneypunct_char_do_neg_format));
+    __ASM_VTABLE(moneypunct_wchar,
+            VTABLE_ADD_FUNC(moneypunct_wchar_vector_dtor)
+#if _MSVCP_VER >= 110
+            VTABLE_ADD_FUNC(locale_facet__Incref)
+            VTABLE_ADD_FUNC(locale_facet__Decref)
+#endif
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_decimal_point)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_thousands_sep)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_grouping)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_curr_symbol)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_positive_sign)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_negative_sign)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_frac_digits)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_pos_format)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_neg_format));
+    __ASM_VTABLE(moneypunct_wchar_intl,
+            VTABLE_ADD_FUNC(moneypunct_wchar_vector_dtor)
+#if _MSVCP_VER >= 110
+            VTABLE_ADD_FUNC(locale_facet__Incref)
+            VTABLE_ADD_FUNC(locale_facet__Decref)
+#endif
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_decimal_point)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_thousands_sep)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_grouping)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_curr_symbol)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_positive_sign)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_negative_sign)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_frac_digits)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_pos_format)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_neg_format));
+    __ASM_VTABLE(moneypunct_short,
+            VTABLE_ADD_FUNC(moneypunct_wchar_vector_dtor)
+#if _MSVCP_VER >= 110
+            VTABLE_ADD_FUNC(locale_facet__Incref)
+            VTABLE_ADD_FUNC(locale_facet__Decref)
+#endif
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_decimal_point)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_thousands_sep)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_grouping)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_curr_symbol)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_positive_sign)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_negative_sign)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_frac_digits)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_pos_format)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_neg_format));
+    __ASM_VTABLE(moneypunct_short_intl,
+            VTABLE_ADD_FUNC(moneypunct_wchar_vector_dtor)
+#if _MSVCP_VER >= 110
+            VTABLE_ADD_FUNC(locale_facet__Incref)
+            VTABLE_ADD_FUNC(locale_facet__Decref)
+#endif
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_decimal_point)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_thousands_sep)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_grouping)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_curr_symbol)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_positive_sign)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_negative_sign)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_frac_digits)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_pos_format)
+            VTABLE_ADD_FUNC(moneypunct_wchar_do_neg_format));
+#endif
     __ASM_VTABLE(num_get_char,
             VTABLE_ADD_FUNC(num_get_char_vector_dtor)
 #if _MSVCP_VER >= 110
@@ -13608,6 +14113,18 @@ void init_locale(void *base)
     INIT_RTTI(numpunct_char, base);
     INIT_RTTI(numpunct_wchar, base);
     INIT_RTTI(numpunct_short, base);
+#if _MSVCP_VER >= 100
+    INIT_RTTI(money_base, base);
+    INIT_RTTI(_Mpunct_char, base);
+    INIT_RTTI(_Mpunct_wchar, base);
+    INIT_RTTI(_Mpunct_short, base);
+    INIT_RTTI(moneypunct_char, base);
+    INIT_RTTI(moneypunct_char_intl, base);
+    INIT_RTTI(moneypunct_wchar, base);
+    INIT_RTTI(moneypunct_wchar_intl, base);
+    INIT_RTTI(moneypunct_short, base);
+    INIT_RTTI(moneypunct_short_intl, base);
+#endif
     INIT_RTTI(num_get_char, base);
     INIT_RTTI(num_get_wchar, base);
     INIT_RTTI(num_get_short, base);
