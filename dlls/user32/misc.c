@@ -550,6 +550,17 @@ BOOL WINAPI GetPointerFrameInfoHistory( UINT32 id, UINT32 *entries, UINT32 *poin
     return NtUserGetPointerInfoList( id, PT_POINTER, 0, 0, sizeof(*info), entries, pointers, info );
 }
 
+/**********************************************************************
+ * SkipPointerFrameMessages [USER32.@]
+ *
+ * Pointer frames are not queued, so there are never frame messages left to skip.
+ */
+BOOL WINAPI SkipPointerFrameMessages( UINT32 id )
+{
+    TRACE( "id %u\n", id );
+    return TRUE;
+}
+
 LRESULT WINAPI ImeWndProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam )
 {
     if (!imm_ime_wnd_proc) return DefWindowProcA(hwnd, msg, wParam, lParam);
