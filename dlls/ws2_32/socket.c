@@ -1069,7 +1069,10 @@ static void WINAPI WS2_GetAcceptExSockaddrs( void *buffer, DWORD data_size, DWOR
 }
 
 
-static void WINAPI socket_apc( void *apc_user, IO_STATUS_BLOCK *io, ULONG reserved )
+/* An I/O APC is called as a PNTAPCFUNC (three ULONG_PTRs), as every APC is: on wasm,
+ * where a call through a pointer must match the callee's type, the third
+ * argument (reserved) is a ULONG_PTR, not PIO_APC_ROUTINE's ULONG. */
+static void WINAPI socket_apc( void *apc_user, IO_STATUS_BLOCK *io, ULONG_PTR reserved )
 {
     LPWSAOVERLAPPED_COMPLETION_ROUTINE func = apc_user;
     func( NtStatusToWSAError( io->Status ), io->Information, (OVERLAPPED *)io, 0 );
@@ -1106,7 +1109,7 @@ static int WS2_recv_base( SOCKET s, WSABUF *buffers, DWORD buffer_count, DWORD *
     {
         event = NULL;
         cvalue = completion;
-        apc = socket_apc;
+        apc = (PIO_APC_ROUTINE)socket_apc;
     }
 
     params.control_ptr = u64_from_user_ptr(control);
@@ -1174,7 +1177,7 @@ static int WS2_sendto( SOCKET s, WSABUF *buffers, DWORD buffer_count, DWORD *ret
     {
         event = NULL;
         cvalue = completion;
-        apc = socket_apc;
+        apc = (PIO_APC_ROUTINE)socket_apc;
     }
 
     params.addr_ptr = u64_from_user_ptr( addr );
@@ -2440,7 +2443,7 @@ static DWORD server_ioctl_sock( SOCKET s, DWORD code, LPVOID in_buff, DWORD in_s
     {
         event = NULL;
         cvalue = completion;
-        apc = socket_apc;
+        apc = (PIO_APC_ROUTINE)socket_apc;
     }
 
     status = NtDeviceIoControlFile( handle, event, apc, cvalue, piosb, code,

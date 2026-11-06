@@ -70,7 +70,10 @@ const WCHAR system_dir[] = L"C:\\windows\\system32";
 static BOOL oem_file_apis;
 
 
-static void WINAPI read_write_apc( void *apc_user, PIO_STATUS_BLOCK io, ULONG reserved )
+/* An I/O APC is called as a PNTAPCFUNC (three ULONG_PTRs), as every APC is: on wasm,
+ * where a call through a pointer must match the callee's type, the third
+ * argument (reserved) is a ULONG_PTR, not PIO_APC_ROUTINE's ULONG. */
+static void WINAPI read_write_apc( void *apc_user, PIO_STATUS_BLOCK io, ULONG_PTR reserved )
 {
     LPOVERLAPPED_COMPLETION_ROUTINE func = apc_user;
     func( RtlNtStatusToDosError( io->Status ), io->Information, (LPOVERLAPPED)io );
@@ -3564,7 +3567,8 @@ HANDLE WINAPI DECLSPEC_HOTPATCH ReOpenFile( HANDLE handle, DWORD access, DWORD s
 }
 
 
-static void WINAPI invoke_completion( void *context, IO_STATUS_BLOCK *io, ULONG res )
+/* (a ULONG_PTR, as read_write_apc's) */
+static void WINAPI invoke_completion( void *context, IO_STATUS_BLOCK *io, ULONG_PTR res )
 {
     LPOVERLAPPED_COMPLETION_ROUTINE completion = context;
     completion( RtlNtStatusToDosError( io->Status ), io->Information, (LPOVERLAPPED)io );
@@ -3603,7 +3607,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH ReadDirectoryChangesW( HANDLE handle, LPVOID buffe
     ios->Status = STATUS_PENDING;
 
     status = NtNotifyChangeDirectoryFile( handle, completion && overlapped ? NULL : pov->hEvent,
-                                          completion && overlapped ? invoke_completion : NULL,
+                                          completion && overlapped ? (PIO_APC_ROUTINE)invoke_completion : NULL,
                                           cvalue, ios, buffer, len, filter, subtree );
     if (status == STATUS_PENDING)
     {
@@ -3698,7 +3702,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH ReadFileEx( HANDLE file, LPVOID buffer, DWORD coun
     io->Status = STATUS_PENDING;
     io->Information = 0;
 
-    status = NtReadFile( file, NULL, read_write_apc, completion, io, buffer, count, &offset, NULL);
+    status = NtReadFile( file, NULL, (PIO_APC_ROUTINE)read_write_apc, completion, io, buffer, count, &offset, NULL);
     if (status == STATUS_PENDING) return TRUE;
     return set_ntstatus( status );
 }
@@ -4094,7 +4098,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH WriteFileEx( HANDLE file, LPCVOID buffer,
     io->Status = STATUS_PENDING;
     io->Information = 0;
 
-    status = NtWriteFile( file, NULL, read_write_apc, completion, io, buffer, count, &offset, NULL );
+    status = NtWriteFile( file, NULL, (PIO_APC_ROUTINE)read_write_apc, completion, io, buffer, count, &offset, NULL );
     if (status == STATUS_PENDING) return TRUE;
     return set_ntstatus( status );
 }
