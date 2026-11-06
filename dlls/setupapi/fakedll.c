@@ -39,10 +39,10 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(setupapi);
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
 static const WCHAR pe_dir[] = L"\\i386-windows";
 static const char current_arch[] = "x86";
-#elif defined __x86_64__
+#elif defined __x86_64__ || defined __wasm64__
 static const WCHAR pe_dir[] = L"\\x86_64-windows";
 static const char current_arch[] = "amd64";
 #elif defined __arm__
@@ -290,7 +290,7 @@ static BOOL build_fake_dll( HANDLE file, const WCHAR *name )
 
     nt = info.nt = (IMAGE_NT_HEADERS *)(buffer + lfanew);
     /* some fields are copied from the source dll */
-#if defined __x86_64__
+#if defined __x86_64__ || defined __wasm64__
     nt->FileHeader.Machine = IMAGE_FILE_MACHINE_AMD64;
 #elif defined __aarch64__
     nt->FileHeader.Machine = IMAGE_FILE_MACHINE_ARM64;

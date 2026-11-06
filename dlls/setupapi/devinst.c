@@ -4718,7 +4718,7 @@ static BOOL version_is_compatible(const WCHAR *version)
 
     if (IsWow64Process(GetCurrentProcess(), &wow64) && wow64)
     {
-#ifdef __i386__
+#if defined(__i386__) || defined(__wasm32__)
         static const WCHAR wow_ext[] = L"NTamd64";
         machine_ext = wow_ext;
 #elif defined(__arm__)
