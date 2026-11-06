@@ -768,6 +768,7 @@ struct PARSENONCLIENTSTATE
     NONCLIENTMETRICSW metrics;
     BOOL metricsDirty;
     LOGFONTW iconTitleFont;
+    BOOL captionWidth, captionHeight, smCaptionWidth, smCaptionHeight;
 };
 
 static inline void parse_init_nonclient (struct PARSENONCLIENTSTATE* state)
@@ -796,6 +797,9 @@ static BOOL parse_handle_nonclient_font (struct PARSENONCLIENTSTATE* state,
     if (SUCCEEDED (MSSTYLES_GetFont (lpValue, lpValue + dwValueLen, &lpValue,
         &font)))
     {
+        /* the style gives points; the metrics hold a character height in pixels, at 96 dpi (the
+         * thread is DPI-unaware here) */
+        font.lfHeight = -MulDiv (font.lfHeight, USER_DEFAULT_SCREEN_DPI, 72);
         switch (iPropertyId)
         {
 	  case TMT_CAPTIONFONT:
@@ -853,18 +857,22 @@ static BOOL parse_handle_nonclient_size (struct PARSENONCLIENTSTATE* state,
             case TMT_CAPTIONBARWIDTH:
                 state->metrics.iCaptionWidth = size;
                 state->metricsDirty = TRUE;
+                state->captionWidth = TRUE;
                 break;
             case TMT_CAPTIONBARHEIGHT:
                 state->metrics.iCaptionHeight = size;
                 state->metricsDirty = TRUE;
+                state->captionHeight = TRUE;
                 break;
             case TMT_SMCAPTIONBARWIDTH:
                 state->metrics.iSmCaptionWidth = size;
                 state->metricsDirty = TRUE;
+                state->smCaptionWidth = TRUE;
                 break;
             case TMT_SMCAPTIONBARHEIGHT:
                 state->metrics.iSmCaptionHeight = size;
                 state->metricsDirty = TRUE;
+                state->smCaptionHeight = TRUE;
                 break;
             case TMT_MENUBARWIDTH:
                 state->metrics.iMenuWidth = size;
@@ -884,6 +892,13 @@ static BOOL parse_handle_nonclient_size (struct PARSENONCLIENTSTATE* state,
 static void parse_apply_nonclient (struct PARSENONCLIENTSTATE* state)
 {
     DPI_AWARENESS_CONTEXT old_context;
+
+    /* A style that sizes its captions by their height only (Windows XP's own) has square caption
+     * buttons: the width follows the height. */
+    if (state->captionHeight && !state->captionWidth)
+        state->metrics.iCaptionWidth = state->metrics.iCaptionHeight;
+    if (state->smCaptionHeight && !state->smCaptionWidth)
+        state->metrics.iSmCaptionWidth = state->metrics.iSmCaptionHeight;
 
     if (state->metricsDirty)
     {
