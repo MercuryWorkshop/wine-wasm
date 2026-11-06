@@ -59,6 +59,7 @@
 #ifdef __wasm__
 # include <sched.h>
 # include <sys/mman.h>
+# include <sys/prctl.h>
 #endif
 #ifdef HAVE_MACH_MACH_H
 # include <mach/mach.h>
@@ -2067,6 +2068,17 @@ NTSTATUS WINAPI NtSetInformationProcess( HANDLE handle, PROCESSINFOCLASS class, 
         }
         SERVER_END_REQ;
         return ret;
+
+    case ProcessWineGexCrash:
+        /* the process has crashed and is about to end: how, for gex's report
+         * of its end (its prctl PR_GEX_CRASH, "NAME\0REASON\0CODE") */
+        if (handle != GetCurrentProcess()) return STATUS_INVALID_HANDLE;
+#ifdef __wasm__
+        prctl( 0x47450002, info, size, 0, 0 );
+        return STATUS_SUCCESS;
+#else
+        return STATUS_NOT_SUPPORTED;
+#endif
 
     case ProcessWineGrantAdminToken:
         SERVER_START_REQ( grant_process_admin_token )

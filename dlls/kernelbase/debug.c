@@ -546,7 +546,6 @@ static BOOL start_debugger( EXCEPTION_POINTERS *epointers, HANDLE event )
     char buffer[256];
 
     format_exception_msg( epointers, buffer, sizeof(buffer) );
-    MESSAGE( "wine: %s (thread %04lx), starting debugger...\n", buffer, GetCurrentThreadId() );
 
     InitializeObjectAttributes( &attr, &nameW, 0, 0, NULL );
     if (!NtOpenKey( &dbg_key, KEY_READ, &attr ))
@@ -595,6 +594,18 @@ static BOOL start_debugger( EXCEPTION_POINTERS *epointers, HANDLE event )
 
        NtClose( dbg_key );
     }
+
+#if defined(__wasm32__) || defined(__wasm64__)
+    /* On gex a crash ends the program (gex reports it), with no debugger
+     * unless the AeDebug key names one: winedbg's report, and its dialog,
+     * would keep its windows up for the time it takes. */
+    if (!format)
+    {
+        MESSAGE( "wine: %s (thread %04lx)\n", buffer, GetCurrentThreadId() );
+        return FALSE;
+    }
+#endif
+    MESSAGE( "wine: %s (thread %04lx), starting debugger...\n", buffer, GetCurrentThreadId() );
 
     if (format)
     {
@@ -748,6 +759,31 @@ static BOOL check_resource_write( void *addr )
 }
 
 
+#if defined(__wasm32__) || defined(__wasm64__)
+/* The process has crashed and ends: say how to gex, whose report of its end
+ * names the program and the exception ("NAME\0REASON\0CODE"). */
+static void report_crash( EXCEPTION_POINTERS *epointers )
+{
+    char note[512], reason[256], *name;
+    WCHAR path[MAX_PATH], *p;
+    int len;
+
+    format_exception_msg( epointers, reason, sizeof(reason) );
+    name = reason;
+    if (!strncmp( name, "Unhandled ", 10 )) name += 10;
+    memmove( reason, name, strlen( name ) + 1 );
+    if (!GetModuleFileNameW( NULL, path, ARRAY_SIZE(path) )) path[0] = 0;
+    p = wcsrchr( path, '\\' ) ? wcsrchr( path, '\\' ) + 1 : path;
+    len = WideCharToMultiByte( CP_UTF8, 0, p, -1, note, 128, NULL, NULL );
+    if (len <= 0) len = 1, note[0] = 0;
+    len += snprintf( note + len, sizeof(note) - len, "%s", reason ) + 1;
+    if (len < sizeof(note))
+        len += snprintf( note + len, sizeof(note) - len, "%lu", epointers->ExceptionRecord->ExceptionCode );
+    if (len > sizeof(note)) len = sizeof(note);
+    NtSetInformationProcess( GetCurrentProcess(), ProcessWineGexCrash, note, len );
+}
+#endif
+
 /*******************************************************************
  *         UnhandledExceptionFilter   (kernelbase.@)
  */
@@ -786,7 +822,12 @@ LONG WINAPI UnhandledExceptionFilter( EXCEPTION_POINTERS *epointers )
 
         if ((GetErrorMode() & SEM_NOGPFAULTERRORBOX) ||
             !start_debugger_atomic( epointers ) || !NtCurrentTeb()->Peb->BeingDebugged)
+        {
+#if defined(__wasm32__) || defined(__wasm64__)
+            if (!nested) report_crash( epointers );
+#endif
             return nested ? EXCEPTION_CONTINUE_SEARCH : EXCEPTION_EXECUTE_HANDLER;
+        }
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
