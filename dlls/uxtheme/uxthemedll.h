@@ -109,6 +109,8 @@ extern struct user_api_hook user_api;
 LRESULT WINAPI UXTHEME_DefDlgProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, BOOL unicode);
 void WINAPI UXTHEME_NonClientButtonDraw(HWND hwnd, HDC hdc, enum NONCLIENT_BUTTON_TYPE type,
                                         RECT rect, BOOL down, BOOL grayed);
+BOOL WINAPI UXTHEME_NonClientThemedDraw(HWND hwnd, HDC hdc, enum NONCLIENT_BUTTON_TYPE type,
+                                        RECT rect, BOOL down, BOOL grayed);
 void WINAPI UXTHEME_ScrollBarDraw(HWND hwnd, HDC dc, INT bar, enum SCROLL_HITTEST hit_test,
                                   const struct SCROLL_TRACKING_INFO *tracking_info,
                                   BOOL draw_arrows, BOOL draw_interior, RECT *rect, UINT enable_flags,

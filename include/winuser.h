@@ -4861,6 +4861,15 @@ enum NONCLIENT_BUTTON_TYPE
     MENU_MAX_BUTTON,                 /* Menu max button */
     MENU_RESTORE_BUTTON,             /* Menu restore button */
     MENU_HELP_BUTTON,                /* Menu help button */
+    /* A captioned window's frame, caption and caption buttons in the visual style
+     * (pNonClientThemedDraw): rect is the window's rectangle in window coordinates,
+     * down whether it is active, grayed the hit-test code of the button under the mouse */
+    NC_THEMED_FRAME = 0x100,
+    /* One caption button in the visual style, in rect: down is its state (a CBS_* value:
+     * normal, hot, pushed or disabled), grayed whether the window is active */
+    NC_THEMED_CLOSE_BUTTON,
+    NC_THEMED_MAX_BUTTON,
+    NC_THEMED_MIN_BUTTON,
 };
 
 struct user_api_hook
@@ -4871,6 +4880,8 @@ struct user_api_hook
                                   const struct SCROLL_TRACKING_INFO *, BOOL, BOOL, RECT *, UINT,
                                   INT, INT, INT, BOOL);
     LRESULT (WINAPI *pScrollBarWndProc)(HWND, UINT, WPARAM, LPARAM, BOOL);
+    /* the NC_THEMED_* parts: FALSE when no visual style draws them (the classic look then) */
+    BOOL (WINAPI *pNonClientThemedDraw)(HWND, HDC, enum NONCLIENT_BUTTON_TYPE, RECT, BOOL, BOOL);
 };
 
 WINUSERAPI BOOL WINAPI RegisterUserApiHook(const struct user_api_hook *new_hook, struct user_api_hook *old_hook);

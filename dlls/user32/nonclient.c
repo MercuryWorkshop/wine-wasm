@@ -132,6 +132,13 @@ static void user_draw_mdi_button( HDC hdc, enum NONCLIENT_BUTTON_TYPE type, RECT
     DrawFrameControl( hdc, &rect, DFC_CAPTION, flags );
 }
 
+/* No visual style: win32u draws the classic frame. */
+BOOL WINAPI USER_NonClientThemedDraw( HWND hwnd, HDC hdc, enum NONCLIENT_BUTTON_TYPE type,
+                                      RECT rect, BOOL down, BOOL grayed )
+{
+    return FALSE;
+}
+
 void WINAPI USER_NonClientButtonDraw( HWND hwnd, HDC hdc, enum NONCLIENT_BUTTON_TYPE type,
                                       RECT rect, BOOL down, BOOL grayed )
 {
@@ -143,6 +150,8 @@ void WINAPI USER_NonClientButtonDraw( HWND hwnd, HDC hdc, enum NONCLIENT_BUTTON_
     case MENU_RESTORE_BUTTON:
     case MENU_HELP_BUTTON:
         user_draw_mdi_button( hdc, type, rect, down, grayed );
+        return;
+    default:
         return;
     }
 }

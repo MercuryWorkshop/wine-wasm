@@ -45,6 +45,10 @@ static NTSTATUS WINAPI User32CopyImage( void *args, ULONG size )
 static NTSTATUS WINAPI User32DrawNonClientButton( void *args, ULONG size )
 {
     const struct draw_non_client_button_params *params = args;
+
+    if (params->type >= NC_THEMED_FRAME)
+        return nonclient_themed_draw( params->hwnd, params->hdc, params->type, params->rect,
+                                      params->down, params->grayed ) ? STATUS_SUCCESS : STATUS_NOT_SUPPORTED;
     user_api->pNonClientButtonDraw( params->hwnd, params->hdc, params->type, params->rect,
                                     params->down, params->grayed );
     return STATUS_SUCCESS;

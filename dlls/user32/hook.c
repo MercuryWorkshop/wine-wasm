@@ -76,9 +76,34 @@ static struct user_api_hook original_user_api =
     USER_NonClientButtonDraw,
     USER_ScrollBarDraw,
     USER_ScrollBarProc,
+    USER_NonClientThemedDraw,
 };
 static struct user_api_hook hooked_user_api;
 struct user_api_hook *user_api = &original_user_api;
+
+/* Whether the user's visual style is on (the theme manager's ThemeActive). */
+static BOOL theme_active(void)
+{
+    WCHAR value[4];
+    DWORD size = sizeof(value);
+
+    return !RegGetValueW( HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager",
+                          L"ThemeActive", RRF_RT_REG_SZ, NULL, value, &size ) && !wcscmp( value, L"1" );
+}
+
+/* A frame part in the visual style. With a style on, every process with captioned windows has
+ * uxtheme draw their frames, as Windows' theme service has each GUI process load it: loaded
+ * here at the first frame painted (its hooks are installed as it loads). Without one, nothing
+ * is loaded and win32u draws the classic frame. */
+BOOL nonclient_themed_draw( HWND hwnd, HDC hdc, enum NONCLIENT_BUTTON_TYPE type, RECT rect,
+                            BOOL down, BOOL grayed )
+{
+    static LONG tried;
+
+    if (user_api == &original_user_api && !InterlockedExchange( &tried, 1 ) && theme_active())
+        LoadLibraryW( L"uxtheme.dll" );
+    return user_api->pNonClientThemedDraw( hwnd, hdc, type, rect, down, grayed );
+}
 
 struct hook_info
 {

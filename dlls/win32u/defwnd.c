@@ -1393,6 +1393,24 @@ void draw_menu_button( HWND hwnd, HDC dc, RECT *r, enum NONCLIENT_BUTTON_TYPE ty
     KeUserModeCallback( NtUserDrawNonClientButton, &params, sizeof(params), &ret_ptr, &ret_len );
 }
 
+/* A part of a captioned window's frame in the visual style, drawn by user32's hook
+ * (uxtheme's): FALSE when no style is on, the classic look then being drawn here. */
+static BOOL draw_themed_nc( HWND hwnd, HDC dc, enum NONCLIENT_BUTTON_TYPE type, const RECT *r,
+                            BOOL down, BOOL grayed )
+{
+    struct draw_non_client_button_params params;
+    void *ret_ptr;
+    ULONG ret_len;
+
+    params.hwnd = hwnd;
+    params.hdc = dc;
+    params.type = type;
+    params.rect = *r;
+    params.down = down;
+    params.grayed = grayed;
+    return !KeUserModeCallback( NtUserDrawNonClientButton, &params, sizeof(params), &ret_ptr, &ret_len );
+}
+
 BOOL draw_frame_menu( HDC dc, RECT *r, UINT flags )
 {
     RECT rect;
@@ -1547,6 +1565,90 @@ static void draw_min_button( HWND hwnd, HDC hdc, BOOL down, BOOL grayed )
     if (down) flags |= DFCS_PUSHED;
     if (grayed) flags |= DFCS_INACTIVE;
     draw_frame_caption( hdc, &rect, flags );
+}
+
+/* The caption button HTCLOSE, HTMAXBUTTON or HTMINBUTTON in the visual style, in the classic
+ * button's place: state a CBS_* value (normal, hot, pushed, disabled). FALSE: no style is on. */
+static BOOL draw_themed_caption_button( HWND hwnd, HDC hdc, WORD ht, int state )
+{
+    DWORD style = get_window_long( hwnd, GWL_STYLE );
+    DWORD ex_style = get_window_long( hwnd, GWL_EXSTYLE );
+    enum NONCLIENT_BUTTON_TYPE type;
+    BOOL active;
+    RECT rect;
+    WND *win;
+
+    if ((style & WS_CAPTION) != WS_CAPTION) return FALSE;
+    if (ht != HTCLOSE && (ex_style & WS_EX_TOOLWINDOW)) return FALSE;
+    if (!(win = get_win_ptr( hwnd )) || win == WND_OTHER_PROCESS || win == WND_DESKTOP) return FALSE;
+    active = !!(win->flags & WIN_NCACTIVATED);
+    release_win_ptr( win );
+
+    get_inside_rect( hwnd, COORDS_WINDOW, &rect, style, ex_style );
+    switch (ht)
+    {
+    case HTCLOSE:
+        type = NC_THEMED_CLOSE_BUTTON;
+        if (ex_style & WS_EX_TOOLWINDOW)
+        {
+            int bmp = map_user_dpi( 11, get_dpi_for_window( hwnd ) );
+            int caption_height = get_system_metrics( SM_CYSMCAPTION );
+
+            rect.top = rect.top + (caption_height - 1 - bmp) / 2;
+            rect.left = rect.right - (caption_height + 1 + bmp) / 2;
+            rect.bottom = rect.top + bmp;
+            rect.right = rect.left + bmp;
+            return draw_themed_nc( hwnd, hdc, type, &rect, state, active );
+        }
+        break;
+    case HTMAXBUTTON:
+        type = NC_THEMED_MAX_BUTTON;
+        if (style & WS_SYSMENU) rect.right -= get_system_metrics( SM_CXSIZE );
+        break;
+    case HTMINBUTTON:
+        type = NC_THEMED_MIN_BUTTON;
+        if (style & WS_SYSMENU) rect.right -= get_system_metrics( SM_CXSIZE );
+        if (style & (WS_MAXIMIZEBOX|WS_MINIMIZEBOX)) rect.right -= get_system_metrics( SM_CXSIZE ) - 2;
+        break;
+    default:
+        return FALSE;
+    }
+    rect.left = rect.right - get_system_metrics( SM_CXSIZE );
+    rect.bottom = rect.top + get_system_metrics( SM_CYSIZE ) - 2;
+    rect.top += 2;
+    rect.right -= 2;
+    return draw_themed_nc( hwnd, hdc, type, &rect, state, active );
+}
+
+/* The caption button under the mouse in the visual style (hot): one window's at a time. */
+static HWND hot_hwnd;
+static WORD hot_ht;
+
+static void set_hot_caption_button( HWND hwnd, WORD ht )
+{
+    HDC hdc;
+
+    if (hwnd == hot_hwnd && ht == hot_ht) return;
+    if (hot_hwnd && (hdc = NtUserGetWindowDC( hot_hwnd )))
+    {
+        draw_themed_caption_button( hot_hwnd, hdc, hot_ht, 1 /* CBS_NORMAL */ );
+        NtUserReleaseDC( hot_hwnd, hdc );
+    }
+    hot_hwnd = 0;
+    hot_ht = 0;
+    if (!hwnd || (ht != HTCLOSE && ht != HTMAXBUTTON && ht != HTMINBUTTON)) return;
+    if (ht == HTMAXBUTTON && !(get_window_long( hwnd, GWL_STYLE ) & WS_MAXIMIZEBOX)) return;
+    if (ht == HTMINBUTTON && !(get_window_long( hwnd, GWL_STYLE ) & WS_MINIMIZEBOX)) return;
+    if (!(hdc = NtUserGetWindowDC( hwnd ))) return;
+    if (draw_themed_caption_button( hwnd, hdc, ht, 2 /* CBS_HOT */ ))
+    {
+        TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE | TME_NONCLIENT, hwnd, 0 };
+
+        hot_hwnd = hwnd;
+        hot_ht = ht;
+        NtUserTrackMouseEvent( &tme );
+    }
+    NtUserReleaseDC( hwnd, hdc );
 }
 
 static void draw_nc_caption( HDC hdc, RECT *rect, HWND hwnd, DWORD  style,
@@ -1742,28 +1844,39 @@ static void nc_paint_dc( HWND hwnd, HDC hdc )
 
     NtGdiSelectPen( hdc, get_sys_color_pen( COLOR_WINDOWFRAME ));
 
-    if (has_static_outer_frame( ex_style ))
-        draw_rect_edge( hdc, &rect, BDR_SUNKENOUTER, BF_RECT | BF_ADJUST, 1 );
-    else if (has_big_frame( style, ex_style ))
-        draw_rect_edge( hdc, &rect, EDGE_RAISED, BF_RECT | BF_ADJUST, 1 );
-
-    draw_nc_frame( hdc, &rect, active, style, ex_style );
-
-    if ((style & WS_CAPTION) == WS_CAPTION)
+    /* A captioned window's frame and caption in the visual style, when one is on; the menu bar,
+     * client edge and scroll bars below as ever. */
+    if ((style & WS_CAPTION) == WS_CAPTION &&
+        draw_themed_nc( hwnd, hdc, NC_THEMED_FRAME, &rect, active, hot_hwnd == hwnd ? hot_ht : 0 ))
     {
-        RECT r = rect;
-        if (ex_style & WS_EX_TOOLWINDOW)
-        {
-            r.bottom = rect.top + get_system_metrics( SM_CYSMCAPTION );
-            rect.top += get_system_metrics( SM_CYSMCAPTION );
-        }
-        else {
-            r.bottom = rect.top + get_system_metrics( SM_CYCAPTION );
-            rect.top += get_system_metrics( SM_CYCAPTION );
-        }
+        get_inside_rect( hwnd, COORDS_WINDOW, &rect, style, ex_style );
+        rect.top += get_system_metrics( (ex_style & WS_EX_TOOLWINDOW) ? SM_CYSMCAPTION : SM_CYCAPTION );
+    }
+    else
+    {
+        if (has_static_outer_frame( ex_style ))
+            draw_rect_edge( hdc, &rect, BDR_SUNKENOUTER, BF_RECT | BF_ADJUST, 1 );
+        else if (has_big_frame( style, ex_style ))
+            draw_rect_edge( hdc, &rect, EDGE_RAISED, BF_RECT | BF_ADJUST, 1 );
 
-        if (intersect_rect( &rfuzz, &r, &clip_rect ))
-            draw_nc_caption( hdc, &r, hwnd, style, ex_style, active );
+        draw_nc_frame( hdc, &rect, active, style, ex_style );
+
+        if ((style & WS_CAPTION) == WS_CAPTION)
+        {
+            RECT r = rect;
+            if (ex_style & WS_EX_TOOLWINDOW)
+            {
+                r.bottom = rect.top + get_system_metrics( SM_CYSMCAPTION );
+                rect.top += get_system_metrics( SM_CYSMCAPTION );
+            }
+            else {
+                r.bottom = rect.top + get_system_metrics( SM_CYCAPTION );
+                rect.top += get_system_metrics( SM_CYCAPTION );
+            }
+
+            if (intersect_rect( &rfuzz, &r, &clip_rect ))
+                draw_nc_caption( hdc, &r, hwnd, style, ex_style, active );
+        }
     }
 
     if (has_menu( hwnd, style ))
@@ -2105,7 +2218,7 @@ static void track_min_max_box( HWND hwnd, WORD wparam )
     DWORD style = get_window_long( hwnd, GWL_STYLE );
     HMENU sys_menu = NtUserGetSystemMenu(hwnd, FALSE);
     void (*paint_button)( HWND, HDC, BOOL, BOOL );
-    BOOL pressed = TRUE;
+    BOOL pressed = TRUE, themed;
     UINT state;
     MSG msg;
 
@@ -2129,7 +2242,9 @@ static void track_min_max_box( HWND hwnd, WORD wparam )
     }
 
     NtUserSetCapture( hwnd );
-    paint_button( hwnd, hdc, TRUE, FALSE);
+    set_hot_caption_button( 0, 0 );
+    themed = draw_themed_caption_button( hwnd, hdc, wparam, 3 /* CBS_PUSHED */ );
+    if (!themed) paint_button( hwnd, hdc, TRUE, FALSE);
 
     for (;;)
     {
@@ -2141,10 +2256,13 @@ static void track_min_max_box( HWND hwnd, WORD wparam )
         if(msg.message != WM_MOUSEMOVE) continue;
 
         pressed = handle_nc_hit_test( hwnd, msg.pt ) == wparam;
-        if (pressed != oldstate) paint_button( hwnd, hdc, pressed, FALSE);
+        if (pressed == oldstate) continue;
+        if (themed) draw_themed_caption_button( hwnd, hdc, wparam, pressed ? 3 /* CBS_PUSHED */ : 1 /* CBS_NORMAL */ );
+        else paint_button( hwnd, hdc, pressed, FALSE);
     }
 
-    if (pressed) paint_button( hwnd, hdc, FALSE, FALSE );
+    if (pressed && themed) draw_themed_caption_button( hwnd, hdc, wparam, 1 /* CBS_NORMAL */ );
+    else if (pressed) paint_button( hwnd, hdc, FALSE, FALSE );
 
     NtUserReleaseCapture();
     NtUserReleaseDC( hwnd, hdc );
@@ -2164,7 +2282,7 @@ static void track_min_max_box( HWND hwnd, WORD wparam )
 static void track_close_button( HWND hwnd, WPARAM wparam, LPARAM lparam )
 {
     HMENU sys_menu;
-    BOOL pressed = TRUE;
+    BOOL pressed = TRUE, themed;
     UINT state;
     MSG msg;
     HDC hdc;
@@ -2177,7 +2295,9 @@ static void track_close_button( HWND hwnd, WPARAM wparam, LPARAM lparam )
     if((state & MF_DISABLED) || (state & MF_GRAYED) || state == 0xFFFFFFFF) return;
     hdc = NtUserGetWindowDC( hwnd );
     NtUserSetCapture( hwnd );
-    draw_close_button( hwnd, hdc, TRUE, FALSE );
+    set_hot_caption_button( 0, 0 );
+    themed = draw_themed_caption_button( hwnd, hdc, HTCLOSE, 3 /* CBS_PUSHED */ );
+    if (!themed) draw_close_button( hwnd, hdc, TRUE, FALSE );
 
     for (;;)
     {
@@ -2189,10 +2309,13 @@ static void track_close_button( HWND hwnd, WPARAM wparam, LPARAM lparam )
         if (msg.message != WM_MOUSEMOVE) continue;
 
         pressed = handle_nc_hit_test( hwnd, msg.pt ) == wparam;
-        if (pressed != oldstate) draw_close_button( hwnd, hdc, pressed, FALSE );
+        if (pressed == oldstate) continue;
+        if (themed) draw_themed_caption_button( hwnd, hdc, HTCLOSE, pressed ? 3 /* CBS_PUSHED */ : 1 /* CBS_NORMAL */ );
+        else draw_close_button( hwnd, hdc, pressed, FALSE );
     }
 
-    if (pressed) draw_close_button( hwnd, hdc, FALSE, FALSE );
+    if (pressed && themed) draw_themed_caption_button( hwnd, hdc, HTCLOSE, 1 /* CBS_NORMAL */ );
+    else if (pressed) draw_close_button( hwnd, hdc, FALSE, FALSE );
 
     NtUserReleaseCapture();
     NtUserReleaseDC( hwnd, hdc );
@@ -2379,6 +2502,7 @@ static LRESULT handle_nc_mouse_move( HWND hwnd, WPARAM wparam, LPARAM lparam )
 
     TRACE( "hwnd=%p wparam=%#lx lparam=%#lx\n", hwnd, (long)wparam, lparam );
 
+    set_hot_caption_button( hwnd, wparam );
     if (wparam != HTHSCROLL && wparam != HTVSCROLL)
         return 0;
 
@@ -2400,6 +2524,7 @@ static LRESULT handle_nc_mouse_leave( HWND hwnd )
 
     TRACE( "hwnd=%p\n", hwnd );
 
+    if (hwnd == hot_hwnd) set_hot_caption_button( 0, 0 );
     if (style & WS_HSCROLL)
         handle_scroll_event( hwnd, SB_HORZ, WM_NCMOUSELEAVE, pt );
     if (style & WS_VSCROLL)
