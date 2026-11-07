@@ -5872,6 +5872,20 @@ void virtual_set_large_address_space(void)
 }
 
 
+#ifdef __wasm64__
+/* More than gex's largest memory (a 64-bit one, 16 GiB) can hold: no
+ * memory flavour runs this program (a Chromium-based one's 32 GiB allocator
+ * pools; MSYS2's and Cygwin's heap reserved at 32 GiB). Said once, whatever
+ * the debug channels. */
+static void say_beyond_16g( const char *what )
+{
+    static LONG said;
+    if (!InterlockedExchange( &said, 1 ))
+        MESSAGE( "wine: %s needs more than 16 GiB of address space (%s)\n",
+                 debugstr_us( &peb->ProcessParameters->ImagePathName ), what );
+}
+#endif
+
 /***********************************************************************
  *             allocate_virtual_memory
  *
@@ -5908,7 +5922,19 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
         {
             /* address 1 is magic to mean DOS area */
             if (!base && *ret == (void *)1 && size == 0x110000) is_dos_memory = TRUE;
-            else return STATUS_INVALID_PARAMETER;
+            else
+            {
+#ifdef __wasm64__
+                if ((char *)base + size > (char *)base && (UINT_PTR)base + size > ((UINT_PTR)16 << 30))
+                {
+                    char what[96];
+                    snprintf( what, sizeof(what), "a reservation at %p of %lu MiB is beyond it",
+                              base, (unsigned long)(size >> 20) );
+                    say_beyond_16g( what );
+                }
+#endif
+                return STATUS_INVALID_PARAMETER;
+            }
         }
     }
     else
@@ -5996,15 +6022,11 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
     {
         ERR( "out of memory for allocation, base %p size %08lx\n", base, size );
 #ifdef __wasm64__
-        /* More than gex's largest memory (a 64-bit one, 16 GiB) can hold:
-         * no memory flavour runs this program (a Chromium-based one's
-         * 32 GiB allocator pools). Said once, whatever the debug channels. */
         if (size > ((SIZE_T)16 << 30))
         {
-            static LONG said;
-            if (!InterlockedExchange( &said, 1 ))
-                MESSAGE( "wine: %s needs more than 16 GiB of address space (a reservation of %lu GiB did not fit)\n",
-                         debugstr_us( &peb->ProcessParameters->ImagePathName ), (unsigned long)(size >> 30) );
+            char what[64];
+            snprintf( what, sizeof(what), "a reservation of %lu GiB did not fit", (unsigned long)(size >> 30) );
+            say_beyond_16g( what );
         }
 #endif
     }
