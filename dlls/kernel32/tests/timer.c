@@ -307,8 +307,47 @@ static void test_timeouts(void)
     adjust_system_time(-11);
 }
 
+static void test_SetThreadpoolTimerEx(void)
+{
+    BOOL (WINAPI *pSetThreadpoolTimerEx)(PTP_TIMER, FILETIME *, DWORD, DWORD);
+    LARGE_INTEGER due;
+    PTP_TIMER timer;
+    HANDLE event;
+    FILETIME ft;
+    BOOL ret;
+
+    pSetThreadpoolTimerEx = (void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "SetThreadpoolTimerEx");
+    if (!pSetThreadpoolTimerEx)
+    {
+        win_skip("SetThreadpoolTimerEx not supported\n");
+        return;
+    }
+
+    event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    timer = CreateThreadpoolTimer(timer_callback, event, NULL);
+    ok(timer != NULL, "CreateThreadpoolTimer failed\n");
+
+    due.QuadPart = -10000 * 10000; /* 10 s */
+    ft.dwLowDateTime = due.u.LowPart;
+    ft.dwHighDateTime = due.u.HighPart;
+    ret = pSetThreadpoolTimerEx(timer, &ft, 0, 0);
+    ok(!ret, "SetThreadpoolTimerEx returned %d\n", ret);
+    ok(IsThreadpoolTimerSet(timer), "timer is not set\n");
+    ret = pSetThreadpoolTimerEx(timer, NULL, 0, 0);
+    ok(ret, "SetThreadpoolTimerEx returned %d\n", ret);
+    ok(!IsThreadpoolTimerSet(timer), "timer is still set\n");
+    ret = pSetThreadpoolTimerEx(timer, NULL, 0, 0);
+    ok(!ret, "SetThreadpoolTimerEx returned %d\n", ret);
+
+    WaitForThreadpoolTimerCallbacks(timer, TRUE);
+    ok(WaitForSingleObject(event, 0) == WAIT_TIMEOUT, "the cancelled timer's callback ran\n");
+    CloseThreadpoolTimer(timer);
+    CloseHandle(event);
+}
+
 START_TEST(timer)
 {
     test_timer();
     test_timeouts();
+    test_SetThreadpoolTimerEx();
 }

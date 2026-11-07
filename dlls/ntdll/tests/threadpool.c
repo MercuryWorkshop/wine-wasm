@@ -50,6 +50,7 @@ static VOID     (WINAPI *pTpReleaseWork)(TP_WORK *);
 static VOID     (WINAPI *pTpSetPoolMaxThreads)(TP_POOL *,DWORD);
 static NTSTATUS (WINAPI *pTpSetPoolStackInformation)(TP_POOL *,TP_POOL_STACK_INFORMATION *);
 static VOID     (WINAPI *pTpSetTimer)(TP_TIMER *,LARGE_INTEGER *,LONG,LONG);
+static BOOL     (WINAPI *pTpSetTimerEx)(TP_TIMER *,LARGE_INTEGER *,LONG,LONG);
 static VOID     (WINAPI *pTpSetWait)(TP_WAIT *,HANDLE,LARGE_INTEGER *);
 static NTSTATUS (WINAPI *pTpSimpleTryPost)(PTP_SIMPLE_CALLBACK,PVOID,TP_CALLBACK_ENVIRON *);
 static void     (WINAPI *pTpStartAsyncIoOperation)(TP_IO *);
@@ -98,6 +99,7 @@ static BOOL init_threadpool(void)
     GET_PROC(TpSetPoolMaxThreads);
     GET_PROC(TpSetPoolStackInformation);
     GET_PROC(TpSetTimer);
+    GET_PROC(TpSetTimerEx);
     GET_PROC(TpSetWait);
     GET_PROC(TpSimpleTryPost);
     GET_PROC(TpStartAsyncIoOperation);
@@ -1385,6 +1387,67 @@ static void CALLBACK timer_cb(TP_CALLBACK_INSTANCE *instance, void *userdata, TP
     ReleaseSemaphore(semaphore, 1, NULL);
 }
 
+static void test_tp_timer_ex(void)
+{
+    TP_CALLBACK_ENVIRON environment;
+    LARGE_INTEGER when;
+    HANDLE semaphore;
+    NTSTATUS status;
+    TP_TIMER *timer;
+    TP_POOL *pool;
+    DWORD result;
+    BOOL ret;
+
+    if (!pTpSetTimerEx)
+    {
+        win_skip("TpSetTimerEx not supported\n");
+        return;
+    }
+
+    semaphore = CreateSemaphoreA(NULL, 0, 1, NULL);
+    ok(semaphore != NULL, "CreateSemaphoreA failed %lu\n", GetLastError());
+    status = pTpAllocPool(&pool, NULL);
+    ok(!status, "TpAllocPool failed with status %lx\n", status);
+    memset(&environment, 0, sizeof(environment));
+    environment.Version = 1;
+    environment.Pool = pool;
+    status = pTpAllocTimer(&timer, timer_cb, semaphore, &environment);
+    ok(!status, "TpAllocTimer failed with status %lx\n", status);
+
+    /* not pending before: FALSE */
+    when.QuadPart = (ULONGLONG)10000 * -10000;
+    ret = pTpSetTimerEx(timer, &when, 0, 0);
+    ok(!ret, "TpSetTimerEx returned %d\n", ret);
+    ok(pTpIsTimerSet(timer), "TpIsTimerSet returned FALSE\n");
+
+    /* set again while pending: TRUE */
+    ret = pTpSetTimerEx(timer, &when, 0, 0);
+    ok(ret, "TpSetTimerEx returned %d\n", ret);
+
+    /* cancelled while pending: TRUE, and the callback never runs */
+    ret = pTpSetTimerEx(timer, NULL, 0, 0);
+    ok(ret, "TpSetTimerEx returned %d\n", ret);
+    ok(!pTpIsTimerSet(timer), "TpIsTimerSet returned TRUE\n");
+    ret = pTpSetTimerEx(timer, NULL, 0, 0);
+    ok(!ret, "TpSetTimerEx returned %d\n", ret);
+
+    /* a timer that has expired is no longer pending */
+    when.QuadPart = (ULONGLONG)50 * -10000;
+    ret = pTpSetTimerEx(timer, &when, 0, 0);
+    ok(!ret, "TpSetTimerEx returned %d\n", ret);
+    result = WaitForSingleObject(semaphore, 1000);
+    ok(result == WAIT_OBJECT_0, "WaitForSingleObject returned %lu\n", result);
+    pTpWaitForTimer(timer, FALSE);
+    ret = pTpSetTimerEx(timer, NULL, 0, 0);
+    ok(!ret, "TpSetTimerEx returned %d\n", ret);
+    result = WaitForSingleObject(semaphore, 100);
+    ok(result == WAIT_TIMEOUT, "WaitForSingleObject returned %lu\n", result);
+
+    pTpReleaseTimer(timer);
+    pTpReleasePool(pool);
+    CloseHandle(semaphore);
+}
+
 static void test_tp_timer(void)
 {
     TP_CALLBACK_ENVIRON environment;
@@ -2489,6 +2552,7 @@ START_TEST(threadpool)
     test_tp_instance();
     test_tp_disassociate();
     test_tp_timer();
+    test_tp_timer_ex();
     test_tp_window_length();
     test_tp_wait();
     test_tp_multi_wait();
