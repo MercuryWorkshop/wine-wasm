@@ -264,6 +264,44 @@ SC_HANDLE WINAPI DECLSPEC_HOTPATCH OpenSCManagerA( const char *machine, const ch
     return ret;
 }
 
+#ifdef __wasm__
+/* A session booted without wineboot (WINEGEX_NO_WINEBOOT, gex-eject "wineboot":
+ * "skip") has no services.exe: the first caller of the service manager starts
+ * it, as wineboot would have, and waits until it serves. Whoever creates the
+ * started event starts it; a caller that finds the event waits on it. */
+static BOOL start_services_on_demand(void)
+{
+    static const WCHAR started_event[] = SVCCTL_STARTED_EVENT;
+    PROCESS_INFORMATION pi;
+    STARTUPINFOW si = { sizeof(si) };
+    HANDLE handles[2];
+    DWORD ret;
+
+    if (!GetEnvironmentVariableW( L"WINEGEX_NO_WINEBOOT", NULL, 0 )) return FALSE;
+    if (!(handles[0] = CreateEventW( NULL, TRUE, FALSE, started_event ))) return FALSE;
+    if (GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        ret = WaitForSingleObject( handles[0], 60000 );
+        CloseHandle( handles[0] );
+        return ret == WAIT_OBJECT_0;
+    }
+    if (!CreateProcessW( L"C:\\windows\\system32\\services.exe", NULL, NULL, NULL, FALSE,
+                         DETACHED_PROCESS, NULL, L"C:\\windows\\system32", &si, &pi ))
+    {
+        ERR( "couldn't start services.exe, error %lu\n", GetLastError() );
+        CloseHandle( handles[0] );
+        return FALSE;
+    }
+    CloseHandle( pi.hThread );
+    handles[1] = pi.hProcess;
+    ret = WaitForMultipleObjects( 2, handles, FALSE, 60000 );
+    CloseHandle( pi.hProcess );
+    CloseHandle( handles[0] );
+    if (ret != WAIT_OBJECT_0) ERR( "services.exe did not start (%lu)\n", ret );
+    return ret == WAIT_OBJECT_0;
+}
+#endif
+
 /******************************************************************************
  *     OpenSCManagerW   (sechost.@)
  */
@@ -283,6 +321,20 @@ SC_HANDLE WINAPI DECLSPEC_HOTPATCH OpenSCManagerW( const WCHAR *machine, const W
         err = map_exception_code( GetExceptionCode() );
     }
     __ENDTRY
+#ifdef __wasm__
+    if (err == RPC_S_SERVER_UNAVAILABLE && (!machine || !*machine) && start_services_on_demand())
+    {
+        __TRY
+        {
+            err = svcctl_OpenSCManagerW( machine, database, access, &handle );
+        }
+        __EXCEPT(rpc_filter)
+        {
+            err = map_exception_code( GetExceptionCode() );
+        }
+        __ENDTRY
+    }
+#endif
 
     SetLastError( err );
     return handle;
