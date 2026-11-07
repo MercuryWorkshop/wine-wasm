@@ -121,13 +121,16 @@ static void output_arg64( const struct kind64 *p, unsigned int k )
     }
 }
 
-/* A printf's format argument: (index, wide), or -1. */
+/* A printf's format argument: (index, wide), or -1. The format is the
+ * last string: wsprintfA/W's .spec calls the buffer a string too, and
+ * taking the buffer laid the arguments out from whatever it held (every
+ * argument read 0). wasm32.c takes the last one as well. */
 static int printf_format( const ORDDEF *odp, const char *link, int *wide )
 {
     const char *name = odp->name ? odp->name : link;
     int j;
     if (!strstr( name, "printf" ) && !strstr( name, "PRINTF" )) return -1;
-    for (j = 0; j < odp->u.func.nb_args; j++)
+    for (j = odp->u.func.nb_args - 1; j >= 0; j--)
         if (odp->u.func.args[j] == ARG_STR || odp->u.func.args[j] == ARG_WSTR)
         {
             *wide = odp->u.func.args[j] == ARG_WSTR;
