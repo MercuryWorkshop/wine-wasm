@@ -373,13 +373,17 @@ void WINAPI KiUserCallbackDispatcher( ULONG id, void *args, ULONG len )
  *
  * The guest's state at the innermost call from the guest into native
  * code, as returned to: `pop` bytes of arguments popped.
+ *
+ * As i386's RtlCaptureContext, only the integer, control and segment
+ * registers are written: a caller's record may be smaller than a CONTEXT
+ * and run over its own frame.
  */
 static void capture_guest_context( CONTEXT *context, ULONG pop )
 {
     int ctx = guest_ctx();
     ULONG esp = CTX_REG( ctx, R_ESP );
 
-    memset( context, 0, sizeof(*context) );
+    memset( &context->SegGs, 0, FIELD_OFFSET( CONTEXT, ExtendedRegisters ) - FIELD_OFFSET( CONTEXT, SegGs ) );
     context->ContextFlags = CONTEXT_FULL;
     context->Eax = CTX_REG( ctx, R_EAX );
     context->Ecx = CTX_REG( ctx, R_ECX );

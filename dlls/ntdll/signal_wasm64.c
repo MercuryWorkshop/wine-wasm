@@ -174,7 +174,16 @@ NTSTATUS WINAPI NtQueryPerformanceCounter( LARGE_INTEGER *counter, LARGE_INTEGER
  * The guest's state at the innermost call from the guest into native
  * code, as returned to (Win64's callee pops nothing): or, inside an entry
  * made with a CONTEXT (the KiUser*Dispatcher ones), that CONTEXT.
+ *
+ * As x86-64's RtlCaptureContext, nothing past FltSave is written: the
+ * vector registers and the rest of the record stay as they were. A
+ * caller may hand a smaller buffer: Free Pascal's local unwind passes
+ * RtlUnwindEx a CONTEXT 0x470 bytes below its frame pointer, so the
+ * record's tail covers its saved rbp and return address, which the
+ * unwind then reads.
  */
+#define CAPTURED_SIZE FIELD_OFFSET( CONTEXT, VectorRegister )
+
 static void capture_guest_context( CONTEXT *context )
 {
     int ctx = guest_ctx();
@@ -184,11 +193,11 @@ static void capture_guest_context( CONTEXT *context )
 
     if (at)
     {
-        *context = *(const CONTEXT *)(ULONG_PTR)at;
+        memcpy( context, (const CONTEXT *)(ULONG_PTR)at, CAPTURED_SIZE );
         context->ContextFlags &= ~0x40;  /* no xstate */
         return;
     }
-    memset( context, 0, sizeof(*context) );
+    memset( context, 0, CAPTURED_SIZE );
     context->ContextFlags = CONTEXT_FULL;
     context->Rax = CTX_REG( ctx, R_RAX );
     context->Rcx = CTX_REG( ctx, R_RCX );
