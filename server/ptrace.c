@@ -480,7 +480,13 @@ int read_process_memory( struct process *process, client_ptr_t ptr, data_size_t 
 
     if ((unsigned long)ptr != ptr)
     {
+#if defined(__wasm32__) || defined(__wasm64__)
+        /* past a wasm32 server's own pointers (a wasm64 process's memory
+         * above 4 GiB): the process itself copies (an APC) */
+        set_error( STATUS_NOT_SUPPORTED );
+#else
         set_error( STATUS_ACCESS_DENIED );
+#endif
         return 0;
     }
 
@@ -601,7 +607,13 @@ int write_process_memory( struct process *process, client_ptr_t ptr, data_size_t
 
     if ((unsigned long)ptr != ptr)
     {
+#if defined(__wasm32__) || defined(__wasm64__)
+        /* past a wasm32 server's own pointers (a wasm64 process's memory
+         * above 4 GiB): the process itself copies (an APC) */
+        set_error( STATUS_NOT_SUPPORTED );
+#else
         set_error( STATUS_ACCESS_DENIED );
+#endif
         return 0;
     }
 
