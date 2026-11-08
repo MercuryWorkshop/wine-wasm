@@ -677,11 +677,18 @@ void CDECL RtlRestoreContext( CONTEXT *context, EXCEPTION_RECORD *rec )
     }
     else if (rec && rec->ExceptionCode == STATUS_UNWIND_CONSOLIDATE && rec->NumberParameters >= 1)
     {
-        /* x86-64 calls it from a frame made to look like the context's,
-         * for an unwind it starts itself; here it is called directly */
+        /* x86-64 calls it from a frame made to look like the context's, so
+         * that an unwind it starts itself (a C++ catch block's rethrow) goes
+         * on from the frame being unwound to, not through the frames already
+         * unwound. Here the call-out records the context as its entry's: an
+         * unwind that reaches its return pad goes on from the context. */
         PVOID (CALLBACK *consolidate)(EXCEPTION_RECORD *) = (void *)rec->ExceptionInformation[0];
+        ULONG64 entry_context = gexw_get_entry_context();
+
         TRACE( "calling consolidate callback %p (rec=%p)\n", consolidate, rec );
+        gexw_set_entry_context( (ULONG_PTR)context );
         context->Rip = (ULONG64)consolidate( rec );
+        gexw_set_entry_context( entry_context );
     }
 
     /* remove no longer accessible TEB frames */
