@@ -35,6 +35,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/prctl.h>
 #include <sys/syscall.h>
 
 #include "ntstatus.h"
@@ -301,6 +302,9 @@ void door_pump_lock(void)
             {
                 fprintf( stderr, "wineserver: door: a door call died midway (pid %d tid %d); the server and its clients exit\n",
                          a->owner_pid, a->poisoned );
+                /* said as a crash of the server's own, for gex's report of the session's end */
+                static const char note[] = "wineserver\0a door call died midway";
+                prctl( 0x47450002 /* PR_GEX_CRASH */, (unsigned long)note, sizeof(note), 0, 0 );
                 door_kill_clients();
                 _exit( 1 );
             }
