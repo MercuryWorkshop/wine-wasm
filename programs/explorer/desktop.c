@@ -206,6 +206,9 @@ static inline struct shellbrowserwindow *impl_from_IShellBrowser(IShellBrowser *
 }
 
 static void shellwindows_init(void);
+#ifdef __wasm__
+static DWORD WINAPI shellwindows_thread( void *arg );
+#endif
 static void desktopshellbrowserwindow_init(void);
 
 static RECT get_icon_rect( unsigned int index )
@@ -1370,6 +1373,18 @@ void manage_desktop( WCHAR *arg )
 
 #ifndef __wasm32__
     desktopshellbrowserwindow_init();
+#ifdef __wasm__
+    /* A session booted without wineboot (gex) starts services.exe and rpcss
+     * on first use; registering ShellWindows would start them on the way to
+     * the desktop. Register it on its own thread once the desktop is up. */
+    if (GetEnvironmentVariableW( L"WINEGEX_NO_WINEBOOT", NULL, 0 ))
+    {
+        HANDLE thread;
+        CoInitialize( NULL );
+        if ((thread = CreateThread( NULL, 0, shellwindows_thread, NULL, 0, NULL ))) CloseHandle( thread );
+    }
+    else
+#endif
     shellwindows_init();
 #endif
 
@@ -2636,11 +2651,9 @@ static void desktopshellbrowserwindow_init(void)
     IShellFolder_CreateViewObject(folder, NULL, &IID_IShellView, (void**)&desktopshellbrowserwindow.view);
 }
 
-static void shellwindows_init(void)
+static void shellwindows_register(void)
 {
     HRESULT hr;
-
-    CoInitialize(NULL);
 
     shellwindows.IShellWindows_iface.lpVtbl = &shellwindowsvtbl;
     InitializeCriticalSectionEx(&shellwindows.cs, 0, RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO);
@@ -2655,3 +2668,22 @@ static void shellwindows_init(void)
     if (FAILED(hr))
         WARN("Failed to register ShellWindows object: %08lx\n", hr);
 }
+
+static void shellwindows_init(void)
+{
+    CoInitialize(NULL);
+    shellwindows_register();
+}
+
+#ifdef __wasm__
+/* ShellWindows registered off the desktop's thread, in the multithreaded
+ * apartment, which this thread keeps alive (the registration lasts while it
+ * does). */
+static DWORD WINAPI shellwindows_thread( void *arg )
+{
+    CoInitializeEx( NULL, COINIT_MULTITHREADED );
+    shellwindows_register();
+    for (;;) Sleep( INFINITE );
+    return 0;
+}
+#endif
