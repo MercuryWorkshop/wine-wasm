@@ -2659,6 +2659,16 @@ static NTSTATUS map_file_into_view( struct file_view *view, int fd, size_t start
 
     if (vprot & VPROT_WRITE) flags |= MAP_SHARED;
     else if (vprot & VPROT_WRITECOPY) flags |= MAP_PRIVATE;
+#ifdef __wasm__
+    /* gex: a view of a section no file backs (shared memory) shares its
+     * pages with the section's other views, whatever its own access. gex
+     * copies a private mapping where Linux would show the file's pages
+     * until they are written, so a read-only or read+execute view never
+     * saw what a writable view of it wrote (a JIT's code, written through
+     * its read+write view). Shared, a later view is the same pages
+     * (gex_section_alias). */
+    else if (!(view->protect & (SEC_FILE | SEC_IMAGE))) flags |= MAP_SHARED;
+#endif
     else
     {
         /* changes to the file are not guaranteed to be visible in read-only MAP_PRIVATE mappings,
@@ -3881,7 +3891,8 @@ done:
  * goes. One record per distinct address, with its count; the first view's
  * own base counts once. The alias has the first view's protection (a
  * read-only view of a writable one can be written, and VirtualQuery
- * reports the first's, and the first's base as AllocationBase). A
+ * reports the first's, and the first's base as AllocationBase), with
+ * execute added when the alias may run its pages. A
  * write-copy view never is one, nor has one: its pages are its own. */
 static struct gex_section_ref *gex_section_ref_at( const void *addr )
 {
@@ -4058,6 +4069,14 @@ static unsigned int virtual_map_section( HANDLE handle, PVOID *addr_ptr, ULONG_P
                 res = STATUS_NO_MEMORY;
             else
             {
+                /* one set of pages serves both views, so it may also be run
+                 * when this view may run it and the first may not (a JIT's
+                 * read+execute view of its read+write one) */
+                if ((vprot & VPROT_EXEC) && !(get_page_vprot( alias ) & VPROT_EXEC))
+                {
+                    set_page_vprot_bits( alias, size, VPROT_EXEC, 0 );
+                    mprotect_range( alias, size, 0, 0 );
+                }
                 TRACE( "handle=%p size=%lx offset=%s: %p, in view %p\n", handle, size,
                        wine_dbgstr_longlong(offset.QuadPart), alias, view->base );
                 *addr_ptr = alias;
