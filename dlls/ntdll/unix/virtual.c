@@ -3700,6 +3700,21 @@ static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_inf
      * band would set the memory's size; it is placed in the band instead */
     if (gex_compact && (char *)base >= w64_band_hi) base = NULL;
 #endif
+#if defined(__wasm64__) && defined(GEX_MEMORY64)
+    /* gex, a 64-bit memory with a top (the page's arena, [4 GiB, top)): a
+     * program that can move and that dll-bases does not pin goes top down
+     * with the DLLs, not at its own base, as Windows' ASLR puts it high. At
+     * its base (0x140000000 for most) it cut the arena in two, and a large
+     * reservation (the .NET GC's) found no gap. One without relocations, or
+     * whose base is below 4 GiB, stays where it was. */
+    if (!(image_info->image_charact & IMAGE_FILE_DLL) &&
+        (image_info->image_flags & IMAGE_FLAGS_ImageDynamicallyRelocated) &&
+        !image_info->map_addr && image_info->base >= limit_4g && gex_space_top())
+    {
+        base = NULL;
+        top_down = TRUE;
+    }
+#endif
     if (base)
     {
         status = map_view( view_ret, base, size, alloc_type, vprot, limit_low, limit_high, 0 );
