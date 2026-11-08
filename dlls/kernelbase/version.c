@@ -261,58 +261,6 @@ done:
 
 
 /**********************************************************************
- *  find_entry_by_id
- *
- * Find an entry by id in a resource directory
- * Copied from loader/pe_resource.c
- */
-static const IMAGE_RESOURCE_DIRECTORY *find_entry_by_id( const IMAGE_RESOURCE_DIRECTORY *dir,
-                                                         WORD id, const void *root,
-                                                         DWORD root_size )
-{
-    const IMAGE_RESOURCE_DIRECTORY_ENTRY *entry;
-    int min, max, pos;
-
-    entry = (const IMAGE_RESOURCE_DIRECTORY_ENTRY *)(dir + 1);
-    min = dir->NumberOfNamedEntries;
-    max = min + dir->NumberOfIdEntries - 1;
-
-    if (max >= (root_size - ((INT_PTR)dir - (INT_PTR)root) - sizeof(*dir)) / sizeof(*entry))
-        return NULL;
-
-    while (min <= max)
-    {
-        pos = (min + max) / 2;
-        if (entry[pos].Id == id)
-        {
-            DWORD offset = entry[pos].OffsetToDirectory;
-            if (offset > root_size - sizeof(*dir)) return NULL;
-            return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + offset);
-        }
-        if (entry[pos].Id > id) max = pos - 1;
-        else min = pos + 1;
-    }
-    return NULL;
-}
-
-
-/**********************************************************************
- *  find_entry_default
- *
- * Find a default entry in a resource directory
- * Copied from loader/pe_resource.c
- */
-static const IMAGE_RESOURCE_DIRECTORY *find_entry_default( const IMAGE_RESOURCE_DIRECTORY *dir,
-                                                           const void *root )
-{
-    const IMAGE_RESOURCE_DIRECTORY_ENTRY *entry;
-
-    entry = (const IMAGE_RESOURCE_DIRECTORY_ENTRY *)(dir + 1);
-    return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + entry->OffsetToDirectory);
-}
-
-
-/**********************************************************************
  *  push_language
  *
  * push a language onto the list of languages to try
@@ -326,14 +274,60 @@ static inline int push_language( WORD *list, int pos, WORD lang )
 }
 
 
-/**********************************************************************
- *  find_entry_language
- */
-static const IMAGE_RESOURCE_DIRECTORY *find_entry_language( const IMAGE_RESOURCE_DIRECTORY *dir,
-                                                            const void *root, DWORD root_size,
-                                                            DWORD flags )
+/* A PE file's resource directory, read from the file an entry at a time:
+ * never the whole resource section (an installer's can hold a hundred
+ * megabytes of payload). Offsets are from the directory's root. */
+struct res_reader
 {
-    const IMAGE_RESOURCE_DIRECTORY *ret;
+    HANDLE handle;
+    DWORD  root;  /* the root's file offset */
+    DWORD  size;  /* what the section holds from there */
+};
+
+static DWORD read_data( HANDLE handle, DWORD offset, void *data, DWORD len );
+
+/* the entry for ID in the directory at OFFSET: what it points to, or ~0u */
+static DWORD res_find_id( const struct res_reader *r, DWORD offset, WORD id )
+{
+    IMAGE_RESOURCE_DIRECTORY dir;
+    IMAGE_RESOURCE_DIRECTORY_ENTRY entry;
+    int min, max, pos;
+
+    if (offset > r->size - sizeof(dir) || r->size < sizeof(dir)) return ~0u;
+    if (read_data( r->handle, r->root + offset, &dir, sizeof(dir) ) != sizeof(dir)) return ~0u;
+    min = dir.NumberOfNamedEntries;
+    max = min + dir.NumberOfIdEntries - 1;
+    if (max >= 0 && (DWORD)max >= (r->size - offset - sizeof(dir)) / sizeof(entry)) return ~0u;
+    while (min <= max)
+    {
+        pos = (min + max) / 2;
+        if (read_data( r->handle, r->root + offset + sizeof(dir) + pos * sizeof(entry), &entry, sizeof(entry) ) != sizeof(entry))
+            return ~0u;
+        if (entry.Id == id) return entry.OffsetToDirectory;
+        if (entry.Id > id) max = pos - 1;
+        else min = pos + 1;
+    }
+    return ~0u;
+}
+
+/* the first entry in the directory at OFFSET, or ~0u */
+static DWORD res_find_default( const struct res_reader *r, DWORD offset )
+{
+    IMAGE_RESOURCE_DIRECTORY_ENTRY entry;
+
+    if (r->size < sizeof(IMAGE_RESOURCE_DIRECTORY) + sizeof(entry) ||
+        offset > r->size - sizeof(IMAGE_RESOURCE_DIRECTORY) - sizeof(entry)) return ~0u;
+    if (read_data( r->handle, r->root + offset + sizeof(IMAGE_RESOURCE_DIRECTORY), &entry, sizeof(entry) ) != sizeof(entry))
+        return ~0u;
+    return entry.OffsetToDirectory;
+}
+
+/**********************************************************************
+ *  res_find_language
+ */
+static DWORD res_find_language( const struct res_reader *r, DWORD offset, DWORD flags )
+{
+    DWORD ret;
     WORD list[9];
     int i, pos = 0;
 
@@ -356,8 +350,8 @@ static const IMAGE_RESOURCE_DIRECTORY *find_entry_language( const IMAGE_RESOURCE
         pos = push_language( list, pos, MAKELANGID( LANG_ENGLISH, SUBLANG_DEFAULT ) );
     }
 
-    for (i = 0; i < pos; i++) if ((ret = find_entry_by_id( dir, list[i], root, root_size ))) return ret;
-    return find_entry_default( dir, root );
+    for (i = 0; i < pos; i++) if ((ret = res_find_id( r, offset, list[i] )) != ~0u) return ret;
+    return res_find_default( r, offset );
 }
 
 
@@ -449,10 +443,9 @@ static BOOL find_pe_resource( HANDLE handle, DWORD *resLen, DWORD *resOff, DWORD
     DWORD pehdoffset = *resOff;
     PIMAGE_DATA_DIRECTORY resDataDir;
     PIMAGE_SECTION_HEADER sections;
-    LPBYTE resSection;
-    DWORD len, section_size, data_size, resDirSize;
-    const void *resDir;
-    const IMAGE_RESOURCE_DIRECTORY *resPtr;
+    struct res_reader reader;
+    DWORD len, data_size, entry;
+    IMAGE_RESOURCE_DATA_ENTRY dataEntry;
     const IMAGE_RESOURCE_DATA_ENTRY *resData;
     int i, nSections;
     BOOL ret = FALSE;
@@ -508,45 +501,33 @@ static BOOL find_pe_resource( HANDLE handle, DWORD *resLen, DWORD *resOff, DWORD
         return FALSE;
     }
 
-    /* Read in resource section */
+    /* Walk the resource directory in the file */
     data_size = sections[i].SizeOfRawData;
-    section_size = max( data_size, sections[i].Misc.VirtualSize );
-    resSection = HeapAlloc( GetProcessHeap(), 0, section_size );
-    if ( !resSection )
-    {
-        HeapFree( GetProcessHeap(), 0, sections );
-        return FALSE;
-    }
+    reader.handle = handle;
+    reader.root = sections[i].PointerToRawData + (resDataDir->VirtualAddress - sections[i].VirtualAddress);
+    reader.size = data_size - (resDataDir->VirtualAddress - sections[i].VirtualAddress);
 
-    if (read_data( handle, sections[i].PointerToRawData, resSection, data_size ) != data_size) goto done;
-    if (data_size < section_size) memset( (char *)resSection + data_size, 0, section_size - data_size );
-
-    /* Find resource */
-    resDir = resSection + (resDataDir->VirtualAddress - sections[i].VirtualAddress);
-    resDirSize = section_size - (resDataDir->VirtualAddress - sections[i].VirtualAddress);
-
-    resPtr = resDir;
-    resPtr = find_entry_by_id( resPtr, VS_FILE_INFO, resDir, resDirSize );
-    if ( !resPtr )
+    if ((entry = res_find_id( &reader, 0, VS_FILE_INFO )) == ~0u)
     {
         TRACE("No typeid entry found\n" );
         goto done;
     }
-    resPtr = find_entry_by_id( resPtr, VS_VERSION_INFO, resDir, resDirSize );
-    if ( !resPtr )
+    if ((entry = res_find_id( &reader, entry, VS_VERSION_INFO )) == ~0u)
     {
         TRACE("No resid entry found\n" );
         goto done;
     }
-    resPtr = find_entry_language( resPtr, resDir, resDirSize, flags );
-    if ( !resPtr )
+    if ((entry = res_find_language( &reader, entry, flags )) == ~0u)
     {
         TRACE("No default language entry found\n" );
         goto done;
     }
+    if (entry > reader.size - sizeof(dataEntry) || reader.size < sizeof(dataEntry) ||
+        read_data( handle, reader.root + entry, &dataEntry, sizeof(dataEntry) ) != sizeof(dataEntry))
+        goto done;
+    resData = &dataEntry;
 
     /* Find resource data section */
-    resData = (const IMAGE_RESOURCE_DATA_ENTRY*)resPtr;
     for ( i = 0; i < nSections; i++ )
         if (    resData->OffsetToData >= sections[i].VirtualAddress
              && resData->OffsetToData <  sections[i].VirtualAddress +
@@ -565,7 +546,6 @@ static BOOL find_pe_resource( HANDLE handle, DWORD *resLen, DWORD *resOff, DWORD
     ret = TRUE;
 
  done:
-    HeapFree( GetProcessHeap(), 0, resSection );
     HeapFree( GetProcessHeap(), 0, sections );
     return ret;
 }
@@ -596,6 +576,28 @@ static DWORD find_version_resource( HANDLE handle, DWORD *reslen, DWORD *offset,
     }
     WARN( "Can't handle %04x files.\n", magic );
     return magic;
+}
+
+/***********************************************************************
+ *           pe_version_resource         [internal]
+ *
+ * A PE file named with its path: its version resource found by reading the
+ * file's resource directory, not by mapping the image (which takes the whole
+ * resource section, an installer's payload and all). A bare name, a file
+ * that is not a PE or a PE with no version resource is left to
+ * LoadLibraryExW, as before.
+ */
+static BOOL pe_version_resource( const WCHAR *filename, DWORD *len, DWORD *offset, DWORD flags )
+{
+    HANDLE handle;
+    DWORD magic;
+
+    if (!wcspbrk( filename, L"\\/" )) return FALSE;
+    handle = CreateFileW( filename, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, 0 );
+    if (handle == INVALID_HANDLE_VALUE) return FALSE;
+    magic = find_version_resource( handle, len, offset, flags );
+    CloseHandle( handle );
+    return magic == IMAGE_NT_SIGNATURE;
 }
 
 /******************************************************************************
@@ -772,7 +774,9 @@ DWORD WINAPI GetFileVersionInfoSizeExW( DWORD flags, LPCWSTR filename, LPDWORD r
     if (flags & ~FILE_VER_GET_LOCALISED)
         FIXME("flags 0x%lx ignored\n", flags & ~FILE_VER_GET_LOCALISED);
 
-    if ((hModule = LoadLibraryExW( filename, 0, LOAD_LIBRARY_AS_IMAGE_RESOURCE )))
+    if (pe_version_resource( filename, &len, &offset, flags ))
+        magic = IMAGE_NT_SIGNATURE;
+    else if ((hModule = LoadLibraryExW( filename, 0, LOAD_LIBRARY_AS_IMAGE_RESOURCE )))
     {
         HRSRC hRsrc = NULL;
         if (!(flags & FILE_VER_GET_LOCALISED))
@@ -877,7 +881,16 @@ BOOL WINAPI GetFileVersionInfoExW( DWORD flags, LPCWSTR filename, DWORD ignored,
     if (flags & ~FILE_VER_GET_LOCALISED)
         FIXME("flags 0x%lx ignored\n", flags & ~FILE_VER_GET_LOCALISED);
 
-    if ((hModule = LoadLibraryExW( filename, 0, LOAD_LIBRARY_AS_IMAGE_RESOURCE )))
+    if (pe_version_resource( filename, &len, &offset, flags ))
+    {
+        HANDLE handle = CreateFileW( filename, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                     NULL, OPEN_EXISTING, 0, 0 );
+        if (handle == INVALID_HANDLE_VALUE) return 0;
+        magic = IMAGE_NT_SIGNATURE;
+        len = read_data( handle, offset, data, min( len, datasize ));
+        CloseHandle( handle );
+    }
+    else if ((hModule = LoadLibraryExW( filename, 0, LOAD_LIBRARY_AS_IMAGE_RESOURCE )))
     {
         HRSRC hRsrc = NULL;
         if (!(flags & FILE_VER_GET_LOCALISED))
