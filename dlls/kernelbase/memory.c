@@ -1393,6 +1393,42 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetPhysicallyInstalledSystemMemory( ULONGLONG *mem
 }
 
 
+#ifdef __wasm__
+/* gex: the free address space of the user range, which is what Windows
+ * reports as available. The total minus the working set is far more than
+ * gex's memory has, and a program that sizes a reservation by it (the .NET
+ * GC reserves half of it in one block) asks for more than any gap. */
+static ULONGLONG free_virtual( const SYSTEM_BASIC_INFORMATION *info )
+{
+    char *p = (char *)info->LowestUserAddress, *end = (char *)info->HighestUserAddress;
+    ULONGLONG free = 0, largest = 0;
+    LARGE_INTEGER t0, t1, freq;
+    MEMORY_BASIC_INFORMATION mbi;
+    unsigned int regions = 0;
+
+    NtQueryPerformanceCounter( &t0, &freq );
+    while (p < end && !NtQueryVirtualMemory( GetCurrentProcess(), p, MemoryBasicInformation, &mbi, sizeof(mbi), NULL ))
+    {
+        char *next = (char *)mbi.BaseAddress + mbi.RegionSize;
+        if (!mbi.RegionSize || next <= p) break;
+        if (next > end) next = end + 1;
+        if (mbi.State == MEM_FREE)
+        {
+            ULONGLONG size = next - (char *)mbi.BaseAddress;
+            free += size;
+            if (size > largest) largest = size;
+        }
+        regions++;
+        p = next;
+    }
+    NtQueryPerformanceCounter( &t1, NULL );
+    TRACE_(virtual)( "free %I64u in %u regions, largest %I64u, %I64u us\n", free, regions, largest,
+                     (t1.QuadPart - t0.QuadPart) * 1000000 / max( freq.QuadPart, 1 ) );
+    return free;
+}
+#endif
+
+
 /***********************************************************************
  *             GlobalMemoryStatusEx   (kernelbase.@)
  */
@@ -1434,7 +1470,11 @@ BOOL WINAPI DECLSPEC_HOTPATCH GlobalMemoryStatusEx( MEMORYSTATUSEX *status )
     status->ullTotalPageFile = perf_info.TotalCommitLimit;
     status->ullAvailPageFile = status->ullTotalPageFile - perf_info.TotalCommittedPages;
     status->ullTotalVirtual  = (ULONG_PTR)basic_info.HighestUserAddress - (ULONG_PTR)basic_info.LowestUserAddress + 1;
+#ifdef __wasm__
+    status->ullAvailVirtual  = free_virtual( &basic_info );
+#else
     status->ullAvailVirtual  = status->ullTotalVirtual - (ULONGLONG)vmc.WorkingSetSize /* approximate */;
+#endif
     status->ullAvailExtendedVirtual = 0;
 
     status->ullTotalPhys     *= basic_info.PageSize;
