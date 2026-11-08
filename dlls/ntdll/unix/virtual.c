@@ -5884,6 +5884,17 @@ static void say_beyond_16g( const char *what )
         MESSAGE( "wine: %s needs more than 16 GiB of address space (%s)\n",
                  debugstr_us( &peb->ProcessParameters->ImagePathName ), what );
 }
+
+/* A reservation at a fixed address that ends past 16 GiB. */
+static void say_fixed_beyond_16g( const void *base, SIZE_T size )
+{
+    char what[96];
+
+    if ((UINT_PTR)base + size < (UINT_PTR)base || (UINT_PTR)base + size <= ((UINT_PTR)16 << 30)) return;
+    snprintf( what, sizeof(what), "a reservation at %p of %lu MiB is beyond it",
+              base, (unsigned long)(size >> 20) );
+    say_beyond_16g( what );
+}
 #endif
 
 /***********************************************************************
@@ -5905,7 +5916,15 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
 
     /* Round parameters to a page boundary */
 
-    if (is_beyond_limit( 0, size, working_set_limit )) return STATUS_WORKING_SET_LIMIT_RANGE;
+    if (is_beyond_limit( 0, size, working_set_limit ))
+    {
+#ifdef __wasm64__
+        /* (lowered to wasm32, the limit is 4 GiB, so a large fixed
+         * reservation ends here before the address check below) */
+        if (*ret) say_fixed_beyond_16g( *ret, size );
+#endif
+        return STATUS_WORKING_SET_LIMIT_RANGE;
+    }
 
     if (*ret)
     {
@@ -5925,13 +5944,7 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
             else
             {
 #ifdef __wasm64__
-                if ((char *)base + size > (char *)base && (UINT_PTR)base + size > ((UINT_PTR)16 << 30))
-                {
-                    char what[96];
-                    snprintf( what, sizeof(what), "a reservation at %p of %lu MiB is beyond it",
-                              base, (unsigned long)(size >> 20) );
-                    say_beyond_16g( what );
-                }
+                say_fixed_beyond_16g( base, size );
 #endif
                 return STATUS_INVALID_PARAMETER;
             }
