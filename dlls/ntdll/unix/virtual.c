@@ -316,6 +316,20 @@ static inline BOOL w64_beyond_code_space( const void *base, size_t size )
 {
     return base < w64_code_space_start || is_beyond_limit( base, size, w64_code_space_limit );
 }
+
+/* an executable range refused for lying outside the code space: said once a
+ * process (a JIT probing for room near its module can be refused thousands
+ * of times on its way to memory it can use), the rest traced */
+static void say_beyond_code_space( const char *what, const void *base, size_t size )
+{
+    static LONG said;
+
+    if (!InterlockedExchange( &said, 1 ))
+        ERR( "%s %p-%p outside gex's code space (%p-%p) refused (said once a process; +virtual traces the rest)\n",
+             what, base, (const char *)base + size, w64_code_space_start, w64_code_space_limit );
+    else
+        TRACE( "%s %p-%p outside gex's code space refused\n", what, base, (const char *)base + size );
+}
 #endif
 
 static inline BOOL is_vprot_exec_write( BYTE vprot )
@@ -2181,8 +2195,7 @@ static NTSTATUS set_protection( struct file_view *view, void *base, SIZE_T size,
     {
         /* data turned to code (a JIT's usual way) where gex cannot run it:
          * refused, not moved (docs/wine-native-x64.md §2) */
-        ERR( "%p-%p made executable %s gex's code space (%p-%p): refused\n", base, (char *)base + size,
-             base < w64_code_space_start ? "below" : "above", w64_code_space_start, w64_code_space_limit );
+        say_beyond_code_space( "memory made executable", base, size );
         return STATUS_INVALID_PAGE_PROTECTION;
     }
 #endif
@@ -2473,8 +2486,7 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
              * image view's vprot carries SEC_IMAGE beside the VPROT_ bits:
              * map_image_view) */
             if (!(vprot & SEC_IMAGE))
-                ERR( "executable view %p-%p outside gex's code space (%p-%p) refused\n",
-                     base, (char *)base + size, w64_code_space_start, w64_code_space_limit );
+                say_beyond_code_space( "executable view", base, size );
             return STATUS_CONFLICTING_ADDRESSES;
         }
         if (!limit_high || limit_high >= (ULONG_PTR)w64_code_space_limit)
