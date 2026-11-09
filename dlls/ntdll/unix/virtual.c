@@ -3079,6 +3079,12 @@ static NTSTATUS map_pe_header( void *ptr, size_t size, size_t map_size, int fd, 
  * less than gex's default top is given less. */
 __attribute__((import_module("gex"), import_name("space_top")))
 extern unsigned int gex_space_top(void);
+/* Where the space below 4 GiB that is gex's own starts, in 64 KiB units, or
+ * 0 if there is none: the page's shim keeps its heap there, above every
+ * address it gives the guest, and no view or mapping of the process's ever
+ * lies in it. */
+__attribute__((import_module("gex"), import_name("host_space")))
+extern unsigned int gex_host_space(void);
 #endif
 
 /***********************************************************************
@@ -6532,6 +6538,28 @@ static struct file_view *get_memory_region_size( char *base, char **region_start
             break;
         }
         *fake_reserved = TRUE;
+    }
+#endif
+#if defined(__wasm64__) && defined(GEX_MEMORY64)
+    {
+        /* gex's own space below 4 GiB (gex_host_space) reads as reserved,
+         * not free: nothing there can be allocated, and a program that
+         * counts free space (GlobalMemoryStatusEx) must not count it */
+        static char *host_lo;
+        char *host_hi = (char *)limit_4g;
+
+        if (!host_lo) host_lo = (char *)((UINT_PTR)gex_host_space() << 16);
+        if (host_lo && host_lo < host_hi)
+        {
+            if (base >= host_lo && base < host_hi)
+            {
+                *region_start = max( *region_start, host_lo );
+                *region_end = min( *region_end, host_hi );
+                *fake_reserved = TRUE;
+            }
+            else if (base < host_lo && *region_end > host_lo) *region_end = host_lo;
+            else if (base >= host_hi && *region_start < host_hi) *region_start = host_hi;
+        }
     }
 #endif
     return NULL;
