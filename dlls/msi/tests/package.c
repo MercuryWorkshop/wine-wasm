@@ -9301,6 +9301,116 @@ static void test_controlevent(void)
     DeleteFileA("forcecodepage.idt");
 }
 
+/* Presses Enter in the first MSI dialog that shows up: the dialog's
+ * default control answers it. */
+static DWORD WINAPI press_enter_thread( void *arg )
+{
+    HWND hwnd = NULL;
+    int i;
+
+    for (i = 0; i < 500 && !hwnd; i++)
+    {
+        hwnd = FindWindowA( "MsiDialogCloseClass", NULL );
+        if (!hwnd) Sleep( 20 );
+    }
+    if (!hwnd) return 1;
+    Sleep( 200 );
+    PostMessageA( hwnd, WM_KEYDOWN, VK_RETURN, 0x1c0001 );
+    PostMessageA( hwnd, WM_KEYUP, VK_RETURN, 0xc01c0001 );
+    return 0;
+}
+
+static UINT run_dialog_enter( MSIHANDLE hpkg, const char *dialog )
+{
+    HANDLE thread = CreateThread( NULL, 0, press_enter_thread, NULL, 0, NULL );
+    UINT r = MsiDoActionA( hpkg, dialog );
+    DWORD code = 1;
+
+    WaitForSingleObject( thread, INFINITE );
+    GetExitCodeThread( thread, &code );
+    ok( !code, "no dialog window for %s\n", dialog );
+    CloseHandle( thread );
+    return r;
+}
+
+static void test_controlcondition_default(void)
+{
+    MSIHANDLE hdb, hpkg;
+    char buf[16];
+    DWORD size;
+    UINT r;
+
+    MsiSetInternalUI( INSTALLUILEVEL_FULL, NULL );
+
+    hdb = create_package_db();
+    ok( hdb, "failed to create database\n" );
+
+    create_dialog_table( hdb );
+    /* Control_Default names "exit"; a ControlCondition makes "next" the
+     * default instead in the dialog where its condition is true */
+    r = run_query( hdb, 0, "INSERT INTO `Dialog` (`Dialog`, `HCentering`, `VCentering`, `Width`, `Height`, "
+                   "`Attributes`, `Control_First`, `Control_Default`) VALUES ('defnext', 50, 50, 100, 60, 3, 'exit', 'exit')" );
+    ok( r == ERROR_SUCCESS, "got %u\n", r );
+    r = run_query( hdb, 0, "INSERT INTO `Dialog` (`Dialog`, `HCentering`, `VCentering`, `Width`, `Height`, "
+                   "`Attributes`, `Control_First`, `Control_Default`) VALUES ('defexit', 50, 50, 100, 60, 3, 'exit', 'exit')" );
+    ok( r == ERROR_SUCCESS, "got %u\n", r );
+
+    create_control_table( hdb );
+    add_control_entry( hdb, "'defnext', 'exit', 'PushButton', 10, 10, 66, 17, 3, 'Exit'" );
+    add_control_entry( hdb, "'defnext', 'next', 'PushButton', 10, 30, 66, 17, 3, 'Next'" );
+    add_control_entry( hdb, "'defexit', 'exit', 'PushButton', 10, 10, 66, 17, 3, 'Exit'" );
+    add_control_entry( hdb, "'defexit', 'next', 'PushButton', 10, 30, 66, 17, 3, 'Next'" );
+
+    /* each button names itself in CHOSEN, then ends the dialog */
+    create_controlevent_table( hdb );
+    add_controlevent_entry( hdb, "'defnext', 'exit', '[CHOSEN]', 'exit', 1, 1" );
+    add_controlevent_entry( hdb, "'defnext', 'exit', 'EndDialog', 'Exit', 1, 2" );
+    add_controlevent_entry( hdb, "'defnext', 'next', '[CHOSEN]', 'next', 1, 1" );
+    add_controlevent_entry( hdb, "'defnext', 'next', 'EndDialog', 'Exit', 1, 2" );
+    add_controlevent_entry( hdb, "'defexit', 'exit', '[CHOSEN]', 'exit', 1, 1" );
+    add_controlevent_entry( hdb, "'defexit', 'exit', 'EndDialog', 'Exit', 1, 2" );
+    add_controlevent_entry( hdb, "'defexit', 'next', '[CHOSEN]', 'next', 1, 1" );
+    add_controlevent_entry( hdb, "'defexit', 'next', 'EndDialog', 'Exit', 1, 2" );
+
+    r = run_query( hdb, 0, "CREATE TABLE `ControlCondition` (`Dialog_` CHAR(72) NOT NULL, `Control_` CHAR(50) NOT NULL, "
+                   "`Action` CHAR(50) NOT NULL, `Condition` CHAR(255) NOT NULL "
+                   "PRIMARY KEY `Dialog_`, `Control_`, `Action`, `Condition`)" );
+    ok( r == ERROR_SUCCESS, "failed to create ControlCondition table: %u\n", r );
+    r = run_query( hdb, 0, "INSERT INTO `ControlCondition` (`Dialog_`, `Control_`, `Action`, `Condition`) "
+                   "VALUES ('defnext', 'next', 'Default', '1')" );
+    ok( r == ERROR_SUCCESS, "got %u\n", r );
+    r = run_query( hdb, 0, "INSERT INTO `ControlCondition` (`Dialog_`, `Control_`, `Action`, `Condition`) "
+                   "VALUES ('defexit', 'next', 'Default', '0')" );
+    ok( r == ERROR_SUCCESS, "got %u\n", r );
+
+    r = package_from_db( hdb, &hpkg );
+    if (r == ERROR_INSTALL_PACKAGE_REJECTED)
+    {
+        skip( "Not enough rights to perform tests\n" );
+        DeleteFileA( msifile );
+        return;
+    }
+    ok( r == ERROR_SUCCESS, "failed to create package: %u\n", r );
+
+    r = run_dialog_enter( hpkg, "defnext" );
+    ok( r == ERROR_INSTALL_USEREXIT, "got %u\n", r );
+    size = sizeof(buf);
+    r = MsiGetPropertyA( hpkg, "CHOSEN", buf, &size );
+    ok( r == ERROR_SUCCESS, "got %u\n", r );
+    ok( !strcmp( buf, "next" ), "Enter with a Default condition true chose %s\n", buf );
+
+    r = run_dialog_enter( hpkg, "defexit" );
+    ok( r == ERROR_INSTALL_USEREXIT, "got %u\n", r );
+    size = sizeof(buf);
+    r = MsiGetPropertyA( hpkg, "CHOSEN", buf, &size );
+    ok( r == ERROR_SUCCESS, "got %u\n", r );
+    ok( !strcmp( buf, "exit" ), "Enter with a Default condition false chose %s\n", buf );
+
+    MsiCloseHandle( hpkg );
+    MsiSetInternalUI( INSTALLUILEVEL_NONE, NULL );
+    DeleteFileA( msifile );
+}
+
 static const struct externalui_message toplevel_install_sequence[] = {
     {INSTALLMESSAGE_ACTIONSTART, 3, {"", "INSTALL", "", ""}, {0, 1, 1, 1}},
     {INSTALLMESSAGE_INFO, 2, {"", "INSTALL", ""}, {0, 1, 1}},
@@ -9600,6 +9710,7 @@ START_TEST(package)
     test_externalui();
     test_externalui_message();
     test_controlevent();
+    test_controlcondition_default();
     test_top_level_action();
 
     SetCurrentDirectoryA(prev_path);

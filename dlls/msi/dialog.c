@@ -1484,7 +1484,17 @@ static UINT dialog_set_control_condition( MSIRECORD *rec, void *param )
         else if (!wcscmp( action, L"Enable" ))
             EnableWindow(control->hwnd, TRUE);
         else if (!wcscmp( action, L"Default" ))
+        {
+            /* the control Enter activates from now on, in place of the
+             * Dialog table's Control_Default */
+            WCHAR *def = wcsdup( control->name );
+            if (def)
+            {
+                free( dialog->control_default );
+                dialog->control_default = def;
+            }
             SetFocus(control->hwnd);
+        }
         else
             FIXME("Unhandled action %s\n", debugstr_w(action));
     }
