@@ -37,6 +37,9 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
+#ifdef __wasm__
+# include <sys/prctl.h>
+#endif
 #ifdef HAVE_SYS_SYSINFO_H
 # include <sys/sysinfo.h>
 #endif
@@ -329,6 +332,20 @@ static void say_beyond_code_space( const char *what, const void *base, size_t si
              what, base, (const char *)base + size, w64_code_space_start, w64_code_space_limit );
     else
         TRACE( "%s %p-%p outside gex's code space refused\n", what, base, (const char *)base + size );
+}
+
+/* a reservation with no address the lowered memory has no room for, told to
+ * gex (its PR_GEX_SHORT prctl): a 64-bit memory may hold it. gex only notes
+ * it, and gives the program that memory from its next start if it then ends
+ * abnormally. Said once for each size larger than any said before (a
+ * program that falls back asks for less). virtual_mutex held. */
+static void say_short( size_t size )
+{
+    static size_t said;
+
+    if (size <= said) return;
+    said = size;
+    prctl( 0x47450003, size, 0, 0, 0 );
 }
 #endif
 
@@ -2599,10 +2616,14 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
         {
 #ifdef W64_CODE_SPLIT
             if (!(ptr = w64_outside_band( map_free_area, start, end, host_size, top_down, unix_prot, align_mask )))
+            {
+                if (!(vprot & VPROT_EXEC) && !limit_high) say_short( host_size );
+                return STATUS_NO_MEMORY;
+            }
 #else
             if (!(ptr = map_free_area( start, end, host_size, top_down, unix_prot, align_mask )))
-#endif
                 return STATUS_NO_MEMORY;
+#endif
             TRACE( "got mem with map_free_area %p-%p\n", ptr, (char *)ptr + size );
             goto done;
         }
@@ -5974,6 +5995,15 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
         /* (lowered to wasm32, the limit is 4 GiB, so a large fixed
          * reservation ends here before the address check below) */
         if (*ret) say_fixed_beyond_16g( *ret, size );
+#endif
+#ifdef W64_CODE_SPLIT
+        /* (and one with no address larger than the whole lowered space) */
+        if (!*ret && !limit_high && !(protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)))
+        {
+            server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+            say_short( size );
+            server_leave_uninterrupted_section( &virtual_mutex, &sigset );
+        }
 #endif
         return STATUS_WORKING_SET_LIMIT_RANGE;
     }
