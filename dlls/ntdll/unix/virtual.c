@@ -3692,13 +3692,40 @@ static unsigned int get_mapping_info( HANDLE handle, ACCESS_MASK access, unsigne
 }
 
 
+#ifdef __wasm64__
+/* Whether the image in `fd` cannot move: its relocations stripped, or it
+ * has no relocation directory (the loader cannot relocate it). */
+static BOOL image_cannot_move( int fd, const struct pe_image_info *image_info )
+{
+    union { IMAGE_NT_HEADERS32 nt32; IMAGE_NT_HEADERS64 nt64; } nt;
+    const IMAGE_DATA_DIRECTORY *dir;
+    DWORD lfanew, count;
+
+    if (image_info->image_charact & IMAGE_FILE_RELOCS_STRIPPED) return TRUE;
+    if (pread( fd, &lfanew, sizeof(lfanew), 0x3c ) != sizeof(lfanew)) return FALSE;
+    if (pread( fd, &nt, sizeof(nt), lfanew ) != sizeof(nt)) return FALSE;
+    if (nt.nt64.OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+    {
+        count = nt.nt64.OptionalHeader.NumberOfRvaAndSizes;
+        dir = &nt.nt64.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+    }
+    else if (nt.nt32.OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC)
+    {
+        count = nt.nt32.OptionalHeader.NumberOfRvaAndSizes;
+        dir = &nt.nt32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+    }
+    else return FALSE;
+    return count <= IMAGE_DIRECTORY_ENTRY_BASERELOC || !dir->VirtualAddress || !dir->Size;
+}
+#endif
+
 /***********************************************************************
  *             map_image_view
  *
  * Map a view for a PE image at an appropriate address.
  */
 static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_info *image_info, SIZE_T size,
-                                ULONG_PTR limit_low, ULONG_PTR limit_high, ULONG alloc_type )
+                                ULONG_PTR limit_low, ULONG_PTR limit_high, ULONG alloc_type, BOOL cannot_move )
 {
     unsigned int vprot = SEC_IMAGE | SEC_FILE | VPROT_COMMITTED | VPROT_READ | VPROT_EXEC | VPROT_WRITECOPY;
     void *base;
@@ -3724,18 +3751,20 @@ static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_inf
     }
 #ifdef W64_CODE_SPLIT
     /* the compact space: an image's own base or the server's above the
-     * band would set the memory's size; it is placed in the band instead */
-    if (gex_compact && (char *)base >= w64_band_hi) base = NULL;
+     * band would set the memory's size; it is placed in the band instead,
+     * unless it cannot move (the memory then grows to hold it there) */
+    if (gex_compact && (char *)base >= w64_band_hi && !cannot_move) base = NULL;
 #endif
 #if defined(__wasm64__) && defined(GEX_MEMORY64)
     /* gex, a 64-bit memory with a top (the page's arena, [4 GiB, top)): a
      * program that can move and that dll-bases does not pin goes top down
      * with the DLLs, not at its own base, as Windows' ASLR puts it high. At
      * its base (0x140000000 for most) it cut the arena in two, and a large
-     * reservation (the .NET GC's) found no gap. One without relocations, or
-     * whose base is below 4 GiB, stays where it was. */
+     * reservation (the .NET GC's) found no gap. One without relocations
+     * (dynamic base or not), or whose base is below 4 GiB, stays where it
+     * was. */
     if (!(image_info->image_charact & IMAGE_FILE_DLL) &&
-        (image_info->image_flags & IMAGE_FLAGS_ImageDynamicallyRelocated) &&
+        (image_info->image_flags & IMAGE_FLAGS_ImageDynamicallyRelocated) && !cannot_move &&
         !image_info->map_addr && image_info->base >= limit_4g && gex_space_top())
     {
         base = NULL;
@@ -3834,6 +3863,7 @@ static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size
     struct file_view *view;
     unsigned int status;
     sigset_t sigset;
+    BOOL cannot_move = FALSE;
 
     if (offset >= size)
         return STATUS_INVALID_PARAMETER;
@@ -3865,9 +3895,18 @@ static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size
         SERVER_END_REQ;
     }
 
+    /* (only an image above the band, or above 4 GiB in a 64-bit memory,
+     * may be moved from its base) */
+#ifdef W64_CODE_SPLIT
+    if (pe_mapping->image.base >= (ULONG_PTR)w64_band_hi)
+        cannot_move = image_cannot_move( unix_fd, &pe_mapping->image );
+#elif defined(__wasm64__) && defined(GEX_MEMORY64)
+    if (pe_mapping->image.base >= limit_4g)
+        cannot_move = image_cannot_move( unix_fd, &pe_mapping->image );
+#endif
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
 
-    status = map_image_view( &view, &pe_mapping->image, size, limit_low, limit_high, alloc_type );
+    status = map_image_view( &view, &pe_mapping->image, size, limit_low, limit_high, alloc_type, cannot_move );
     if (status) goto done;
 
     status = map_image_into_view( view, &pe_mapping->nt_name, unix_fd, &pe_mapping->image,
