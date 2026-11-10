@@ -793,6 +793,15 @@ NTSTATUS WINAPI NtGdiDdDDIQueryVideoMemoryInfo( D3DKMT_QUERYVIDEOMEMORYINFO *des
 }
 
 /******************************************************************************
+ *           NtGdiDdDDISetProcessSchedulingPriorityClass    (win32u.@)
+ */
+NTSTATUS WINAPI NtGdiDdDDISetProcessSchedulingPriorityClass( HANDLE process, D3DKMT_SCHEDULINGPRIORITYCLASS priority )
+{
+    FIXME( "(%p, %d): stub\n", process, priority );
+    return STATUS_SUCCESS;
+}
+
+/******************************************************************************
  *           NtGdiDdDDISetQueuedLimit    (win32u.@)
  */
 NTSTATUS WINAPI NtGdiDdDDISetQueuedLimit( D3DKMT_SETQUEUEDLIMIT *desc )

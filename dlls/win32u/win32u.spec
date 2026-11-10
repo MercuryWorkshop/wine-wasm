@@ -360,7 +360,7 @@
 @ stub -syscall NtGdiDdDDISetMonitorColorSpaceTransform
 @ stub -syscall NtGdiDdDDISetProcessDeviceRemovalSupport
 @ stub -syscall NtGdiDdDDISetProcessSchedulingPriorityBand
-@ stub -syscall NtGdiDdDDISetProcessSchedulingPriorityClass
+@ stdcall -syscall NtGdiDdDDISetProcessSchedulingPriorityClass(ptr long)
 @ stdcall -syscall NtGdiDdDDISetQueuedLimit(ptr)
 @ stub -syscall NtGdiDdDDISetStablePowerState
 @ stub -syscall NtGdiDdDDISetStereoEnabled

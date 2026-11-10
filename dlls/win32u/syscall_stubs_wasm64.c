@@ -2197,10 +2197,10 @@ NTSTATUS WINAPI NtGdiDdDDISetProcessSchedulingPriorityBand(void)
     return __gexw_syscall64( __id_NtGdiDdDDISetProcessSchedulingPriorityBand, 0, 0 );
 }
 
-NTSTATUS WINAPI NtGdiDdDDISetProcessSchedulingPriorityClass(void);
-NTSTATUS WINAPI NtGdiDdDDISetProcessSchedulingPriorityClass(void)
+NTSTATUS WINAPI NtGdiDdDDISetProcessSchedulingPriorityClass( HANDLE a0, D3DKMT_SCHEDULINGPRIORITYCLASS a1 )
 {
-    return __gexw_syscall64( __id_NtGdiDdDDISetProcessSchedulingPriorityClass, 0, 0 );
+    const ULONG64 w[2] = { (ULONG_PTR)a0, (ULONG64)a1 };
+    return (NTSTATUS)__gexw_syscall64( __id_NtGdiDdDDISetProcessSchedulingPriorityClass, w, 2 );
 }
 
 NTSTATUS WINAPI NtGdiDdDDISetQueuedLimit( D3DKMT_SETQUEUEDLIMIT * a0 )

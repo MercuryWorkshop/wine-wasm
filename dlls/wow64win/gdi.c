@@ -1509,6 +1509,14 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIReleaseKeyedMutex2( UINT *args )
     return status;
 }
 
+NTSTATUS WINAPI wow64_NtGdiDdDDISetProcessSchedulingPriorityClass( UINT *args )
+{
+    HANDLE process = get_handle( &args );
+    D3DKMT_SCHEDULINGPRIORITYCLASS priority = get_ulong( &args );
+
+    return NtGdiDdDDISetProcessSchedulingPriorityClass( process, priority );
+}
+
 NTSTATUS WINAPI wow64_NtGdiDdDDISetQueuedLimit( UINT *args )
 {
     D3DKMT_SETQUEUEDLIMIT *desc = get_ptr( &args );

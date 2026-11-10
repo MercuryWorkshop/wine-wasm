@@ -425,6 +425,11 @@ NTSTATUS SYSCALL_API NtGdiDdDDIReleaseKeyedMutex2( D3DKMT_RELEASEKEYEDMUTEX2 *pa
     SYSCALL_FUNC( NtGdiDdDDIReleaseKeyedMutex2 );
 }
 
+NTSTATUS SYSCALL_API NtGdiDdDDISetProcessSchedulingPriorityClass( HANDLE process, D3DKMT_SCHEDULINGPRIORITYCLASS priority )
+{
+    SYSCALL_FUNC( NtGdiDdDDISetProcessSchedulingPriorityClass );
+}
+
 NTSTATUS SYSCALL_API NtGdiDdDDISetQueuedLimit( D3DKMT_SETQUEUEDLIMIT *desc )
 {
     SYSCALL_FUNC( NtGdiDdDDISetQueuedLimit );

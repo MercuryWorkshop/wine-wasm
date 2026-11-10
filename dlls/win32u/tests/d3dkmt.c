@@ -1150,6 +1150,16 @@ static void test_D3DKMTSetVidPnSourceOwner(void)
     ok( status == STATUS_INVALID_PARAMETER, "Got unexpected return code %#lx.\n", status );
 }
 
+static void test_D3DKMTSetProcessSchedulingPriorityClass(void)
+{
+    NTSTATUS status;
+
+    status = D3DKMTSetProcessSchedulingPriorityClass( GetCurrentProcess(), D3DKMT_SCHEDULINGPRIORITYCLASS_ABOVE_NORMAL );
+    ok( status == STATUS_SUCCESS, "Got unexpected return code %#lx.\n", status );
+    status = D3DKMTSetProcessSchedulingPriorityClass( GetCurrentProcess(), D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL );
+    ok( status == STATUS_SUCCESS, "Got unexpected return code %#lx.\n", status );
+}
+
 static void test_D3DKMTCheckOcclusion(void)
 {
     DISPLAY_DEVICEW display_device = {sizeof(display_device)};
@@ -6773,6 +6783,7 @@ START_TEST( d3dkmt )
     test_D3DKMTDestroyDevice();
     test_D3DKMTCheckVidPnExclusiveOwnership();
     test_D3DKMTSetVidPnSourceOwner();
+    test_D3DKMTSetProcessSchedulingPriorityClass();
     test_D3DKMTCheckOcclusion();
     test_D3DKMTOpenAdapterFromDeviceName();
     test_D3DKMTQueryAdapterInfo();
