@@ -593,7 +593,8 @@ int __cdecl wmain (int argc, WCHAR *argv[])
 
                     si.StartupInfo.wShowWindow = opts.sei.nShow;
                     si.StartupInfo.dwFlags |= STARTF_USESHOWWINDOW;
-                    si.StartupInfo.lpTitle = opts.title;
+                    /* an empty title ("" before the program) leaves the console its default one, as on Windows */
+                    si.StartupInfo.lpTitle = opts.title && *opts.title ? opts.title : NULL;
 
                     if (!CreateProcessW( opts.sei.lpFile, commandline, NULL, NULL, opts.cp_inherit,
                                          opts.creation_flags, NULL, opts.sei.lpDirectory,
