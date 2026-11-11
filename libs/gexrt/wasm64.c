@@ -327,6 +327,29 @@ static inline int cur_ctx(void)
     return ctx ? ctx : gex_provider_ctx();
 }
 
+/* winnt.h's interlocked operations at an address that is not a multiple
+ * of their size (__wine_split_*): wasm's atomics trap there, x86 makes such
+ * an access atomic (a split lock). Done as gex's translated code does it
+ * (gex_abi.h's gex_locked_misaligned), so that the guest's own locked
+ * accesses to the same field and native Wine's are atomic against each
+ * other. Each returns the old value. */
+#define SPLIT(name, op) \
+unsigned long long __wine_split_##name( volatile void *dest, unsigned int size, unsigned long long val ) \
+{ \
+    return gex_locked_misaligned( cur_ctx(), 0, (uintptr_t)dest, size, op, val, 0 ); \
+}
+SPLIT(add, GEX_LK_ADD)
+SPLIT(and, GEX_LK_AND)
+SPLIT(or, GEX_LK_OR)
+SPLIT(xor, GEX_LK_XOR)
+SPLIT(xchg, GEX_LK_XCHG)
+#undef SPLIT
+unsigned long long __wine_split_cas( volatile void *dest, unsigned int size, unsigned long long compare,
+                                     unsigned long long xchg )
+{
+    return gex_locked_misaligned( cur_ctx(), 0, (uintptr_t)dest, size, GEX_LK_CAS, compare, xchg );
+}
+
 /* NtCurrentTeb(): the guest thread's GS base. */
 void *__wine_wasm_current_teb(void)
 {

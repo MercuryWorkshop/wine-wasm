@@ -1850,8 +1850,9 @@ __ASM_STDCALL_FUNC(InterlockedDecrement, 4,
 
 #elif defined(__wasm32__)
 
-/* (the i386 exports, on the guest's shared memory: wasm atomics; the
- * names are macros for the compiler builtins in Wine's headers) */
+/* (the i386 exports, on the guest's shared memory: wasm atomics, and the
+ * split-lock form at an address they refuse, as winnt.h's; the names are
+ * macros for the compiler builtins in Wine's headers) */
 #undef InterlockedCompareExchange
 #undef InterlockedExchange
 #undef InterlockedExchangeAdd
@@ -1859,22 +1860,27 @@ __ASM_STDCALL_FUNC(InterlockedDecrement, 4,
 #undef InterlockedDecrement
 LONG WINAPI InterlockedCompareExchange( LONG volatile *dest, LONG xchg, LONG compare )
 {
+    __WINE_SPLIT( dest, (LONG)__wine_split_cas( dest, sizeof(*dest), compare, xchg ) );
     return __sync_val_compare_and_swap( dest, compare, xchg );
 }
 LONG WINAPI InterlockedExchange( LONG volatile *dest, LONG val )
 {
+    __WINE_SPLIT( dest, (LONG)__wine_split_xchg( dest, sizeof(*dest), val ) );
     return __atomic_exchange_n( dest, val, __ATOMIC_SEQ_CST );
 }
 LONG WINAPI InterlockedExchangeAdd( LONG volatile *dest, LONG incr )
 {
+    __WINE_SPLIT( dest, (LONG)__wine_split_add( dest, sizeof(*dest), incr ) );
     return __atomic_fetch_add( dest, incr, __ATOMIC_SEQ_CST );
 }
 LONG WINAPI InterlockedIncrement( LONG volatile *dest )
 {
+    __WINE_SPLIT( dest, (LONG)(__wine_split_add( dest, sizeof(*dest), 1 ) + 1) );
     return __atomic_add_fetch( dest, 1, __ATOMIC_SEQ_CST );
 }
 LONG WINAPI InterlockedDecrement( LONG volatile *dest )
 {
+    __WINE_SPLIT( dest, (LONG)(__wine_split_add( dest, sizeof(*dest), -1 ) - 1) );
     return __atomic_sub_fetch( dest, 1, __ATOMIC_SEQ_CST );
 }
 

@@ -7674,6 +7674,38 @@ static FORCEINLINE void WriteNoFence64( LONG64 volatile *dest, LONG64 value )
 
 #elif defined(__GNUC__)
 
+#ifdef __wasm__
+/* whether p is not a multiple of size: asked of a copy of its address the
+ * compiler cannot see through, which would take the alignment of p's type
+ * (or of an access made through it before) for granted and drop the test */
+static FORCEINLINE int __wine_misaligned( const volatile void *p, unsigned int size )
+{
+    ULONG_PTR addr = (ULONG_PTR)p;
+    __asm__( "" : "+r" (addr) );
+    return (addr & (size - 1)) != 0;
+}
+#define __WINE_MISALIGNED(p) __builtin_expect( __wine_misaligned( (p), sizeof(*(p)) ), 0 )
+#endif
+#if defined(__wasm__) && !defined(WINE_UNIX_LIB)
+/* Native Wine modules on wasm (gex): wasm's atomics trap at an address
+ * that is not a multiple of their size, where x86 makes the access atomic
+ * (a split lock), and a program may hand Wine a lock or a counter at any
+ * address. Such an access goes to libs/gexrt (__wine_split_*), which does
+ * it as gex's translated code does, atomic against the program's own
+ * locked accesses there; the old value. (Not the Unix side's, which
+ * gexrt is not linked into and no program's objects reach.) */
+unsigned __int64 __wine_split_cas( volatile void *dest, unsigned int size, unsigned __int64 compare, unsigned __int64 xchg );
+unsigned __int64 __wine_split_add( volatile void *dest, unsigned int size, unsigned __int64 val );
+unsigned __int64 __wine_split_and( volatile void *dest, unsigned int size, unsigned __int64 val );
+unsigned __int64 __wine_split_or( volatile void *dest, unsigned int size, unsigned __int64 val );
+unsigned __int64 __wine_split_xor( volatile void *dest, unsigned int size, unsigned __int64 val );
+unsigned __int64 __wine_split_xchg( volatile void *dest, unsigned int size, unsigned __int64 val );
+/* return `ret` (of the type of *dest) from the split-lock form when dest is misaligned */
+#define __WINE_SPLIT(dest, ret) do { if (__WINE_MISALIGNED(dest)) return (ret); } while (0)
+#else
+#define __WINE_SPLIT(dest, ret) do { } while (0)
+#endif
+
 static FORCEINLINE BOOLEAN WINAPI BitScanForward(DWORD *index, DWORD mask)
 {
     *index = __builtin_ctz( mask );
@@ -7700,16 +7732,19 @@ static FORCEINLINE BOOLEAN WINAPI BitScanReverse64(DWORD *index, DWORD64 mask)
 
 static FORCEINLINE LONG WINAPI InterlockedAdd( LONG volatile *dest, LONG val )
 {
+    __WINE_SPLIT( dest, (LONG)(__wine_split_add( dest, sizeof(*dest), val ) + val) );
     return __sync_add_and_fetch( dest, val );
 }
 
 static FORCEINLINE LONGLONG WINAPI InterlockedAdd64( LONGLONG volatile *dest, LONGLONG val )
 {
+    __WINE_SPLIT( dest, (LONGLONG)(__wine_split_add( dest, sizeof(*dest), val ) + val) );
     return __sync_add_and_fetch( dest, val );
 }
 
 static FORCEINLINE LONG WINAPI InterlockedAnd( LONG volatile *dest, LONG val )
 {
+    __WINE_SPLIT( dest, (LONG)__wine_split_and( dest, sizeof(*dest), val ) );
     return __sync_fetch_and_and( dest, val );
 }
 
@@ -7720,16 +7755,19 @@ static FORCEINLINE char WINAPI InterlockedAnd8( char volatile *dest, char val )
 
 static FORCEINLINE short WINAPI InterlockedAnd16( short volatile *dest, short val )
 {
+    __WINE_SPLIT( dest, (short)__wine_split_and( dest, sizeof(*dest), val ) );
     return __sync_fetch_and_and( dest, val );
 }
 
 static FORCEINLINE LONGLONG WINAPI InterlockedAnd64( LONGLONG volatile *dest, LONGLONG val )
 {
+    __WINE_SPLIT( dest, (LONGLONG)__wine_split_and( dest, sizeof(*dest), val ) );
     return __sync_fetch_and_and( dest, val );
 }
 
 static FORCEINLINE LONG WINAPI InterlockedCompareExchange( LONG volatile *dest, LONG xchg, LONG compare )
 {
+    __WINE_SPLIT( dest, (LONG)__wine_split_cas( dest, sizeof(*dest), compare, xchg ) );
     return __sync_val_compare_and_swap( dest, compare, xchg );
 }
 
@@ -7740,22 +7778,26 @@ static FORCEINLINE char WINAPI InterlockedCompareExchange8( char volatile *dest,
 
 static FORCEINLINE short WINAPI InterlockedCompareExchange16( short volatile *dest, short xchg, short compare )
 {
+    __WINE_SPLIT( dest, (short)__wine_split_cas( dest, sizeof(*dest), compare, xchg ) );
     return __sync_val_compare_and_swap( dest, compare, xchg );
 }
 
 static FORCEINLINE void * WINAPI InterlockedCompareExchangePointer( void *volatile *dest, void *xchg, void *compare )
 {
+    __WINE_SPLIT( dest, (void *)(ULONG_PTR)__wine_split_cas( dest, sizeof(*dest), (ULONG_PTR)compare, (ULONG_PTR)xchg ) );
     return __sync_val_compare_and_swap( dest, compare, xchg );
 }
 
 static FORCEINLINE LONGLONG WINAPI InterlockedCompareExchange64( LONGLONG volatile *dest, LONGLONG xchg, LONGLONG compare )
 {
+    __WINE_SPLIT( dest, (LONGLONG)__wine_split_cas( dest, sizeof(*dest), compare, xchg ) );
     return __sync_val_compare_and_swap( dest, compare, xchg );
 }
 
 static FORCEINLINE LONG WINAPI InterlockedExchange( LONG volatile *dest, LONG val )
 {
     LONG ret;
+    __WINE_SPLIT( dest, (LONG)__wine_split_xchg( dest, sizeof(*dest), val ) );
 #if (__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 7)) || defined(__clang__)
     ret = __atomic_exchange_n( dest, val, __ATOMIC_SEQ_CST );
 #elif defined(__i386__) || defined(__x86_64__)
@@ -7784,6 +7826,7 @@ static FORCEINLINE char WINAPI InterlockedExchange8( char volatile *dest, char v
 static FORCEINLINE short WINAPI InterlockedExchange16( short volatile *dest, short val )
 {
     short ret;
+    __WINE_SPLIT( dest, (short)__wine_split_xchg( dest, sizeof(*dest), val ) );
 #if (__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 7)) || defined(__clang__)
     ret = __atomic_exchange_n( dest, val, __ATOMIC_SEQ_CST );
 #elif defined(__i386__) || defined(__x86_64__)
@@ -7797,6 +7840,7 @@ static FORCEINLINE short WINAPI InterlockedExchange16( short volatile *dest, sho
 
 static FORCEINLINE LONG WINAPI InterlockedExchangeAdd( LONG volatile *dest, LONG incr )
 {
+    __WINE_SPLIT( dest, (LONG)__wine_split_add( dest, sizeof(*dest), incr ) );
     return __sync_fetch_and_add( dest, incr );
 }
 
@@ -7807,47 +7851,56 @@ static FORCEINLINE char WINAPI InterlockedExchangeAdd8( char volatile *dest, cha
 
 static FORCEINLINE short WINAPI InterlockedExchangeAdd16( short volatile *dest, short incr )
 {
+    __WINE_SPLIT( dest, (short)__wine_split_add( dest, sizeof(*dest), incr ) );
     return __sync_fetch_and_add( dest, incr );
 }
 
 static FORCEINLINE LONGLONG WINAPI InterlockedExchangeAdd64( LONGLONG volatile *dest, LONGLONG incr )
 {
+    __WINE_SPLIT( dest, (LONGLONG)__wine_split_add( dest, sizeof(*dest), incr ) );
     return __sync_fetch_and_add( dest, incr );
 }
 
 static FORCEINLINE LONG WINAPI InterlockedIncrement( LONG volatile *dest )
 {
+    __WINE_SPLIT( dest, (LONG)(__wine_split_add( dest, sizeof(*dest), 1 ) + 1) );
     return __sync_add_and_fetch( dest, 1 );
 }
 
 static FORCEINLINE short WINAPI InterlockedIncrement16( short volatile *dest )
 {
+    __WINE_SPLIT( dest, (short)(__wine_split_add( dest, sizeof(*dest), 1 ) + 1) );
     return __sync_add_and_fetch( dest, 1 );
 }
 
 static FORCEINLINE LONGLONG WINAPI InterlockedIncrement64( LONGLONG volatile *dest )
 {
+    __WINE_SPLIT( dest, (LONGLONG)(__wine_split_add( dest, sizeof(*dest), 1 ) + 1) );
     return __sync_add_and_fetch( dest, 1 );
 }
 
 static FORCEINLINE LONG WINAPI InterlockedDecrement( LONG volatile *dest )
 {
+    __WINE_SPLIT( dest, (LONG)(__wine_split_add( dest, sizeof(*dest), -1 ) - 1) );
     return __sync_add_and_fetch( dest, -1 );
 }
 
 static FORCEINLINE short WINAPI InterlockedDecrement16( short volatile *dest )
 {
+    __WINE_SPLIT( dest, (short)(__wine_split_add( dest, sizeof(*dest), -1 ) - 1) );
     return __sync_add_and_fetch( dest, -1 );
 }
 
 static FORCEINLINE LONGLONG WINAPI InterlockedDecrement64( LONGLONG volatile *dest )
 {
+    __WINE_SPLIT( dest, (LONGLONG)(__wine_split_add( dest, sizeof(*dest), -1 ) - 1) );
     return __sync_add_and_fetch( dest, -1 );
 }
 
 static FORCEINLINE void * WINAPI InterlockedExchangePointer( void *volatile *dest, void *val )
 {
     void *ret;
+    __WINE_SPLIT( dest, (void *)(ULONG_PTR)__wine_split_xchg( dest, sizeof(*dest), (ULONG_PTR)val ) );
 #if (__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 7)) || defined(__clang__)
     ret = __atomic_exchange_n( dest, val, __ATOMIC_SEQ_CST );
 #elif defined(__x86_64__)
@@ -7862,6 +7915,7 @@ static FORCEINLINE void * WINAPI InterlockedExchangePointer( void *volatile *des
 
 static FORCEINLINE LONG WINAPI InterlockedOr( LONG volatile *dest, LONG val )
 {
+    __WINE_SPLIT( dest, (LONG)__wine_split_or( dest, sizeof(*dest), val ) );
     return __sync_fetch_and_or( dest, val );
 }
 
@@ -7872,16 +7926,19 @@ static FORCEINLINE char WINAPI InterlockedOr8( char volatile *dest, char val )
 
 static FORCEINLINE short WINAPI InterlockedOr16( short volatile *dest, short val )
 {
+    __WINE_SPLIT( dest, (short)__wine_split_or( dest, sizeof(*dest), val ) );
     return __sync_fetch_and_or( dest, val );
 }
 
 static FORCEINLINE LONGLONG WINAPI InterlockedOr64( LONGLONG volatile *dest, LONGLONG val )
 {
+    __WINE_SPLIT( dest, (LONGLONG)__wine_split_or( dest, sizeof(*dest), val ) );
     return __sync_fetch_and_or( dest, val );
 }
 
 static FORCEINLINE LONG WINAPI InterlockedXor( LONG volatile *dest, LONG val )
 {
+    __WINE_SPLIT( dest, (LONG)__wine_split_xor( dest, sizeof(*dest), val ) );
     return __sync_fetch_and_xor( dest, val );
 }
 
@@ -7892,11 +7949,13 @@ static FORCEINLINE char WINAPI InterlockedXor8( char volatile *dest, char val )
 
 static FORCEINLINE short WINAPI InterlockedXor16( short volatile *dest, short val )
 {
+    __WINE_SPLIT( dest, (short)__wine_split_xor( dest, sizeof(*dest), val ) );
     return __sync_fetch_and_xor( dest, val );
 }
 
 static FORCEINLINE LONGLONG WINAPI InterlockedXor64( LONGLONG volatile *dest, LONGLONG val )
 {
+    __WINE_SPLIT( dest, (LONGLONG)__wine_split_xor( dest, sizeof(*dest), val ) );
     return __sync_fetch_and_xor( dest, val );
 }
 
@@ -8028,6 +8087,18 @@ static FORCEINLINE unsigned long InterlockedCompareExchange( unsigned long volat
 #define __WINE_ATOMIC_LOAD_RELAXED(ptr, ret) do { C_ASSERT(sizeof(*(ptr)) <= sizeof(void *)); *(ret) = *(ptr); } while (0)
 #define __WINE_ATOMIC_STORE_RELEASE(ptr, val) do { C_ASSERT(sizeof(*(ptr)) <= sizeof(void *)); __asm__ __volatile__( "" ::: "memory" ); *(ptr) = *(val); } while (0)
 #define __WINE_ATOMIC_STORE_RELAXED(ptr, val) do { C_ASSERT(sizeof(*(ptr)) <= sizeof(void *)); *(ptr) = *(val); } while (0)
+#elif defined(__wasm__)
+/* (at an address that is not a multiple of the size, a plain access, which
+ * wasm's atomics refuse there: on x86 such an access is no more atomic;
+ * between compiler fences, so a loop reading it reads it each time) */
+#define __WINE_ATOMIC_LOAD(ptr, ret, order) do { if (__WINE_MISALIGNED(ptr)) { __atomic_signal_fence( __ATOMIC_SEQ_CST ); __builtin_memcpy( (ret), (const void *)(ULONG_PTR)(ptr), sizeof(*(ptr)) ); __atomic_thread_fence( order ); } \
+                                                  else __atomic_load( ptr, ret, order ); } while (0)
+#define __WINE_ATOMIC_STORE(ptr, val, order) do { if (__WINE_MISALIGNED(ptr)) { __atomic_thread_fence( order ); __builtin_memcpy( (void *)(ULONG_PTR)(ptr), (val), sizeof(*(ptr)) ); __atomic_signal_fence( __ATOMIC_SEQ_CST ); } \
+                                                   else __atomic_store( ptr, val, order ); } while (0)
+#define __WINE_ATOMIC_LOAD_ACQUIRE(ptr, ret) __WINE_ATOMIC_LOAD(ptr, ret, __ATOMIC_ACQUIRE)
+#define __WINE_ATOMIC_LOAD_RELAXED(ptr, ret) __WINE_ATOMIC_LOAD(ptr, ret, __ATOMIC_RELAXED)
+#define __WINE_ATOMIC_STORE_RELEASE(ptr, val) __WINE_ATOMIC_STORE(ptr, val, __ATOMIC_RELEASE)
+#define __WINE_ATOMIC_STORE_RELAXED(ptr, val) __WINE_ATOMIC_STORE(ptr, val, __ATOMIC_RELAXED)
 #else
 #define __WINE_ATOMIC_LOAD_ACQUIRE(ptr, ret) __atomic_load(ptr, ret, __ATOMIC_ACQUIRE)
 #define __WINE_ATOMIC_LOAD_RELAXED(ptr, ret) __atomic_load(ptr, ret, __ATOMIC_RELAXED)

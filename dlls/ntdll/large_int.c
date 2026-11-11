@@ -378,6 +378,7 @@ LONGLONG WINAPI RtlExtendedMagicDivide(
  */
 LONGLONG WINAPI RtlInterlockedCompareExchange64( LONGLONG *dest, LONGLONG xchg, LONGLONG compare )
 {
+    __WINE_SPLIT( dest, (LONGLONG)__wine_split_cas( dest, sizeof(*dest), compare, xchg ) );
     return __sync_val_compare_and_swap( dest, compare, xchg );
 }
 
