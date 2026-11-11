@@ -198,6 +198,7 @@ struct wayland
      * placed by position and z-order, and Win32 -- not the compositor --
      * moves, sizes, maximizes, activates and raises. */
     struct gex_window_placement_manager_v1 *gex_window_placement_manager_v1;
+    UINT gex_window_placement_version;
     struct wl_subcompositor *wl_subcompositor;
     struct wp_fractional_scale_manager_v1 *wp_fractional_scale_manager_v1;
     struct zwp_pointer_constraints_v1 *zwp_pointer_constraints_v1;
@@ -364,6 +365,7 @@ BOOL wayland_process_init(void);
 BOOL wayland_output_create(uint32_t id, uint32_t version);
 void wayland_output_destroy(struct wayland_output *output);
 void wayland_fit_virtual_desktop(void);
+BOOL wayland_desktop_has_surface(HWND hwnd);
 void wayland_fit_virtual_desktop_post(HWND hwnd);
 BOOL wayland_fit_virtual_desktop_changed(void);
 void wayland_output_use_xdg_extension(struct wayland_output *output);

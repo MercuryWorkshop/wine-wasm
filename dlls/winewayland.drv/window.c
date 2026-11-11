@@ -62,10 +62,14 @@ static struct wayland_win_data *wayland_win_data_create(HWND hwnd, const struct 
     struct rb_entry *rb_entry;
     HWND parent;
 
-    /* Don't create win data for desktop or HWND_MESSAGE windows. */
-    if (!(parent = NtUserGetAncestor(hwnd, GA_PARENT))) return NULL;
-    if (parent != NtUserGetDesktopWindow() && !NtUserGetAncestor(parent, GA_PARENT))
-        return NULL;
+    /* Don't create win data for desktop or HWND_MESSAGE windows, except a
+     * virtual desktop's window shown by a compositor with a desktop layer. */
+    if (!wayland_desktop_has_surface(hwnd))
+    {
+        if (!(parent = NtUserGetAncestor(hwnd, GA_PARENT))) return NULL;
+        if (parent != NtUserGetDesktopWindow() && !NtUserGetAncestor(parent, GA_PARENT))
+            return NULL;
+    }
 
     if (!(data = calloc(1, sizeof(*data)))) return NULL;
 
@@ -463,6 +467,9 @@ void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UIN
     struct wayland_surface *owner_surface;
     struct wayland_win_data *data, *owner_data;
     BOOL managed, fullscreen = swp_flags & WINE_SWP_FULLSCREEN;
+    /* The window surface the desktop's window was last painted into. */
+    static struct window_surface *desktop_painted;
+    BOOL repaint = FALSE;
 
     TRACE("hwnd %p new_rects %s after %p flags %08x\n", hwnd, debugstr_window_rects(new_rects), insert_after, swp_flags);
 
@@ -498,10 +505,19 @@ void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UIN
             wayland_surface_place(data->wayland_surface, !(swp_flags & SWP_NOZORDER));
             wl_display_flush(process_wayland.wl_display);
         }
+        /* Nothing exposes a virtual desktop's new surface (the display change
+         * that resizes it does so with SWP_NOREDRAW, as an X server's expose
+         * event would repaint it): paint it, background and icons. */
+        if (hwnd == NtUserGetDesktopWindow() && surface != desktop_painted)
+        {
+            desktop_painted = surface;
+            repaint = TRUE;
+        }
     }
 
     if (owner_data) wayland_win_data_release(owner_data);
     wayland_win_data_release(data);
+    if (repaint) NtUserRedrawWindow(hwnd, NULL, 0, RDW_INVALIDATE | RDW_ERASE);
 }
 
 static void wayland_configure_window(HWND hwnd)

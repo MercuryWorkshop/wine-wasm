@@ -155,9 +155,10 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
     }
     else if (strcmp(interface, "gex_window_placement_manager_v1") == 0)
     {
+        process_wayland.gex_window_placement_version = version < 3 ? version : 3;
         process_wayland.gex_window_placement_manager_v1 =
             wl_registry_bind(registry, id, &gex_window_placement_manager_v1_interface,
-                             version < 2 ? version : 2);
+                             process_wayland.gex_window_placement_version);
     }
     else if (strcmp(interface, "wp_viewporter") == 0)
     {

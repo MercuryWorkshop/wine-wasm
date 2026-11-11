@@ -452,8 +452,9 @@ void wayland_surface_place(struct wayland_surface *surface, BOOL restack)
     }
 
     exstyle = NtUserGetWindowLongW(surface->hwnd, GWL_EXSTYLE);
-    layer = (exstyle & WS_EX_TOPMOST) ? GEX_WINDOW_PLACEMENT_V1_LAYER_TOPMOST
-                                      : GEX_WINDOW_PLACEMENT_V1_LAYER_NORMAL;
+    if (surface->hwnd == NtUserGetDesktopWindow()) layer = GEX_WINDOW_PLACEMENT_V1_LAYER_DESKTOP;
+    else layer = (exstyle & WS_EX_TOPMOST) ? GEX_WINDOW_PLACEMENT_V1_LAYER_TOPMOST
+                                           : GEX_WINDOW_PLACEMENT_V1_LAYER_NORMAL;
     if (layer != surface->placed_layer)
     {
         surface->placed_layer = layer;

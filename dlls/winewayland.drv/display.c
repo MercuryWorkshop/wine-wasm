@@ -336,6 +336,24 @@ void wayland_fit_virtual_desktop(void)
     TRACE("virtual desktop to %ux%u: %d\n", (UINT)mode.dmPelsWidth, (UINT)mode.dmPelsHeight, (int)ret);
 }
 
+/* A virtual desktop's window (explorer /desktop=NAME) is a window like the others
+ * when the compositor places windows and has a layer under them all: it shows the
+ * desktop's background and icons and takes the input over them, as on Windows.
+ * Without a virtual desktop, or with a compositor that has no such layer, the
+ * desktop window has no surface and the compositor's background shows. */
+BOOL wayland_desktop_has_surface(HWND hwnd)
+{
+    USEROBJECTFLAGS flags = {0};
+
+    if (hwnd != NtUserGetDesktopWindow()) return FALSE;
+    if (!process_wayland.gex_window_placement_manager_v1 || process_wayland.gex_window_placement_version < 3)
+        return FALSE;
+    if (!NtUserGetObjectInformation(NtUserGetThreadDesktop(GetCurrentThreadId()), UOI_FLAGS,
+                                    &flags, sizeof(flags), NULL))
+        return FALSE;
+    return !!(flags.dwFlags & DF_WINE_VIRTUAL_DESKTOP);
+}
+
 /***********************************************************************
  *      UpdateDisplayDevices (WAYLAND.@)
  */
