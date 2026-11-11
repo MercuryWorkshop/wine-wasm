@@ -959,7 +959,7 @@ static LRESULT WINAPI desktop_wnd_proc( HWND hwnd, UINT message, WPARAM wp, LPAR
         if (!using_root)
         {
             const struct launcher *launcher = launcher_from_point( (short)LOWORD(lp), (short)HIWORD(lp) );
-            if (launcher) ShellExecuteW( NULL, L"open", launcher->path, NULL, NULL, 0 );
+            if (launcher) ShellExecuteW( NULL, L"open", launcher->path, NULL, NULL, SW_SHOWNORMAL );
         }
         return 0;
 
