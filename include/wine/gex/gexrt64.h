@@ -27,8 +27,12 @@ extern unsigned long long __gexw_entry_page(void);
  *   gexw_callout), each linking to the next outer one;
  * - [25..27], a longjmp to a native frame that guest frames and the
  *   call-outs holding them stand between (__gexw_far_longjmp): the
- *   call-out it waits for, the jmp_buf, the value. */
+ *   call-out it waits for, the jmp_buf, the value;
+ * - [28], under GEXW_DEBUG_ENTRY with ntdll's gexctx channel on: the
+ *   CONTEXT a consolidate callback runs with (RtlRestoreContext), which a
+ *   guest call made inside it should record as its entry's. */
 #define GEXW_TEB_CALLOUTS 0x278
+#define GEXW_TEB_DEBUG_CONTEXT 0x270
 #define GEXW_TEB_JUMP_TO  0x268
 #define GEXW_TEB_JUMP_BUF 0x260
 #define GEXW_TEB_JUMP_VAL 0x258
@@ -45,7 +49,23 @@ struct gexw_callout
     unsigned long long pad_rsp;
     unsigned long long entry_rsp;
     unsigned long long context;
+#ifdef GEXW_DEBUG_ENTRY
+    unsigned long long writer;   /* gexw_get_entry_writer() at the call */
+    unsigned long long retaddr;  /* the innermost entry's return address */
+#endif
 };
+
+/* GEXW_DEBUG_ENTRY (a debugging build switch, off by default): the last
+ * write of the entry context, the kind in the top four bits and a guest
+ * address below: */
+#ifdef GEXW_DEBUG_ENTRY
+#define GEXW_WRITER_ENTER   1ull  /* an entry cleared it; its return address */
+#define GEXW_WRITER_RETURN  2ull  /* an entry returned; its return address */
+#define GEXW_WRITER_UNWOUND 3ull  /* an entry ended by __gexw_unwind; the same */
+#define GEXW_WRITER_SET     4ull  /* gexw_set_entry_context; the value */
+extern unsigned long long gexw_get_entry_writer(void);
+extern unsigned long long gexw_get_entry_writer_prev(void);
+#endif
 
 /* WoW64 (wow64cpu as native code): where gex stops 32-bit code, int3
  * filler on its trampoline page that is never run (gex-kernel's

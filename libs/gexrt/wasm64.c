@@ -63,6 +63,46 @@ __asm__(
     "gexw_entry_rsp_g:\n"
     "\t.globaltype gexw_entry_context_g, i64\n"
     "gexw_entry_context_g:\n"
+#ifdef GEXW_DEBUG_ENTRY
+    /* the last two writes of gexw_entry_context_g (gexrt64.h) */
+    "\t.globaltype gexw_entry_writer_g, i64\n"
+    "gexw_entry_writer_g:\n"
+    "\t.globaltype gexw_entry_writer_prev_g, i64\n"
+    "gexw_entry_writer_prev_g:\n"
+    "\t.globl gexw_get_entry_writer\n"
+    "\t.type gexw_get_entry_writer,@function\n"
+    "gexw_get_entry_writer:\n"
+    "\t.functype gexw_get_entry_writer () -> (i64)\n"
+    "\tglobal.get gexw_entry_writer_g\n"
+    "\tend_function\n"
+    "\t.globl gexw_get_entry_writer_prev\n"
+    "\t.type gexw_get_entry_writer_prev,@function\n"
+    "gexw_get_entry_writer_prev:\n"
+    "\t.functype gexw_get_entry_writer_prev () -> (i64)\n"
+    "\tglobal.get gexw_entry_writer_prev_g\n"
+    "\tend_function\n"
+    /* __gexw_note_writer(kind, addr) */
+    "\t.type __gexw_note_writer,@function\n"
+    "__gexw_note_writer:\n"
+    "\t.functype __gexw_note_writer (i64, i64) -> ()\n"
+    "\tglobal.get gexw_entry_writer_g\n"
+    "\tglobal.set gexw_entry_writer_prev_g\n"
+    "\tlocal.get 0\n"
+    "\ti64.const 60\n"
+    "\ti64.shl\n"
+    "\tlocal.get 1\n"
+    "\ti64.const 0x0fffffffffffffff\n"
+    "\ti64.and\n"
+    "\ti64.or\n"
+    "\tglobal.set gexw_entry_writer_g\n"
+    "\tend_function\n"
+#define NOTE_WRITER(kind) \
+    "\ti64.const " #kind "\n" \
+    "\tglobal.get gexw_retaddr_g\n" \
+    "\tcall __gexw_note_writer\n"
+#else
+#define NOTE_WRITER(kind)
+#endif
     /* thrown by native code that has written a new guest state into the
      * context: every native frame up to the innermost entry from the
      * guest is dropped, and that entry returns 0 */
@@ -130,6 +170,11 @@ __asm__(
     "\t.type gexw_set_entry_context,@function\n"
     "gexw_set_entry_context:\n"
     "\t.functype gexw_set_entry_context (i64) -> ()\n"
+#ifdef GEXW_DEBUG_ENTRY
+    "\ti64.const 4\n"
+    "\tlocal.get 0\n"
+    "\tcall __gexw_note_writer\n"
+#endif
     "\tlocal.get 0\n"
     "\tglobal.set gexw_entry_context_g\n"
     "\tend_function\n"
@@ -208,6 +253,7 @@ __asm__(
     "\tlocal.get 9\n"
     "\ti64.load 0\n"
     "\tglobal.set gexw_retaddr_g\n"
+    NOTE_WRITER(1)
     "\tlocal.get 9\n"
     "\ti64.const 64\n"
     "\ti64.sub\n"
@@ -227,6 +273,7 @@ __asm__(
     "\tlocal.get 4\n"
     "\tcall_indirect __indirect_function_table, (i32, i32, i32, i64) -> (i32)\n"
     "\tlocal.set 10\n"
+    NOTE_WRITER(2)
     "\tlocal.get 5\n"
     "\tglobal.set __stack_pointer\n"
     "\tlocal.get 6\n"
@@ -243,6 +290,7 @@ __asm__(
     "\treturn\n"
     "\tend_try_table\n"
     "\tend_block\n"
+    NOTE_WRITER(3)
     "\tlocal.get 5\n"
     "\tglobal.set __stack_pointer\n"
     "\tlocal.get 6\n"
@@ -431,6 +479,10 @@ static inline void callout_push( int ctx, struct gexw_callout *rec, uint64_t pad
     rec->pad_rsp = pad_rsp;
     rec->entry_rsp = gexw_get_entry_rsp();
     rec->context = gexw_get_entry_context();
+#ifdef GEXW_DEBUG_ENTRY
+    rec->writer = gexw_get_entry_writer();
+    rec->retaddr = gexw_get_retaddr();
+#endif
     TEBQ( GEXW_TEB_CALLOUTS ) = (uintptr_t)rec;
 }
 

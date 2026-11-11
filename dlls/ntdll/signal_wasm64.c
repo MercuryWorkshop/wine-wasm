@@ -70,6 +70,7 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
 WINE_DECLARE_DEBUG_CHANNEL(relay);
+WINE_DECLARE_DEBUG_CHANNEL(gexctx);
 
 enum syscall_ids
 {
@@ -88,6 +89,7 @@ extern int gexw_get_ctx(void);
 extern ULONG64 gexw_get_entry_rsp(void);
 extern ULONG64 gexw_get_entry_context(void);
 extern void gexw_set_entry_context( ULONG64 context );
+extern ULONG64 gexw_get_retaddr(void);
 extern void DECLSPEC_NORETURN __gexw_throw_unwind(void);
 extern int __gexw_entry( int ctx, int depth, unsigned int need, unsigned long long ret,
                          int (*body)(int, int, unsigned int, unsigned long long) );
@@ -121,6 +123,48 @@ static inline struct gexw_callout *first_callout(void)
 {
     return *(struct gexw_callout **)((char *)NtCurrentTeb() + GEXW_TEB_CALLOUTS);
 }
+
+#ifdef GEXW_DEBUG_ENTRY
+/* A consolidate callback running (RtlRestoreContext), on its stack: the
+ * CONTEXT it runs with, the innermost call-out when it started, and the
+ * callback it is nested in. The TEB slot points to the innermost one. */
+struct debug_window
+{
+    ULONG64 want;
+    const struct gexw_callout *head;
+    ULONG64 outer;
+};
+
+static inline ULONG64 *debug_context_slot(void)
+{
+    return (ULONG64 *)((char *)NtCurrentTeb() + GEXW_TEB_DEBUG_CONTEXT);
+}
+
+/* An exception raised inside a consolidate callback: the first guest call
+ * the callback made (a catch block) should have recorded the callback's
+ * CONTEXT as its entry's, and a raise from that call's return pad should
+ * find it as the entry context. Logged when not, with the last writers
+ * of the entry context and the call-outs. */
+static void check_entry_context( const char *where, ULONG64 rsp )
+{
+    const struct debug_window *w = (const struct debug_window *)(ULONG_PTR)*debug_context_slot();
+    ULONG64 at = gexw_get_entry_context();
+    const struct gexw_callout *rec, *first = NULL;
+
+    if (!w) return;
+    for (rec = first_callout(); rec && rec != w->head; rec = (const struct gexw_callout *)(ULONG_PTR)rec->prev)
+        first = rec;
+    if (first ? first->context == w->want : (at == w->want || gexw_get_retaddr() != GEXW_RETURN_PAD)) return;
+    ERR_(gexctx)( "%s: rsp %p entry context %p, want %p; entry rsp %p retaddr %p; writer %s, before %s; first call-out %p\n",
+                  where, (void *)rsp, (void *)at, (void *)w->want, (void *)gexw_get_entry_rsp(),
+                  (void *)gexw_get_retaddr(), wine_dbgstr_longlong( gexw_get_entry_writer() ),
+                  wine_dbgstr_longlong( gexw_get_entry_writer_prev() ), first );
+    for (rec = first_callout(); rec; rec = (const struct gexw_callout *)(ULONG_PTR)rec->prev)
+        ERR_(gexctx)( "  call-out %p pad %p entry rsp %p context %p retaddr %p writer %s\n", rec,
+                      (void *)rec->pad_rsp, (void *)rec->entry_rsp, (void *)rec->context,
+                      (void *)rec->retaddr, wine_dbgstr_longlong( rec->writer ));
+}
+#endif
 
 
 /*******************************************************************
@@ -686,9 +730,16 @@ void CDECL RtlRestoreContext( CONTEXT *context, EXCEPTION_RECORD *rec )
         ULONG64 entry_context = gexw_get_entry_context();
 
         TRACE( "calling consolidate callback %p (rec=%p)\n", consolidate, rec );
+#ifdef GEXW_DEBUG_ENTRY
+        struct debug_window window = { (ULONG_PTR)context, first_callout(), *debug_context_slot() };
+        if (TRACE_ON(gexctx)) *debug_context_slot() = (ULONG_PTR)&window;
+#endif
         gexw_set_entry_context( (ULONG_PTR)context );
         context->Rip = (ULONG64)consolidate( rec );
         gexw_set_entry_context( entry_context );
+#ifdef GEXW_DEBUG_ENTRY
+        *debug_context_slot() = window.outer;
+#endif
     }
 
     /* remove no longer accessible TEB frames */
@@ -698,6 +749,12 @@ void CDECL RtlRestoreContext( CONTEXT *context, EXCEPTION_RECORD *rec )
         teb_frame = __wine_pop_frame( teb_frame );
     }
 
+#ifdef GEXW_DEBUG_ENTRY
+    /* going on at or above an outer consolidate's frame ends its callback */
+    while (*debug_context_slot() && context->Rsp >= ((const CONTEXT *)(ULONG_PTR)
+           ((const struct debug_window *)(ULONG_PTR)*debug_context_slot())->want)->Rsp)
+        *debug_context_slot() = ((const struct debug_window *)(ULONG_PTR)*debug_context_slot())->outer;
+#endif
     TRACE( "returning to %p stack %p\n", (void *)context->Rip, (void *)context->Rsp );
     NtContinue( context, FALSE );
 }
@@ -865,6 +922,9 @@ void WINAPI RtlRaiseException( EXCEPTION_RECORD *rec )
     rbp = context.Rbp;
 
     TRACE( "code=%lx flags=%lx addr=%p\n", rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress );
+#ifdef GEXW_DEBUG_ENTRY
+    check_entry_context( "raise", rsp );
+#endif
 
     /* under a debugger, its first chance: continued, the raise returns;
      * else the exception is dispatched in place, as without one, and only
