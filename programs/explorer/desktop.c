@@ -835,6 +835,66 @@ static DWORD WINAPI display_settings_restorer_thread( void *param )
 static WNDPROC desktop_orig_wndproc;
 
 /* window procedure for the desktop window */
+/* The shell menu being tracked on the desktop, for the owner-drawn items of
+ * its submenus (New, Send To). */
+static IContextMenu2 *desktop_menu2;
+
+/* A right-click on the desktop, as on Windows: on an icon, that file's shell
+ * menu; elsewhere, the desktop folder's background menu (View, Paste, New,
+ * Properties). x and y are in desktop (screen) coordinates. */
+static void show_desktop_menu( HWND hwnd, int x, int y )
+{
+    static BOOL ole;
+    const struct launcher *launcher = launcher_from_point( x, y );
+    IContextMenu *menu = NULL;
+    IShellFolder *folder;
+    HMENU popup;
+    UINT cmd;
+
+    if (!ole) ole = SUCCEEDED( OleInitialize( NULL ) );
+    if (launcher)
+    {
+        LPITEMIDLIST pidl;
+        LPCITEMIDLIST child;
+
+        if (FAILED( SHParseDisplayName( launcher->path, NULL, &pidl, 0, NULL ))) return;
+        if (SUCCEEDED( SHBindToParent( pidl, &IID_IShellFolder, (void **)&folder, &child ) ))
+        {
+            IShellFolder_GetUIObjectOf( folder, hwnd, 1, &child, &IID_IContextMenu, NULL, (void **)&menu );
+            IShellFolder_Release( folder );
+        }
+        ILFree( pidl );
+    }
+    else if (SUCCEEDED( SHGetDesktopFolder( &folder ) ))
+    {
+        IShellFolder_CreateViewObject( folder, hwnd, &IID_IContextMenu, (void **)&menu );
+        IShellFolder_Release( folder );
+    }
+    if (!menu) return;
+
+    if ((popup = CreatePopupMenu()) &&
+        SUCCEEDED( IContextMenu_QueryContextMenu( menu, popup, 0, 1, 0x7fff,
+                                                  launcher ? CMF_NORMAL | CMF_CANRENAME : CMF_NORMAL ) ))
+    {
+        IContextMenu_QueryInterface( menu, &IID_IContextMenu2, (void **)&desktop_menu2 );
+        SetForegroundWindow( hwnd );
+        cmd = TrackPopupMenu( popup, TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD, x, y, 0, hwnd, NULL );
+        if (desktop_menu2)
+        {
+            IContextMenu2_Release( desktop_menu2 );
+            desktop_menu2 = NULL;
+        }
+        if (cmd)
+        {
+            CMINVOKECOMMANDINFO info = {.cbSize = sizeof(info), .hwnd = hwnd,
+                                        .lpVerb = MAKEINTRESOURCEA( cmd - 1 ), .nShow = SW_SHOWNORMAL};
+            IContextMenu_InvokeCommand( menu, &info );
+        }
+    }
+    if (popup) DestroyMenu( popup );
+    IContextMenu_Release( menu );
+}
+
 static LRESULT WINAPI desktop_wnd_proc( HWND hwnd, UINT message, WPARAM wp, LPARAM lp )
 {
     TRACE( "got msg %04x wp %Ix lp %Ix\n", message, wp, lp );
@@ -861,7 +921,15 @@ static LRESULT WINAPI desktop_wnd_proc( HWND hwnd, UINT message, WPARAM wp, LPAR
         return HTCLIENT;
 
     case WM_ERASEBKGND:
-        if (!using_root) PaintDesktop( (HDC)wp );
+        /* The desktop window is only ever erased, never sent WM_PAINT (the server
+         * validates it once erased, as on Windows): its icons are drawn here too. */
+        if (!using_root)
+        {
+            RECT clip;
+
+            PaintDesktop( (HDC)wp );
+            if (GetClipBox( (HDC)wp, &clip ) != ERROR) draw_launchers( (HDC)wp, clip );
+        }
         return TRUE;
 
     case WM_SETTINGCHANGE:
@@ -872,6 +940,20 @@ static LRESULT WINAPI desktop_wnd_proc( HWND hwnd, UINT message, WPARAM wp, LPAR
     case WM_PARENTNOTIFY:
         handle_parent_notify( (HWND)lp, wp );
         return 0;
+
+    case WM_RBUTTONUP:
+        if (!using_root && desktop_folder) show_desktop_menu( hwnd, (short)LOWORD(lp), (short)HIWORD(lp) );
+        return 0;
+
+    case WM_INITMENUPOPUP:
+    case WM_DRAWITEM:
+    case WM_MEASUREITEM:
+        if (desktop_menu2)
+        {
+            IContextMenu2_HandleMenuMsg( desktop_menu2, message, wp, lp );
+            return message == WM_INITMENUPOPUP ? 0 : TRUE;
+        }
+        break;
 
     case WM_LBUTTONDBLCLK:
         if (!using_root)
