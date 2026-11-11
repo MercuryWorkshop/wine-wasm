@@ -124,6 +124,12 @@ static HFONT clock_font;
  * taskbar is drawn as before (DrawFrameControl, DrawCaptionTempW, the class brush). */
 static HTHEME taskbar_theme, tray_notify_theme, start_theme, band_theme;
 
+/* a distance in the taskbar without a visual style, `px` pixels at 96 dpi */
+static int classic_inset( int px )
+{
+    return MulDiv( px, GetDpiForSystem(), USER_DEFAULT_SCREEN_DPI );
+}
+
 static void close_taskbar_themes(void)
 {
     HTHEME *t[] = { &taskbar_theme, &tray_notify_theme, &start_theme, &band_theme };
@@ -845,9 +851,13 @@ static void sync_taskbar_buttons(void)
     {
         if (!win->hwnd)  /* start button */
         {
-            SetWindowPos( win->button, 0, pos, 0, start_button_width, tray_height,
-                          SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW );
-            pos += start_button_width;
+            if (start_theme)
+                SetWindowPos( win->button, 0, pos, 0, start_button_width, tray_height,
+                              SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW );
+            else
+                SetWindowPos( win->button, 0, pos + classic_inset( 2 ), classic_inset( 4 ), start_button_width,
+                              tray_height - classic_inset( 6 ), SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW );
+            pos += start_button_width + (start_theme ? 0 : classic_inset( 6 ));
             continue;
         }
         win->active = (win->hwnd == foreground);
@@ -864,11 +874,17 @@ static void sync_taskbar_buttons(void)
         if (!win->hwnd) continue;  /* start button */
         if (win->visible && right - pos >= width)
         {
-            /* in the visual style, XP's band: buttons 3 pixels (at 96 dpi) in from the bar's edges */
-            int gap = band_theme ? MulDiv( 3, GetDpiForSystem(), USER_DEFAULT_SCREEN_DPI ) : 0;
-
-            SetWindowPos( win->button, 0, pos + gap, gap, width - gap, tray_height - 2 * gap,
-                          SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW );
+            /* in the visual style, XP's band: buttons 3 pixels (at 96 dpi) in from the bar's edges; without
+             * one, buttons 22 pixels tall below the bar's raised top edge, 3 apart */
+            if (band_theme)
+            {
+                int gap = MulDiv( 3, GetDpiForSystem(), USER_DEFAULT_SCREEN_DPI );
+                SetWindowPos( win->button, 0, pos + gap, gap, width - gap, tray_height - 2 * gap,
+                              SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW );
+            }
+            else
+                SetWindowPos( win->button, 0, pos, classic_inset( 4 ), width - classic_inset( 3 ),
+                              tray_height - classic_inset( 6 ), SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW );
             InvalidateRect( win->button, NULL, TRUE );
             pos += width;
         }
@@ -1089,12 +1105,13 @@ static void paint_taskbar_button( const DRAWITEMSTRUCT *dis )
     if (!win) return;
     if (paint_themed_button( dis, win )) return;
     GetClientRect( dis->hwndItem, &rect );
+    /* the active window's button pressed in, as Windows draws it without a visual style */
     DrawFrameControl( dis->hDC, &rect, DFC_BUTTON, DFCS_BUTTONPUSH | DFCS_ADJUSTRECT |
-                      ((dis->itemState & ODS_SELECTED) ? DFCS_PUSHED : 0 ));
+                      ((dis->itemState & ODS_SELECTED) || (win->hwnd && win->active) ? DFCS_PUSHED : 0 ));
     if (win->hwnd)
     {
-        flags |= win->active ? DC_ACTIVE : DC_INBUTTON;
-        DrawCaptionTempW( win->hwnd, dis->hDC, &rect, 0, 0, NULL, flags );
+        if (win->active || (dis->itemState & ODS_SELECTED)) OffsetRect( &rect, 1, 1 );
+        DrawCaptionTempW( win->hwnd, dis->hDC, &rect, 0, 0, NULL, flags | DC_INBUTTON );
     }
     else  /* start button */
         DrawCaptionTempW( 0, dis->hDC, &rect, 0, 0, start_label, flags | DC_INBUTTON | DC_ICON );
@@ -1156,6 +1173,10 @@ static void show_taskbar_contextmenu( HWND button, LPARAM lparam )
 static void get_clock_rect( RECT *rect )
 {
     SetRect( rect, tray_width - clock_width, 0, tray_width, tray_height );
+    /* without a visual style, sunk in below the raised top edge as the buttons are */
+    if (!tray_notify_theme)
+        SetRect( rect, tray_width - clock_width, classic_inset( 4 ), tray_width - classic_inset( 2 ),
+                 tray_height - classic_inset( 2 ));
 }
 
 static void set_clock_timer(void)
@@ -1242,6 +1263,8 @@ static void do_show_systray(void)
     tray_width = GetSystemMetrics( SM_CXSCREEN );
     tray_height = max( icon_cy, size.cy );
     start_button_width = size.cx;
+    /* without a visual style, Windows 95 to 2000's: a taskbar 28 pixels tall at 96 dpi, its buttons 22 */
+    if (!start_theme) tray_height = max( tray_height, MulDiv( 28, GetDpiForSystem(), USER_DEFAULT_SCREEN_DPI ));
     if (start_theme)
     {
         /* XP's: the taskbar 30 pixels at 96 dpi and the Start button as tall, as wide as its margins,
@@ -1318,7 +1341,16 @@ static LRESULT WINAPI shell_traywnd_proc( HWND hwnd, UINT msg, WPARAM wparam, LP
             DrawThemeBackground( taskbar_theme, (HDC)wparam, TBP_BACKGROUNDBOTTOM, 0, &rect, NULL );
             return 1;
         }
-        return DefWindowProcW( hwnd, msg, wparam, lparam );
+        else
+        {
+            /* the face, under a raised top edge */
+            RECT rect;
+
+            GetClientRect( hwnd, &rect );
+            FillRect( (HDC)wparam, &rect, GetSysColorBrush( COLOR_3DFACE ));
+            DrawEdge( (HDC)wparam, &rect, EDGE_RAISED, BF_TOP );
+            return 1;
+        }
 
     case WM_THEMECHANGED:
     {
