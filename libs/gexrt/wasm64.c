@@ -534,6 +534,23 @@ static int left_callout( int ctx, uint64_t teb, uint64_t head )
     return rsp > pad + GEXW_NATIVE_UNWOUND;
 }
 
+/* The TEB's NtTib.ExceptionList: the native code's __TRY frames and the
+ * dispatchers' nested-exception frames. Those of an entry are its native
+ * frames' locals, on the stack below the stack pointer it was entered
+ * with, and go when they go: a guest handler called from one that never
+ * returns (a catch the guest resumes itself, from an RtlUnwindEx with no
+ * resume address) leaves them on the list, and the guest's next frames
+ * reuse that stack, which the next dispatch then calls as a handler. */
+#define TEB_EXCEPTION_LIST 0x00
+
+static void drop_entry_frames( uint64_t teb, uint64_t sp )
+{
+    uint64_t f, low = GQ( teb + TEB_DEALLOCATION_STACK );
+
+    while ((f = GQ( teb + TEB_EXCEPTION_LIST )) >= low && f < sp)
+        GQ( teb + TEB_EXCEPTION_LIST ) = GQ( f );
+}
+
 /* An entry from the guest into native code (the adapters' and the
  * dispatchers'). Its native frames are gone when it ends, by returning or
  * by a __gexw_unwind (NtContinue, an abandoned call-out): so are the
@@ -546,7 +563,7 @@ int __gexw_entry( int ctx, int depth, unsigned int need, unsigned long long ret,
                   int (*body)( int, int, unsigned int, unsigned long long ) )
 {
     uint64_t teb = GEX_C64( GEX_CTX_TPIDRRO ), head = teb ? GQ( teb + GEXW_TEB_CALLOUTS ) : 0, rsp;
-    uint64_t stack = teb ? GQ( teb + TEB_STACK_BASE ) : 0;
+    uint64_t stack = teb ? GQ( teb + TEB_STACK_BASE ) : 0, sp = gexw_get_sp();
     int r;
 
     /* Guest code entering from above the innermost call-out's frame has
@@ -597,6 +614,7 @@ int __gexw_entry( int ctx, int depth, unsigned int need, unsigned long long ret,
         while (head && ((const struct gexw_callout *)(uintptr_t)head)->pad_rsp <= rsp)
             head = ((const struct gexw_callout *)(uintptr_t)head)->prev;
         GQ( teb + GEXW_TEB_CALLOUTS ) = head;
+        drop_entry_frames( teb, sp );
     }
     return r;
 }
