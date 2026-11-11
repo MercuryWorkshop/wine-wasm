@@ -836,6 +836,15 @@ static void cleanup_systray_window( HWND hwnd )
 }
 
 /* update the taskbar buttons when something changed */
+/* as Windows decides it: an app window always, otherwise an unowned window that is not a tool window */
+static BOOL has_taskbar_button( HWND hwnd )
+{
+    LONG ex = GetWindowLongW( hwnd, GWL_EXSTYLE );
+
+    if (ex & WS_EX_APPWINDOW) return TRUE;
+    return !GetWindow( hwnd, GW_OWNER ) && !(ex & WS_EX_TOOLWINDOW);
+}
+
 static void sync_taskbar_buttons(void)
 {
     struct taskbar_button *win;
@@ -861,7 +870,7 @@ static void sync_taskbar_buttons(void)
             continue;
         }
         win->active = (win->hwnd == foreground);
-        win->visible = IsWindowVisible( win->hwnd ) && !GetWindow( win->hwnd, GW_OWNER );
+        win->visible = IsWindowVisible( win->hwnd ) && has_taskbar_button( win->hwnd );
         if (win->visible) count++;
     }
 
