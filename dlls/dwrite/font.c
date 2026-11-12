@@ -7638,12 +7638,108 @@ static BOOL fontset_entry_is_matching(struct dwrite_fontset_entry *entry, DWRITE
     return TRUE;
 }
 
-static HRESULT WINAPI dwritefontset_GetMatchingFonts_(IDWriteFontSet3 *iface, WCHAR const *family, DWRITE_FONT_WEIGHT weight,
-        DWRITE_FONT_STRETCH stretch,  DWRITE_FONT_STYLE style, IDWriteFontSet **fontset)
+static BOOL fontset_entry_has_family(struct dwrite_fontset_entry *entry, const WCHAR *family,
+        struct dwrite_font_propvec *vec)
 {
-    FIXME("%p, %s, %d, %d, %d, %p.\n", iface, debugstr_w(family), weight, stretch, style, fontset);
+    static const DWRITE_INFORMATIONAL_STRING_ID ids[] =
+    {
+        DWRITE_INFORMATIONAL_STRING_WEIGHT_STRETCH_STYLE_FAMILY_NAME,
+        DWRITE_INFORMATIONAL_STRING_TYPOGRAPHIC_FAMILY_NAMES,
+        DWRITE_INFORMATIONAL_STRING_WIN32_FAMILY_NAMES,
+        DWRITE_INFORMATIONAL_STRING_FULL_NAME,
+    };
+    struct file_stream_desc stream_desc = { 0 };
+    IDWriteLocalizedStrings *value;
+    struct dwrite_font_props props;
+    BOOL found = FALSE;
+    unsigned int i;
 
-    return E_NOTIMPL;
+    get_filestream_from_file(entry->file, &stream_desc.stream);
+    if (!stream_desc.stream)
+        return FALSE;
+    stream_desc.face_type = entry->face_type;
+    stream_desc.face_index = entry->face_index;
+
+    for (i = 0; i < ARRAY_SIZE(ids) && !found; ++i)
+    {
+        value = NULL;
+        if (FAILED(opentype_get_font_info_strings(&stream_desc, ids[i], &value)) || !value)
+            continue;
+        found = localizedstrings_contains(value, family);
+        IDWriteLocalizedStrings_Release(value);
+    }
+
+    if (found)
+    {
+        opentype_get_font_properties(&stream_desc, &props);
+        if (entry->simulations & DWRITE_FONT_SIMULATIONS_BOLD)
+            props.weight = DWRITE_FONT_WEIGHT_BOLD;
+        if (entry->simulations & DWRITE_FONT_SIMULATIONS_OBLIQUE)
+            props.style = DWRITE_FONT_STYLE_OBLIQUE;
+        init_font_prop_vec(props.weight, props.stretch, props.style, vec);
+    }
+
+    IDWriteFontFileStream_Release(stream_desc.stream);
+    return found;
+}
+
+static HRESULT WINAPI dwritefontset_GetMatchingFonts_(IDWriteFontSet3 *iface, WCHAR const *family, DWRITE_FONT_WEIGHT weight,
+        DWRITE_FONT_STRETCH stretch,  DWRITE_FONT_STYLE style, IDWriteFontSet **filtered_set)
+{
+    struct dwrite_fontset *set = impl_from_IDWriteFontSet3(iface);
+    struct dwrite_font_propvec req, *vecs;
+    struct dwrite_fontset_entry **entries;
+    unsigned int i, j, matched_count = 0;
+    struct dwrite_fontset *object;
+
+    TRACE("%p, %s, %d, %d, %d, %p.\n", iface, debugstr_w(family), weight, stretch, style, filtered_set);
+
+    if (!family || !filtered_set)
+        return E_INVALIDARG;
+
+    if (!(object = calloc(1, sizeof(*object))))
+        return E_OUTOFMEMORY;
+
+    entries = calloc(set->count, sizeof(*entries));
+    vecs = calloc(set->count, sizeof(*vecs));
+    if (set->count && (!entries || !vecs))
+    {
+        free(entries);
+        free(vecs);
+        free(object);
+        return E_OUTOFMEMORY;
+    }
+
+    /* The family's fonts, closest to the requested weight, stretch and style first. */
+    init_font_prop_vec(weight, stretch, style, &req);
+    for (i = 0; i < set->count; ++i)
+    {
+        struct dwrite_font_propvec vec;
+
+        if (!fontset_entry_has_family(set->entries[i], family, &vec))
+            continue;
+        for (j = matched_count; j > 0 && is_better_font_match(&vec, &vecs[j - 1], &req); --j)
+        {
+            entries[j] = entries[j - 1];
+            vecs[j] = vecs[j - 1];
+        }
+        entries[j] = addref_fontset_entry(set->entries[i]);
+        vecs[j] = vec;
+        ++matched_count;
+    }
+    free(vecs);
+
+    if (!matched_count)
+    {
+        free(entries);
+        entries = NULL;
+    }
+
+    init_fontset(object, set->factory, entries, matched_count, FALSE);
+
+    *filtered_set = (IDWriteFontSet *)&object->IDWriteFontSet3_iface;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI dwritefontset_GetMatchingFonts(IDWriteFontSet3 *iface, DWRITE_FONT_PROPERTY const *props, UINT32 count,
