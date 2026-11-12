@@ -593,6 +593,8 @@ static BOOL start_debugger( EXCEPTION_POINTERS *epointers, HANDLE event )
        }
 
        NtClose( dbg_key );
+       /* (its Auto value was read into buffer) */
+       format_exception_msg( epointers, buffer, sizeof(buffer) );
     }
 
 #if defined(__wasm32__) || defined(__wasm64__)
