@@ -534,21 +534,20 @@ int __gexw_entry_raw( int ctx, int depth, unsigned int need, unsigned long long 
 
 /* gex's NATIVE_LEFT (gex_nr), its `jmp rax` (the trampoline page's
  * JMP_EAX_32: ff e0 is jmp rax in 64-bit code), the mark on a system call
- * from native code, the context's spare slot (ctx::BALLAST), and how far
- * above a native caller's call-out the guest must be to have left it
- * (NATIVE_UNWOUND) */
+ * from native code and the context's spare slot (ctx::BALLAST) */
 #define GEX_NR_NATIVE_LEFT 0x7f000003u
 #define GEXW_JMP_RAX 0x3f0080ull
 #define GEX_NATIVE_SYSCALL 0x2000000000000000ull
 #define GEX_CTX_BALLAST 344u
-#define GEXW_NATIVE_UNWOUND 512u
 /* the TEB's NtTib.StackBase and DeallocationStack: the stack the guest is
  * on (a fiber switch changes it) */
 #define TEB_STACK_BASE 0x08
 #define TEB_DEALLOCATION_STACK 0x1478
 
 /* Whether the guest, at its stack pointer now, is above the call-out
- * `head` on the same stack: it has left the native frames that made it. */
+ * `head` on the same stack: it has left the native frames that made it,
+ * however few bytes they take (a jump out of a callback to the guest frame
+ * that called the native function). */
 /* The guest's stack pointer on the stack the call-outs are on. In a WoW64
  * thread's 32-bit code (GEX_CTX_CS neither 0, the process's own mode, nor
  * 0x33) RSP is the 32-bit stack's; the 64-bit one's is in R14, where
@@ -567,7 +566,7 @@ static int left_callout( int ctx, uint64_t teb, uint64_t head )
     if (!teb || !head) return 0;
     pad = ((const struct gexw_callout *)(uintptr_t)head)->pad_rsp;
     if (pad < GQ( teb + TEB_DEALLOCATION_STACK ) || pad >= GQ( teb + TEB_STACK_BASE )) return 0;
-    return rsp > pad + GEXW_NATIVE_UNWOUND;
+    return rsp > pad && rsp <= GQ( teb + TEB_STACK_BASE );
 }
 
 /* The TEB's NtTib.ExceptionList: the native code's __TRY frames and the
@@ -609,10 +608,11 @@ static uint64_t drop_left( int ctx, uint64_t teb, uint64_t head )
  * call-outs they made. The chain goes back to what it was at entry, less
  * the call-outs the guest state it leaves with is above (a trap or a jump
  * out of their guest code). Those the guest entering is above go at the
- * start: a jump out of a call-out's guest code to just above it (less
- * than NATIVE_UNWOUND, which gex does not abandon) leaves no entry to end,
- * and one more record each time. After a fiber switch it is left as it
- * is: the stack is another one. */
+ * start, after gex was asked to abandon the innermost (NATIVE_LEFT, below):
+ * when it does not (its stack is not the one the TEB names), a jump out of
+ * a call-out's guest code leaves no entry to end, and one more record each
+ * time. After a fiber switch it is left as it is: the stack is another
+ * one. */
 int __gexw_entry( int ctx, int depth, unsigned int need, unsigned long long ret,
                   int (*body)( int, int, unsigned int, unsigned long long ) )
 {
@@ -628,7 +628,7 @@ int __gexw_entry( int ctx, int depth, unsigned int need, unsigned long long ret,
      * frames (run_callout), and the guest re-enters this function from
      * gex's `jmp rax` (an address of the trampoline page's, which the bridge
      * does not take for this function's "ran nothing"), one level flatter,
-     * until it is not nested. gex checks the mark (NATIVE_UNWOUND). */
+     * until it is not nested. gex checks the mark (its own stack range). */
     if (left_callout( ctx, teb, head ))
     {
         uint64_t rax = REG( X_RAX ), pc = GEX_C64( GEX_CTX_PC );
