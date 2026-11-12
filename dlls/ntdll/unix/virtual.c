@@ -5997,12 +5997,15 @@ static void say_beyond_16g( const char *what )
                  debugstr_us( &peb->ProcessParameters->ImagePathName ), what );
 }
 
-/* A reservation at a fixed address that ends past 16 GiB. */
+/* A reservation at a fixed address that ends past 16 GiB, inside Windows'
+ * user address space (one beyond that is refused on Windows too: a
+ * program's sentinel address, not a want of memory). */
 static void say_fixed_beyond_16g( const void *base, SIZE_T size )
 {
     char what[96];
 
     if ((UINT_PTR)base + size < (UINT_PTR)base || (UINT_PTR)base + size <= ((UINT_PTR)16 << 30)) return;
+    if ((UINT_PTR)base + size > (UINT_PTR)0x7fffffff0000) return;
     snprintf( what, sizeof(what), "a reservation at %p of %lu MiB is beyond it",
               base, (unsigned long)(size >> 20) );
     say_beyond_16g( what );
