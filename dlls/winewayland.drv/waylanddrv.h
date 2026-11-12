@@ -350,6 +350,7 @@ struct wayland_surface
      * screen, and is still the window's contents. */
     BOOL window_contents;
     HCURSOR hcursor;
+    BOOL hcursor_set;
 };
 
 /**********************************************************************

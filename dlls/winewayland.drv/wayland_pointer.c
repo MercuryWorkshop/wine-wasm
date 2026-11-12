@@ -825,6 +825,13 @@ static void wayland_pointer_clear_cursor_shape(void)
     }
 }
 
+/* The cursor this process set last: the one a window whose cursor was never
+ * set shows (a menu's popup, which the cursor messages never name: they go to
+ * the window with the capture), as on Windows, where the cursor is not a
+ * window's but the desktop's. */
+static HCURSOR last_hcursor;
+static BOOL last_hcursor_set;
+
 static void wayland_set_cursor(HWND hwnd, HCURSOR hcursor, BOOL use_hcursor)
 {
     struct wayland_pointer *pointer = &process_wayland.pointer;
@@ -841,8 +848,13 @@ static void wayland_set_cursor(HWND hwnd, HCURSOR hcursor, BOOL use_hcursor)
             return;
         }
         scale = surface->window.scale;
-        if (use_hcursor) surface->hcursor = hcursor;
-        else hcursor = surface->hcursor;
+        if (use_hcursor)
+        {
+            surface->hcursor = hcursor;
+            surface->hcursor_set = TRUE;
+        }
+        else if (surface->hcursor_set || !last_hcursor_set) hcursor = surface->hcursor;
+        else hcursor = last_hcursor;
         use_hcursor = TRUE;
         wayland_win_data_release(data);
     }
@@ -1036,6 +1048,8 @@ void WAYLAND_SetCursor(HWND hwnd, HCURSOR hcursor)
 {
     TRACE("hwnd=%p hcursor=%p\n", hwnd, hcursor);
 
+    last_hcursor = hcursor;
+    last_hcursor_set = TRUE;
     wayland_set_cursor(hwnd, hcursor, TRUE);
 }
 
