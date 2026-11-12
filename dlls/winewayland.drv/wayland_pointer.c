@@ -139,6 +139,82 @@ static HWND pointer_target(HWND hwnd)
     return info.hwndCapture;
 }
 
+/* gex: the placement of the surface a capture grabs the pointer on: the
+ * capture window's, else its top-level window's, else the one the pointer is
+ * on (a menu whose owner has no surface of its own, explorer's Start menu),
+ * when the compositor takes grabs (placement version 4). */
+static BOOL grab_window(HWND hwnd, HWND *out)
+{
+    HWND tries[3] = {hwnd, NtUserGetAncestor(hwnd, GA_ROOT), wayland_pointer_get_focused_hwnd()};
+    struct wayland_win_data *data;
+    BOOL ok;
+    int i;
+
+    if (process_wayland.gex_window_placement_version < 4) return FALSE;
+    for (i = 0; i < ARRAY_SIZE(tries); i++)
+    {
+        if (!tries[i] || !(data = wayland_win_data_get(tries[i]))) continue;
+        ok = data->wayland_surface && data->wayland_surface->gex_placement;
+        wayland_win_data_release(data);
+        if (ok)
+        {
+            *out = tries[i];
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static void grab_request(HWND hwnd, BOOL grab)
+{
+    struct wayland_win_data *data;
+    struct gex_window_placement_v1 *placement;
+
+    if (!(data = wayland_win_data_get(hwnd))) return;
+    if (data->wayland_surface && (placement = data->wayland_surface->gex_placement))
+    {
+        if (grab) gex_window_placement_v1_grab(placement);
+        else gex_window_placement_v1_release_grab(placement);
+        wl_display_flush(process_wayland.wl_display);
+    }
+    wayland_win_data_release(data);
+}
+
+/* The window whose surface has this process's grab. */
+static HWND grab_hwnd;
+
+/***********************************************************************
+ *          WAYLAND_SetCapture
+ *
+ * gex: a menu or move/size loop's capture grabs the pointer at a compositor
+ * that places windows, as winex11's XGrabPointer does: a click on another
+ * program's window, or on the desktop, then reaches this loop, which ends
+ * it (the menu closes) as on Windows, where the menu otherwise stayed open
+ * over the other program. pointer_target sends what comes to the capture
+ * window.
+ */
+void WAYLAND_SetCapture(HWND hwnd, UINT flags, HWND previous)
+{
+    HWND on;
+
+    TRACE("hwnd %p, flags %#x, previous %p\n", hwnd, flags, previous);
+
+    if (!(flags & (GUI_INMOVESIZE | GUI_INMENUMODE))) return;
+
+    if (hwnd)
+    {
+        if (!grab_window(hwnd, &on)) return;
+        grab_hwnd = on;
+        grab_request(on, TRUE);
+    }
+    else if (grab_hwnd)
+    {
+        on = grab_hwnd;
+        grab_hwnd = 0;
+        grab_request(on, FALSE);
+    }
+}
+
 /* A point on hwnd's surface, in screen coordinates; with clamp, kept inside
  * the window (see below). Also where a drag over the surface is (data device). */
 BOOL wayland_surface_point_to_screen(HWND hwnd, wl_fixed_t sx, wl_fixed_t sy, BOOL clamp, POINT *out)

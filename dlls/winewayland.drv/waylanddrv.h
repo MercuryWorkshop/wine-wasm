@@ -512,6 +512,7 @@ void WAYLAND_ActivateWindow(HWND hwnd, HWND previous);
 LRESULT WAYLAND_DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 void WAYLAND_DestroyWindow(HWND hwnd);
 BOOL WAYLAND_SetIMECompositionRect(HWND hwnd, RECT rect);
+void WAYLAND_SetCapture(HWND hwnd, UINT flags, HWND previous);
 void WAYLAND_SetCursor(HWND hwnd, HCURSOR hcursor);
 BOOL WAYLAND_SetCursorPos(INT x, INT y);
 void WAYLAND_SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha, DWORD flags);
