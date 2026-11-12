@@ -4071,7 +4071,7 @@ static LRESULT
 TOOLBAR_ReplaceBitmap (TOOLBAR_INFO *infoPtr, const TBREPLACEBITMAP *lpReplace)
 {
     HBITMAP hBitmap;
-    int i = 0, nOldButtons = 0, pos = 0;
+    int i = 0, pos = 0;
     int nOldBitmaps, nNewBitmaps = 0;
     HIMAGELIST himlDef = 0;
 
@@ -4094,7 +4094,6 @@ TOOLBAR_ReplaceBitmap (TOOLBAR_INFO *infoPtr, const TBREPLACEBITMAP *lpReplace)
         if (tbi->hInst == lpReplace->hInstOld && tbi->nID == lpReplace->nIDOld)
         {
             TRACE("Found: nButtons %d hInst %p nID %x\n", tbi->nButtons, tbi->hInst, tbi->nID);
-            nOldButtons = tbi->nButtons;
             tbi->nButtons = lpReplace->nButtons;
             tbi->hInst = lpReplace->hInstNew;
             tbi->nID = lpReplace->nIDNew;
@@ -4104,7 +4103,9 @@ TOOLBAR_ReplaceBitmap (TOOLBAR_INFO *infoPtr, const TBREPLACEBITMAP *lpReplace)
         pos += tbi->nButtons;
     }
 
-    if (nOldButtons == 0)
+    /* (found with no buttons is found: a bitmap added for none, which a
+     * later TB_REPLACEBITMAP replaces) */
+    if (i == infoPtr->nNumBitmapInfos)
     {
         WARN("No hinst/bitmap found! hInst %p nID %Ix\n", lpReplace->hInstOld, lpReplace->nIDOld);
         return FALSE;
