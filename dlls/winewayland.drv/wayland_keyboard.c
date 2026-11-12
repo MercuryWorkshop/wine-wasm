@@ -885,7 +885,18 @@ static void send_key_input(HWND hwnd, INPUT *input)
     pthread_mutex_unlock(&keyboard->mutex);
 
     if (queue) NtUserPostMessage(hwnd, WM_WAYLAND_KEY, input->ki.wScan, input->ki.dwFlags);
-    else NtUserSendHardwareInput(hwnd, 0, input, 0);
+    else
+    {
+        /* (gex) The keys are the foreground thread's, as on Windows: the
+         * server gives a key to the thread of the window it is sent for.
+         * The compositor's keyboard follows Win32 activation, but only to a
+         * window with a surface: one made foreground with none (a hidden
+         * window, such as the one a shell makes foreground for its menus)
+         * leaves the keyboard with the window that had it, in another
+         * thread. */
+        HWND fg = NtUserGetForegroundWindow();
+        NtUserSendHardwareInput(fg ? fg : hwnd, 0, input, 0);
+    }
 }
 
 static void send_right_control(HWND hwnd, uint32_t state)
