@@ -25,6 +25,14 @@ extern unsigned long long __gexw_entry_page(void);
  *
  * - [29], the innermost guest call from native code (a struct
  *   gexw_callout), each linking to the next outer one;
+ * - [23], where those records are: an array of GEXW_CALLOUTS_MAX of them
+ *   the Unix side allocates with the TEB (signal_alloc_thread), filled
+ *   from its start, the innermost last. Not on the stack: guest code that
+ *   jumps out of a call-out to a frame just above it (a longjmp, a catch
+ *   block) reuses that stack, and the next entry would read the record.
+ *   One array for all of a thread's fibers: call-outs nest across a fiber
+ *   switch as gex's own do, innermost last (gex cannot finish an outer one
+ *   while an inner one is open, whichever fiber made it);
  * - [25..27], a longjmp to a native frame that guest frames and the
  *   call-outs holding them stand between (__gexw_far_longjmp): the
  *   call-out it waits for, the jmp_buf, the value;
@@ -32,12 +40,14 @@ extern unsigned long long __gexw_entry_page(void);
  *   CONTEXT a consolidate callback runs with (RtlRestoreContext), which a
  *   guest call made inside it should record as its entry's. */
 #define GEXW_TEB_CALLOUTS 0x278
+#define GEXW_TEB_CALLOUT_ARRAY 0x248
+#define GEXW_CALLOUTS_MAX 4096
 #define GEXW_TEB_DEBUG_CONTEXT 0x270
 #define GEXW_TEB_JUMP_TO  0x268
 #define GEXW_TEB_JUMP_BUF 0x260
 #define GEXW_TEB_JUMP_VAL 0x258
 
-/* A guest call from native code, live while it runs (on the native stack).
+/* A guest call from native code, live while it runs (in the TEB's array).
  * The x64 unwinder (signal_wasm64.c) reaches the return pad with RSP at
  * pad_rsp; the caller there is the guest state native code was entered
  * with: the return address at entry_rsp and RSP above it, or, for an

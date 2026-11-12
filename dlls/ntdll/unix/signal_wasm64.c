@@ -59,6 +59,7 @@
 #include "unix_private.h"
 #include "wine/debug.h"
 #include "wine/gex/gex_abi.h"
+#include "wine/gex/gexrt64.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
 
@@ -1491,16 +1492,34 @@ NTSTATUS get_thread_ldt_entry( HANDLE handle, THREAD_DESCRIPTOR_INFORMATION *inf
     return STATUS_NOT_IMPLEMENTED;
 }
 
+/* gexrt's array of call-out records, in the TEB (include/wine/gex/gexrt64.h) */
+static inline void **callout_array( TEB *teb )
+{
+    return (void **)((char *)teb + GEXW_TEB_CALLOUT_ARRAY);
+}
+
 NTSTATUS signal_alloc_thread( TEB *teb )
 {
     struct amd64_thread_data *thread_data = (struct amd64_thread_data *)&teb->GdiTebBatch;
+    SIZE_T size = GEXW_CALLOUTS_MAX * sizeof(struct gexw_callout);
+    void *array = NULL;
+    NTSTATUS status;
 
     thread_data->frame_size = frame_size;
+    if ((status = NtAllocateVirtualMemory( NtCurrentProcess(), &array, 0, &size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE )))
+        return status;
+    *callout_array( teb ) = array;
     return STATUS_SUCCESS;
 }
 
 void signal_free_thread( TEB *teb )
 {
+    void *array = *callout_array( teb );
+    SIZE_T size = 0;
+
+    if (!array) return;
+    NtFreeVirtualMemory( NtCurrentProcess(), &array, &size, MEM_RELEASE );
+    *callout_array( teb ) = NULL;
 }
 
 /***********************************************************************

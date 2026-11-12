@@ -496,9 +496,21 @@ unsigned int __gexw_native_try( int fn, unsigned int arg )
     return r;
 }
 
-static inline void callout_push( int ctx, struct gexw_callout *rec, uint64_t pad_rsp )
+/* More call-outs nested than the TEB's array holds (or a thread without
+ * one): a crash, never a record written past it. */
+static void __attribute__((noinline, noreturn)) gexw_callouts_full(void)
 {
-    rec->prev = TEBQ( GEXW_TEB_CALLOUTS );
+    __builtin_trap();
+}
+
+/* The next record in the TEB's array, above the innermost one, pushed. */
+static inline struct gexw_callout *callout_push( int ctx, uint64_t pad_rsp )
+{
+    uint64_t base = TEBQ( GEXW_TEB_CALLOUT_ARRAY ), head = TEBQ( GEXW_TEB_CALLOUTS );
+    struct gexw_callout *rec = head ? (struct gexw_callout *)(uintptr_t)head + 1 : (struct gexw_callout *)(uintptr_t)base;
+
+    if (!base || rec >= (struct gexw_callout *)(uintptr_t)base + GEXW_CALLOUTS_MAX) gexw_callouts_full();
+    rec->prev = head;
     rec->pad_rsp = pad_rsp;
     rec->entry_rsp = gexw_get_entry_rsp();
     rec->context = gexw_get_entry_context();
@@ -507,6 +519,7 @@ static inline void callout_push( int ctx, struct gexw_callout *rec, uint64_t pad
     rec->retaddr = gexw_get_retaddr();
 #endif
     TEBQ( GEXW_TEB_CALLOUTS ) = (uintptr_t)rec;
+    return rec;
 }
 
 /* Run the guest from the context's PC until it comes back to the return
@@ -574,14 +587,32 @@ static void drop_entry_frames( uint64_t teb, uint64_t sp )
         GQ( teb + TEB_EXCEPTION_LIST ) = GQ( f );
 }
 
+/* `head` less the call-outs the guest, at its stack pointer now, is at or
+ * above on the same stack: it has left them (their native frames are dead,
+ * or abandoned to gex), and their records go. */
+static uint64_t drop_left( int ctx, uint64_t teb, uint64_t head )
+{
+    uint64_t rsp = callout_rsp( ctx ), lo = GQ( teb + TEB_DEALLOCATION_STACK ), hi = GQ( teb + TEB_STACK_BASE );
+
+    while (head)
+    {
+        uint64_t pad = ((const struct gexw_callout *)(uintptr_t)head)->pad_rsp;
+        if (pad < lo || pad >= hi || pad > rsp) break;
+        head = ((const struct gexw_callout *)(uintptr_t)head)->prev;
+    }
+    return head;
+}
+
 /* An entry from the guest into native code (the adapters' and the
  * dispatchers'). Its native frames are gone when it ends, by returning or
  * by a __gexw_unwind (NtContinue, an abandoned call-out): so are the
- * call-outs they made, whose records were on them. The chain goes back to
- * what it was at entry, less the call-outs the guest state it leaves with
- * is above (a trap or a jump out of their guest code); a record left on it
- * would be stack that native code reuses, read as a call-out. After a
- * fiber switch it is left as it is: the stack is another one. */
+ * call-outs they made. The chain goes back to what it was at entry, less
+ * the call-outs the guest state it leaves with is above (a trap or a jump
+ * out of their guest code). Those the guest entering is above go at the
+ * start: a jump out of a call-out's guest code to just above it (less
+ * than NATIVE_UNWOUND, which gex does not abandon) leaves no entry to end,
+ * and one more record each time. After a fiber switch it is left as it
+ * is: the stack is another one. */
 int __gexw_entry( int ctx, int depth, unsigned int need, unsigned long long ret,
                   int (*body)( int, int, unsigned int, unsigned long long ) )
 {
@@ -609,6 +640,11 @@ int __gexw_entry( int ctx, int depth, unsigned int need, unsigned long long ret,
         /* reached only when no call-out was left: as if nothing */
         REG( X_RAX ) = rax;
         GEX_C64( GEX_CTX_PC ) = pc;
+    }
+    if (teb && head)
+    {
+        uint64_t left = drop_left( ctx, teb, head );
+        if (left != head) GQ( teb + GEXW_TEB_CALLOUTS ) = head = left;
     }
     r = __gexw_entry_raw( ctx, depth, need, ret, body );
 
@@ -644,16 +680,14 @@ int __gexw_entry( int ctx, int depth, unsigned int need, unsigned long long ret,
 
 static void run_callout( int ctx, uint64_t pad_rsp )
 {
-    struct gexw_callout rec;
-    uint64_t prev;
+    struct gexw_callout *rec = callout_push( ctx, pad_rsp );
+    uint64_t prev = rec->prev;
     int ok;
 
-    callout_push( ctx, &rec, pad_rsp );
-    prev = rec.prev;
     ok = gex_call_out( ctx, (int64_t)GEX_C64( GEX_CTX_PC ), (int64_t)GEXW_RETURN_PAD, (int64_t)pad_rsp );
     TEBQ( GEXW_TEB_CALLOUTS ) = prev;
     if (!ok) __gexw_throw_unwind();
-    if (TEBQ( GEXW_TEB_JUMP_TO ) == (uintptr_t)&rec)
+    if (TEBQ( GEXW_TEB_JUMP_TO ) == (uintptr_t)rec)
     {
         void *buf = (void *)(uintptr_t)TEBQ( GEXW_TEB_JUMP_BUF );
         int val = (int)TEBQ( GEXW_TEB_JUMP_VAL );
