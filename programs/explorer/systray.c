@@ -1458,6 +1458,36 @@ static LRESULT WINAPI shell_traywnd_proc( HWND hwnd, UINT msg, WPARAM wparam, LP
     return 0;
 }
 
+/* Whether the foreground window covers the taskbar's monitor: a full-screen program (a game, a
+ * presentation, a video), which Windows lets go over the taskbar while it is foreground. */
+static BOOL foreground_is_fullscreen( HWND fg )
+{
+    MONITORINFO mi = { sizeof(mi) };
+    RECT rect;
+
+    if (!fg || fg == tray_window || fg == GetDesktopWindow()) return FALSE;
+    if (!IsWindowVisible( fg ) || IsIconic( fg )) return FALSE;
+    if (!GetMonitorInfoW( MonitorFromWindow( tray_window, MONITOR_DEFAULTTOPRIMARY ), &mi )) return FALSE;
+    if (!GetWindowRect( fg, &rect )) return FALSE;
+    return rect.left <= mi.rcMonitor.left && rect.top <= mi.rcMonitor.top &&
+           rect.right >= mi.rcMonitor.right && rect.bottom >= mi.rcMonitor.bottom;
+}
+
+/* The taskbar is on top of every other window, as on Windows, except below a full-screen
+ * foreground window. */
+static void sync_taskbar_zorder(void)
+{
+    static HWND under;  /* the full-screen window the taskbar is below, or 0: topmost */
+    HWND fg = GetForegroundWindow();
+
+    if (!enable_taskbar || !tray_window) return;
+    if (!foreground_is_fullscreen( fg )) fg = 0;
+    if (fg == under) return;
+    under = fg;
+    /* below the full-screen window takes the taskbar out of the topmost band */
+    SetWindowPos( tray_window, fg ? fg : HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE );
+}
+
 /* notification posted to the desktop window */
 void handle_parent_notify( HWND hwnd, WPARAM wp )
 {
@@ -1472,6 +1502,7 @@ void handle_parent_notify( HWND hwnd, WPARAM wp )
         break;
     }
     sync_taskbar_buttons();
+    sync_taskbar_zorder();
 }
 
 /* this function creates the listener window */
@@ -1520,7 +1551,7 @@ void initialize_systray( BOOL arg_using_root, BOOL arg_enable_shell, BOOL arg_sh
         SetRect( &primary_rect, 0, 0, GetSystemMetrics( SM_CXSCREEN ), GetSystemMetrics( SM_CYSCREEN ) );
         SubtractRect( &taskbar_rect, &primary_rect, &work_rect );
 
-        tray_window = CreateWindowExW( WS_EX_NOACTIVATE, shell_traywnd_class.lpszClassName, NULL, WS_POPUP,
+        tray_window = CreateWindowExW( WS_EX_NOACTIVATE | WS_EX_TOPMOST, shell_traywnd_class.lpszClassName, NULL, WS_POPUP,
                                        taskbar_rect.left, taskbar_rect.top, taskbar_rect.right - taskbar_rect.left,
                                        taskbar_rect.bottom - taskbar_rect.top, 0, 0, 0, 0 );
     }
