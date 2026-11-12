@@ -5133,6 +5133,16 @@ __attribute__((import_module("gex"), import_name("usd_copy")))
 extern int gex_usd_copy( gex_addr_t dst, unsigned int size );
 __attribute__((import_module("gex"), import_name("usd_publish")))
 extern int gex_usd_publish( gex_addr_t src, unsigned int size );
+/* The host keeps this process's USD clocks from now on (gex
+ * docs/wineserver-kernel.md §6.2): every 16 ms, as wineserver refreshes its
+ * own copy (server/fd.c, user_shared_data_timeout), it writes SystemTime,
+ * InterruptTime and TickCount into the page at usd, as the server's
+ * set_user_shared_data_time does, and about once a second the time zone from
+ * the server's page. One clock for all of the host's processes, where a thread
+ * in each one cost a Worker of its own; the host forgets the page when the
+ * process ends. */
+__attribute__((import_module("gex"), import_name("usd_tick")))
+extern void gex_usd_tick( gex_addr_t usd );
 
 /* a process's own USD clocks (virtual_map_user_shared_data) */
 static void usd_store( volatile KSYSTEM_TIME *t, ULONGLONG v )
@@ -5159,40 +5169,6 @@ static void usd_clock_tick(void)
     __atomic_store_n( &usd->TickCountLowDeprecated, (ULONG)tick, __ATOMIC_SEQ_CST );
 }
 
-/* The time zone as the server's page has it, about once a second, as the
- * server recomputes it: a process copied its page before the server had (one
- * started before the server's door has the mapping's, with no bias at all),
- * and the bias changes with daylight saving time. */
-static void usd_zone_tick(void)
-{
-    static KUSER_SHARED_DATA *server;
-    KUSER_SHARED_DATA *usd = (KUSER_SHARED_DATA *)user_shared_data;
-    int got;
-
-    if (!server && !(server = malloc( page_size ))) return;
-    got = gex_usd_copy( GEX_ADDR(server), page_size );
-    if (got != page_size && got != -2) return;
-    usd_store( &usd->TimeZoneBias, ((ULONGLONG)server->TimeZoneBias.High1Time << 32) | server->TimeZoneBias.LowPart );
-    __atomic_store_n( &usd->TimeZoneId, server->TimeZoneId, __ATOMIC_SEQ_CST );
-}
-
-/* Every 16 ms, as wineserver refreshes its own copy at least that often
- * (server/fd.c, user_shared_data_timeout): Windows's tick is 15.6 ms too.
- * It was every 1 ms, about 900 wakeups a second in each child process, each
- * a trip through gex's scheduler and compositor pump. */
-static void *usd_clock_thread( void *arg )
-{
-    const struct timespec period = { 0, 16 * 1000000 };
-    unsigned int n = 0;
-
-    for (;;)
-    {
-        nanosleep( &period, NULL );
-        usd_clock_tick();
-        if (!(++n % 64)) usd_zone_tick();
-    }
-    return NULL;
-}
 #endif
 
 #ifdef __wasm__
@@ -5282,10 +5258,8 @@ void virtual_map_user_shared_data(void)
     {
         /* The USD is written by the server, in its own wasm memory: what a
          * process mapped is a copy, its clocks stopped. Each keeps them
-         * itself: a private page, the copy's contents, and a thread advancing
-         * the times as the server's set_user_shared_data_time does (gex
-         * docs/wineserver-kernel.md §6.2). */
-        static pthread_t clock_thread;
+         * itself: a private page, the copy's contents, and the host's clock
+         * advancing the times (gex_usd_tick). */
         void *copy;
 
         if ((copy = malloc( page_size )))
@@ -5314,7 +5288,7 @@ void virtual_map_user_shared_data(void)
             {
                 memcpy( (void *)user_shared_data, copy, page_size );
                 usd_clock_tick();
-                pthread_create( &clock_thread, NULL, usd_clock_thread, NULL );
+                gex_usd_tick( GEX_ADDR(user_shared_data) );
             }
             free( copy );
         }
