@@ -82,6 +82,16 @@ struct _PROC_THREAD_ATTRIBUTE_LIST
 #if defined(__wasm32__) || defined(__wasm64__)
 #include "wine/gex/runtime.h"
 
+/* A fiber is guest state, and native stacks are never switched: a switch
+ * called from native code has no guest state to save, and a fiber that
+ * would start or resume in native code none to load. The process ends
+ * rather than going on at a wrong place. */
+static void fiber_not_supported(void)
+{
+    MESSAGE( "wine: fibers from native code are not supported\n" );
+    NtTerminateProcess( GetCurrentProcess(), STATUS_NOT_SUPPORTED );
+}
+
 /* A start for a thread of another process that is a native function of
  * kernelbase (a function-table index, meaningful only in this process): the
  * guest address of the same export, at the same place in every process.
@@ -1061,10 +1071,18 @@ __ASM_GLOBAL_FUNC( switch_fiber,
  * capture at the innermost entry, callee-saved and XMM registers
  * included); loading the new one leaves this call's native frames, as
  * every guest state load does. */
+static void CDECL start_fiber(void);
+
 static void WINAPI switch_fiber( CONTEXT *old, CONTEXT *new )
 {
     old->ContextFlags = CONTEXT_FULL;
     RtlCaptureContext( old );
+    /* the guest's call has the new fiber in RCX; a native caller's guest
+     * state is that of an older entry, with some other value there */
+    if (old->Rcx != (ULONG_PTR)NtCurrentTeb()->Tib.FiberData ||
+        !old->Rip || __gexw_is_native( (void *)old->Rip ) || !new->Rip ||
+        (__gexw_is_native( (void *)new->Rip ) && new->Rip != (ULONG_PTR)start_fiber))
+        fiber_not_supported();
     NtContinue( new, FALSE );
 }
 #elif defined(__wasm32__)
@@ -1075,6 +1093,9 @@ static void WINAPI switch_fiber( CONTEXT *old, CONTEXT *new )
 {
     RtlCaptureContext( old );
     old->Esp += sizeof(ULONG);
+    if (!old->Eip || __gexw_is_native( ULongToPtr( old->Eip )) ||
+        !new->Eip || __gexw_is_native( ULongToPtr( new->Eip )))
+        fiber_not_supported();
     NtContinue( new, FALSE );
 }
 #else
@@ -1213,6 +1234,14 @@ LPVOID WINAPI DECLSPEC_HOTPATCH CreateFiberEx( SIZE_T stack_commit, SIZE_T stack
     struct fiber_data *fiber;
     INITIAL_TEB stack;
 
+#if defined(__wasm32__) || defined(__wasm64__)
+    /* a native start routine would run on a native stack of its own */
+    if (__gexw_is_native( start ))
+    {
+        SetLastError( ERROR_NOT_SUPPORTED );
+        return NULL;
+    }
+#endif
     if (!(fiber = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*fiber) )))
     {
         SetLastError( ERROR_NOT_ENOUGH_MEMORY );
