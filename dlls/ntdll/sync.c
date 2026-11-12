@@ -515,7 +515,23 @@ void WINAPI RtlAcquireSRWLockExclusive( RTL_SRWLOCK *lock )
 {
     union { RTL_SRWLOCK *rtl; struct srw_lock *s; LONG *l; } u = { lock };
 
+#ifdef __wasm__
+    /* A lock that straddles two 8-byte words takes its compare-exchanges
+     * through the split path, under a lock of their own, which an atomic
+     * add of the waiters' half would race: the whole lock word instead. */
+    {
+        union { struct srw_lock s; LONG l; } old, new;
+
+        do
+        {
+            old.s = *u.s;
+            new = old;
+            new.s.exclusive_waiters += 2;
+        } while (InterlockedCompareExchange( u.l, new.l, old.l ) != old.l);
+    }
+#else
     InterlockedExchangeAdd16( &u.s->exclusive_waiters, 2 );
+#endif
 
     for (;;)
     {
