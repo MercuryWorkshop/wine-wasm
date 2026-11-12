@@ -28,6 +28,7 @@
 #include <rpc.h>
 #include <shlobj.h>
 #include <shellapi.h>
+#include <commctrl.h>
 #include <shlwapi.h>
 #include <ntuser.h>
 #include "exdisp.h"
@@ -61,6 +62,8 @@ static int desktop_width, launcher_size, launchers_per_row;
 
 static struct launcher **launchers;
 static unsigned int nb_launchers, nb_allocated;
+/* the icon a click selected, drawn highlighted; NULL: none */
+static const struct launcher *selected_launcher;
 
 static REFIID tid_ids[] =
 {
@@ -242,7 +245,7 @@ static const struct launcher *launcher_from_point( int x, int y )
     RECT icon, title;
     unsigned int index;
 
-    if (!nb_launchers) return NULL;
+    if (!nb_launchers || x < 0 || y < 0) return NULL;
     index = x / launcher_size + (y / launcher_size) * launchers_per_row;
     if (index >= nb_launchers) return NULL;
 
@@ -251,6 +254,72 @@ static const struct launcher *launcher_from_point( int x, int y )
     if ((x < icon.left || x > icon.right || y < icon.top || y > icon.bottom) &&
         (x < title.left || x > title.right || y < title.top || y > title.bottom)) return NULL;
     return launchers[index];
+}
+
+/* the area a launcher's icon and title (with its selection's focus rectangle) cover */
+static RECT get_launcher_rect( const struct launcher *launcher )
+{
+    RECT rect, icon, title;
+    unsigned int i;
+
+    SetRectEmpty( &rect );
+    for (i = 0; i < nb_launchers; i++) if (launchers[i] == launcher) break;
+    if (i == nb_launchers) return rect;
+    icon = get_icon_rect( i );
+    title = get_title_rect( i );
+    UnionRect( &rect, &icon, &title );
+    InflateRect( &rect, 2, 2 );
+    return rect;
+}
+
+/* select launcher (NULL: none), repainting the icons it changes */
+static void select_launcher( HWND hwnd, const struct launcher *launcher )
+{
+    RECT rect;
+
+    if (launcher == selected_launcher) return;
+    rect = get_launcher_rect( selected_launcher );
+    selected_launcher = launcher;
+    if (!IsRectEmpty( &rect )) RedrawWindow( hwnd, &rect, 0, RDW_INVALIDATE | RDW_ERASE );
+    rect = get_launcher_rect( launcher );
+    if (!IsRectEmpty( &rect )) RedrawWindow( hwnd, &rect, 0, RDW_INVALIDATE | RDW_ERASE );
+}
+
+/* a selected launcher, as a list view draws its selected and focused item: the icon
+ * blended with the selection colour, the title on the selection colour with a focus
+ * rectangle around it */
+static void draw_selected_launcher( HDC hdc, unsigned int index )
+{
+    RECT icon = get_icon_rect( index ), title = get_title_rect( index ), text = title;
+    const UINT flags = DT_CENTER | DT_WORDBREAK | DT_EDITCONTROL | DT_END_ELLIPSIS;
+    HIMAGELIST list;
+    HBRUSH brush;
+    int dx;
+
+    if ((list = ImageList_Create( icon_cx, icon_cy, ILC_COLOR32 | ILC_MASK, 1, 0 )))
+    {
+        if (ImageList_AddIcon( list, launchers[index]->icon ) != -1)
+            ImageList_DrawEx( list, 0, hdc, icon.left, icon.top, icon_cx, icon_cy, CLR_NONE,
+                              GetSysColor( COLOR_HIGHLIGHT ), ILD_TRANSPARENT | ILD_BLEND50 );
+        else
+            DrawIconEx( hdc, icon.left, icon.top, launchers[index]->icon, icon_cx, icon_cy,
+                        0, 0, DI_DEFAULTSIZE | DI_NORMAL );
+        ImageList_Destroy( list );
+    }
+
+    DrawTextW( hdc, launchers[index]->title, -1, &text, flags | DT_CALCRECT );
+    dx = (title.right - title.left - (text.right - text.left)) / 2;
+    OffsetRect( &text, title.left + dx - text.left, 0 );
+    if (text.right > title.right) text.right = title.right;
+    if (text.bottom > title.bottom) text.bottom = title.bottom;
+    InflateRect( &text, 2, 1 );
+    brush = CreateSolidBrush( GetSysColor( COLOR_HIGHLIGHT ) );
+    FillRect( hdc, &text, brush );
+    DeleteObject( brush );
+    SetTextColor( hdc, GetSysColor( COLOR_HIGHLIGHTTEXT ) );
+    DrawTextW( hdc, launchers[index]->title, -1, &title, flags );
+    SetTextColor( hdc, RGB(255,255,255) );
+    DrawFocusRect( hdc, &text );
 }
 
 static void draw_launchers( HDC hdc, RECT update_rect )
@@ -266,8 +335,14 @@ static void draw_launchers( HDC hdc, RECT update_rect )
 
     for (i = 0; i < nb_launchers; i++)
     {
-        RECT dummy, icon = get_icon_rect( i ), title = get_title_rect( i );
+        RECT dummy, icon = get_icon_rect( i ), title = get_title_rect( i ), all;
 
+        if (launchers[i] == selected_launcher)
+        {
+            all = get_launcher_rect( launchers[i] );
+            if (IntersectRect( &dummy, &all, &update_rect )) draw_selected_launcher( hdc, i );
+            continue;
+        }
         if (IntersectRect( &dummy, &icon, &update_rect ))
             DrawIconEx( hdc, icon.left, icon.top, launchers[i]->icon, icon_cx, icon_cy,
                         0, 0, DI_DEFAULTSIZE|DI_NORMAL );
@@ -455,6 +530,7 @@ static BOOL remove_launcher( const WCHAR *folder, const WCHAR *filename, int len
     {
         if (!wcsicmp( launchers[i]->path, path ))
         {
+            if (launchers[i] == selected_launcher) selected_launcher = NULL;
             free_launcher( launchers[i] );
             if (--nb_launchers)
                 memmove( &launchers[i], &launchers[i + 1], sizeof(launchers[i]) * (nb_launchers - i) );
@@ -953,6 +1029,13 @@ static LRESULT WINAPI desktop_wnd_proc( HWND hwnd, UINT message, WPARAM wp, LPAR
 
     case WM_PARENTNOTIFY:
         handle_parent_notify( (HWND)lp, wp );
+        return 0;
+
+    case WM_LBUTTONDOWN:
+    case WM_RBUTTONDOWN:
+        /* a click selects the icon under it (a right-click before its menu), or none */
+        if (using_root) break;
+        select_launcher( hwnd, launcher_from_point( (short)LOWORD(lp), (short)HIWORD(lp) ) );
         return 0;
 
     case WM_RBUTTONUP:
