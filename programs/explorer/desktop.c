@@ -839,6 +839,20 @@ static WNDPROC desktop_orig_wndproc;
  * its submenus (New, Send To). */
 static IContextMenu2 *desktop_menu2;
 
+/* The foreground window while a desktop menu is open: a hidden top-level
+ * window of the desktop's thread, as Windows' Progman is. The desktop window
+ * itself is never foreground (the server leaves nothing foreground for it),
+ * and with nothing foreground of this thread the menu's keys -- Escape, the
+ * arrows, Enter -- would go to the program that was, not to the menu. */
+static HWND menu_foreground(void)
+{
+    static HWND hwnd;
+
+    if (!hwnd || !IsWindow( hwnd ))
+        hwnd = CreateWindowExW( WS_EX_TOOLWINDOW, L"Static", L"", WS_POPUP, 0, 0, 0, 0, 0, 0, 0, 0 );
+    return hwnd;
+}
+
 /* A right-click on the desktop, as on Windows: on an icon, that file's shell
  * menu; elsewhere, the desktop folder's background menu (View, Paste, New,
  * Properties). x and y are in desktop (screen) coordinates. */
@@ -877,7 +891,7 @@ static void show_desktop_menu( HWND hwnd, int x, int y )
                                                   launcher ? CMF_NORMAL | CMF_CANRENAME : CMF_NORMAL ) ))
     {
         IContextMenu_QueryInterface( menu, &IID_IContextMenu2, (void **)&desktop_menu2 );
-        SetForegroundWindow( hwnd );
+        SetForegroundWindow( hwnd == GetDesktopWindow() ? menu_foreground() : hwnd );
         cmd = TrackPopupMenu( popup, TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD, x, y, 0, hwnd, NULL );
         if (desktop_menu2)
         {

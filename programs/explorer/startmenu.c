@@ -554,6 +554,11 @@ void do_startmenu(HWND hwnd)
     tpm.cbSize = sizeof(tpm);
     tpm.rcExclude = rc;
 
+    /* The menu's thread is the foreground one while it is open, as Windows'
+     * taskbar is: its keys (Escape, the arrows, Enter) go to the menu, not to
+     * the program that was active. */
+    SetForegroundWindow(hwnd);
+
     if (!TrackPopupMenuEx(root_menu.menuhandle,
         TPM_LEFTALIGN|TPM_BOTTOMALIGN|TPM_VERTICAL,
         rc.left, rc.top, hwnd, &tpm))
