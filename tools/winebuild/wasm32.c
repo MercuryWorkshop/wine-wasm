@@ -77,11 +77,63 @@ static char *wasm_name( struct wasm_buf *b )
  * I = i64, f = f32, d = f64 (so "i:ii" is int f(int, int)). */
 struct wasm_func { char *name; char *sig; };
 
-static struct
+/* a name list with a hash index (a program's link reads millions of symbols):
+ * the first entry of a name is the one found */
+struct wasm_func_table
 {
     struct wasm_func *funcs;
     unsigned int count, size;
-} wasm_funcs;
+    unsigned int *index, index_size;  /* entry + 1, 0 = free */
+};
+
+static unsigned int name_hash( const char *name )
+{
+    unsigned int h = 2166136261u;
+    while (*name) h = (h ^ (unsigned char)*name++) * 16777619u;
+    return h;
+}
+
+static struct wasm_func *table_find( const struct wasm_func_table *t, const char *name )
+{
+    unsigned int i;
+    if (!t->index_size) return NULL;
+    for (i = name_hash( name ) & (t->index_size - 1); t->index[i]; i = (i + 1) & (t->index_size - 1))
+        if (!strcmp( t->funcs[t->index[i] - 1].name, name )) return &t->funcs[t->index[i] - 1];
+    return NULL;
+}
+
+static void table_index( struct wasm_func_table *t, unsigned int n )
+{
+    unsigned int i;
+    for (i = name_hash( t->funcs[n].name ) & (t->index_size - 1); t->index[i]; i = (i + 1) & (t->index_size - 1))
+        if (!strcmp( t->funcs[t->index[i] - 1].name, t->funcs[n].name )) return;
+    t->index[i] = n + 1;
+}
+
+static void table_add( struct wasm_func_table *t, char *name, char *sig )
+{
+    unsigned int i;
+    if (t->count == t->size)
+    {
+        t->size = t->size ? 2 * t->size : 256;
+        t->funcs = xrealloc( t->funcs, t->size * sizeof(*t->funcs) );
+    }
+    t->funcs[t->count].name = name;
+    t->funcs[t->count].sig = sig;
+    t->count++;
+    if (2 * t->count > t->index_size)
+    {
+        free( t->index );
+        t->index_size = t->index_size ? 2 * t->index_size : 1024;
+        while (2 * t->count > t->index_size) t->index_size *= 2;
+        t->index = xmalloc( t->index_size * sizeof(*t->index) );
+        memset( t->index, 0, t->index_size * sizeof(*t->index) );
+        for (i = 0; i < t->count; i++) table_index( t, i );
+    }
+    else table_index( t, t->count - 1 );
+}
+
+static struct wasm_func_table wasm_funcs;
 
 static char valtype( unsigned char t )
 {
@@ -97,42 +149,22 @@ static char valtype( unsigned char t )
 
 static void add_func( const char *name, const char *sig )
 {
-    if (wasm_funcs.count == wasm_funcs.size)
-    {
-        wasm_funcs.size = wasm_funcs.size ? 2 * wasm_funcs.size : 256;
-        wasm_funcs.funcs = xrealloc( wasm_funcs.funcs, wasm_funcs.size * sizeof(*wasm_funcs.funcs) );
-    }
-    wasm_funcs.funcs[wasm_funcs.count].name = xstrdup( name );
-    wasm_funcs.funcs[wasm_funcs.count].sig = xstrdup( sig );
-    wasm_funcs.count++;
+    table_add( &wasm_funcs, xstrdup( name ), xstrdup( sig ));
 }
 
 /* gexw.sig64 (the ICALL pass, wasm64): a defined function's signature with
  * what the wasm types lose, by name (see wasm64.c) */
-static struct
-{
-    struct wasm_func *funcs;
-    unsigned int count, size;
-} wasm_sigs64;
+static struct wasm_func_table wasm_sigs64;
 
 static void add_sig64( const char *name, size_t nlen, const char *sig, size_t slen )
 {
-    if (wasm_sigs64.count == wasm_sigs64.size)
-    {
-        wasm_sigs64.size = wasm_sigs64.size ? 2 * wasm_sigs64.size : 256;
-        wasm_sigs64.funcs = xrealloc( wasm_sigs64.funcs, wasm_sigs64.size * sizeof(*wasm_sigs64.funcs) );
-    }
-    wasm_sigs64.funcs[wasm_sigs64.count].name = strmake( "%.*s", (int)nlen, name );
-    wasm_sigs64.funcs[wasm_sigs64.count].sig = strmake( "%.*s", (int)slen, sig );
-    wasm_sigs64.count++;
+    table_add( &wasm_sigs64, strmake( "%.*s", (int)nlen, name ), strmake( "%.*s", (int)slen, sig ));
 }
 
 const char *wasm_find_sig64( const char *name )
 {
-    unsigned int i;
-    for (i = 0; i < wasm_sigs64.count; i++)
-        if (!strcmp( wasm_sigs64.funcs[i].name, name )) return wasm_sigs64.funcs[i].sig;
-    return NULL;
+    struct wasm_func *f = table_find( &wasm_sigs64, name );
+    return f ? f->sig : NULL;
 }
 
 /* its lines: `name sig` */
@@ -150,10 +182,8 @@ static void read_sigs64( const unsigned char *p, const unsigned char *end )
 
 const char *find_func_sig( const char *name )
 {
-    unsigned int i;
-    for (i = 0; i < wasm_funcs.count; i++)
-        if (!strcmp( wasm_funcs.funcs[i].name, name )) return wasm_funcs.funcs[i].sig;
-    return NULL;
+    struct wasm_func *f = table_find( &wasm_funcs, name );
+    return f ? f->sig : NULL;
 }
 
 /* The defined function symbols of one wasm object file, with signatures. */
