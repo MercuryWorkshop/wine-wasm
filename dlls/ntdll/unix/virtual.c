@@ -3725,7 +3725,8 @@ static BOOL image_cannot_move( int fd, const struct pe_image_info *image_info )
  * Map a view for a PE image at an appropriate address.
  */
 static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_info *image_info, SIZE_T size,
-                                ULONG_PTR limit_low, ULONG_PTR limit_high, ULONG alloc_type, BOOL cannot_move )
+                                ULONG_PTR limit_low, ULONG_PTR limit_high, ULONG alloc_type, BOOL cannot_move,
+                                BOOL floats )
 {
     unsigned int vprot = SEC_IMAGE | SEC_FILE | VPROT_COMMITTED | VPROT_READ | VPROT_EXEC | VPROT_WRITECOPY;
     void *base;
@@ -3771,6 +3772,12 @@ static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_inf
         top_down = TRUE;
     }
 #endif
+    /* (`floats`: top down above 4 GiB, whatever its own base) */
+    if (floats)
+    {
+        base = NULL;
+        top_down = TRUE;
+    }
     if (base)
     {
         status = map_view( view_ret, base, size, alloc_type, vprot, limit_low, limit_high, 0 );
@@ -3779,7 +3786,7 @@ static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_inf
 
     /* then some appropriate address range */
 
-    if (image_info->base >= limit_4g)
+    if (image_info->base >= limit_4g || floats)
     {
         start = max( limit_low, limit_4g );
         end = limit_high;
@@ -3808,6 +3815,13 @@ static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_inf
  */
 #ifdef __wasm__
 __attribute__((import_module("gex"), import_name("image_mapped"))) void gex_image_mapped( gex_addr_t base, int fd );
+#if defined(__wasm64__) && defined(GEX_MEMORY64)
+/* Whether the image is one whose data gex keeps at the top of a 64-bit
+ * memory, shared with other DLLs (a DLL of Wine's core PE module): it is
+ * placed top down above 4 GiB, within its 32-bit RVAs' reach of that data,
+ * not at an address below 4 GiB the server gives it. */
+__attribute__((import_module("gex"), import_name("image_floats"))) int gex_image_floats( int fd );
+#endif
 
 /* The memory gex maps for native modules (their data, heaps and stacks,
  * outside every image), from the from'th range on: (start, end) pairs at
@@ -3863,7 +3877,7 @@ static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size
     struct file_view *view;
     unsigned int status;
     sigset_t sigset;
-    BOOL cannot_move = FALSE;
+    BOOL cannot_move = FALSE, floats = FALSE;
 
     if (offset >= size)
         return STATUS_INVALID_PARAMETER;
@@ -3904,9 +3918,19 @@ static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size
     if (pe_mapping->image.base >= limit_4g)
         cannot_move = image_cannot_move( unix_fd, &pe_mapping->image );
 #endif
+#if defined(__wasm64__) && defined(GEX_MEMORY64)
+    /* (a dll-bases pin, say, of a DLL of gex's core PE module) */
+    if (pe_mapping->image.map_addr && pe_mapping->image.map_addr < limit_4g && gex_image_floats( unix_fd ))
+    {
+        TRACE( "%s: not at %s, below 4 GiB: its data is shared, and above it\n",
+               debugstr_us( &pe_mapping->nt_name ), wine_dbgstr_longlong( pe_mapping->image.map_addr ) );
+        pe_mapping->image.map_addr = 0;
+        floats = TRUE;
+    }
+#endif
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
 
-    status = map_image_view( &view, &pe_mapping->image, size, limit_low, limit_high, alloc_type, cannot_move );
+    status = map_image_view( &view, &pe_mapping->image, size, limit_low, limit_high, alloc_type, cannot_move, floats );
     if (status) goto done;
 
     status = map_image_into_view( view, &pe_mapping->nt_name, unix_fd, &pe_mapping->image,
