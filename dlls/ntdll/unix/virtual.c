@@ -3576,17 +3576,21 @@ static NTSTATUS map_image_into_view( struct file_view *view, const UNICODE_STRIN
         goto done;
     }
 
-    /* relocate to dynamic base */
+    /* relocate to where it is mapped, as Windows does when it maps an image:
+     * another process can look at it (a suspended child's program, that the
+     * loader relocates only once the child runs) and code that maps an image
+     * section itself has no loader to relocate it */
 
-    if (image_info->map_addr && (delta = image_info->map_addr - image_info->base))
+    if ((delta = (ULONG_PTR)ptr - image_info->base) &&
+        !(image_info->image_charact & IMAGE_FILE_RELOCS_STRIPPED))
     {
-        TRACE_(module)( "relocating %s dynamic base %lx -> %lx mapped at %p\n", debugstr_us(nt_name),
-                        (ULONG_PTR)image_info->base, (ULONG_PTR)image_info->map_addr, ptr );
+        TRACE_(module)( "relocating %s dynamic base %lx -> %p\n", debugstr_us(nt_name),
+                        (ULONG_PTR)image_info->base, ptr );
 
         if (nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
-            ((IMAGE_NT_HEADERS64 *)nt)->OptionalHeader.ImageBase = image_info->map_addr;
+            ((IMAGE_NT_HEADERS64 *)nt)->OptionalHeader.ImageBase = (ULONG_PTR)ptr;
         else
-            ((IMAGE_NT_HEADERS32 *)nt)->OptionalHeader.ImageBase = image_info->map_addr;
+            ((IMAGE_NT_HEADERS32 *)nt)->OptionalHeader.ImageBase = (ULONG_PTR)ptr;
 
         if ((dir = get_data_dir( nt, total_size, IMAGE_DIRECTORY_ENTRY_BASERELOC )))
         {
@@ -3594,7 +3598,22 @@ static NTSTATUS map_image_into_view( struct file_view *view, const UNICODE_STRIN
             IMAGE_BASE_RELOCATION *end = (IMAGE_BASE_RELOCATION *)((char *)rel + dir->Size);
 
             while (rel && rel < end - 1 && rel->SizeOfBlock && rel->VirtualAddress < total_size)
-                rel = process_relocation_block( ptr + rel->VirtualAddress, rel, delta );
+            {
+                /* a shared writable section's pages are every view's: never
+                 * relocated for one of them */
+                for (i = 0; i < nt->FileHeader.NumberOfSections; i++)
+                    if ((sec[i].Characteristics & IMAGE_SCN_MEM_SHARED) &&
+                        (sec[i].Characteristics & IMAGE_SCN_MEM_WRITE) &&
+                        rel->VirtualAddress >= sec[i].VirtualAddress &&
+                        rel->VirtualAddress < sec[i].VirtualAddress + max( sec[i].Misc.VirtualSize, sec[i].SizeOfRawData ))
+                        break;
+                if (i < nt->FileHeader.NumberOfSections)
+                {
+                    WARN_(module)( "%s: not relocating shared section %.8s\n", debugstr_us(nt_name), sec[i].Name );
+                    rel = (IMAGE_BASE_RELOCATION *)((char *)rel + rel->SizeOfBlock);
+                }
+                else rel = process_relocation_block( ptr + rel->VirtualAddress, rel, delta );
+            }
         }
     }
 
