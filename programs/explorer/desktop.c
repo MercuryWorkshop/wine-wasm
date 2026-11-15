@@ -416,6 +416,9 @@ static HICON extract_icon( IShellLinkW *link )
         ExpandEnvironmentStringsW( tmp_path, target_path, MAX_PATH );
         ExtractIconExW( target_path, index, &icon, NULL, 1 );
     }
+    /* a program with no icon of its own shows the default application icon, as on Windows, rather than
+       leaving its shortcut off the desktop */
+    if (!icon) ExtractIconExW( L"shell32.dll", -3 /* IDI_SHELL_WINDOW */, &icon, NULL, 1 );
     return icon;
 }
 
