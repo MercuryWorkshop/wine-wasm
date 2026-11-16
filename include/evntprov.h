@@ -80,6 +80,13 @@ ULONG EVNTAPI EventWrite(REGHANDLE,PCEVENT_DESCRIPTOR,ULONG,PEVENT_DATA_DESCRIPT
 ULONG EVNTAPI EventWriteString(REGHANDLE,UCHAR,ULONGLONG,const WCHAR *);
 ULONG EVNTAPI EventWriteTransfer(REGHANDLE,PCEVENT_DESCRIPTOR,LPCGUID,LPCGUID,ULONG,PEVENT_DATA_DESCRIPTOR);
 
+static inline void EventDataDescCreate(PEVENT_DATA_DESCRIPTOR desc, const void *ptr, ULONG size)
+{
+    desc->Ptr = (ULONG_PTR)ptr;
+    desc->Size = size;
+    desc->Reserved = 0;
+}
+
 #ifdef __cplusplus
 }
 #endif
