@@ -3948,6 +3948,66 @@ static BOOL WINAPI CRYPT_AsnEncodeEnhancedKeyUsage(DWORD dwCertEncodingType,
     return ret;
 }
 
+/* KeyUsageRestrictionSyntax ::= SEQUENCE {
+ *     certPolicySet      SEQUENCE OF CertPolicyId OPTIONAL,
+ *     restrictedKeyUsage KeyUsage OPTIONAL }
+ * CertPolicyId ::= SEQUENCE OF OBJECT IDENTIFIER, laid out as a
+ * CERT_ENHKEY_USAGE is (a count and an array of OID strings). */
+static BOOL WINAPI CRYPT_AsnEncodeKeyUsageRestriction(DWORD dwCertEncodingType,
+ LPCSTR lpszStructType, const void *pvStructInfo, DWORD dwFlags,
+ PCRYPT_ENCODE_PARA pEncodePara, BYTE *pbEncoded, DWORD *pcbEncoded)
+{
+    BOOL ret;
+
+    __TRY
+    {
+        const CERT_KEY_USAGE_RESTRICTION_INFO *info = pvStructInfo;
+        struct AsnEncodeSequenceItem items[2] = { { 0 } };
+        CRYPT_SEQUENCE_OF_ANY set = { 0, NULL };
+        DWORD cItem = 0, i;
+
+        ret = TRUE;
+        if (info->cCertPolicyId)
+        {
+            if (!(set.rgValue = calloc(info->cCertPolicyId, sizeof(*set.rgValue))))
+            {
+                SetLastError(ERROR_OUTOFMEMORY);
+                ret = FALSE;
+            }
+            for (i = 0; ret && i < info->cCertPolicyId; i++, set.cValue++)
+            {
+                CERT_ENHKEY_USAGE id = { info->rgCertPolicyId[i].cCertPolicyElementId,
+                 info->rgCertPolicyId[i].rgbszCertPolicyElementId };
+
+                ret = CRYPT_AsnEncodeEnhancedKeyUsage(dwCertEncodingType, NULL, &id,
+                 CRYPT_ENCODE_ALLOC_FLAG, NULL, (BYTE *)&set.rgValue[i].pbData, &set.rgValue[i].cbData);
+            }
+            if (!ret && set.cValue) set.cValue--;
+            items[cItem].pvStructInfo = &set;
+            items[cItem].encodeFunc = CRYPT_AsnEncodeSequenceOfAny;
+            cItem++;
+        }
+        if (info->RestrictedKeyUsage.cbData)
+        {
+            items[cItem].pvStructInfo = &info->RestrictedKeyUsage;
+            items[cItem].encodeFunc = CRYPT_AsnEncodeBits;
+            cItem++;
+        }
+        if (ret)
+            ret = CRYPT_AsnEncodeSequence(dwCertEncodingType, items, cItem,
+             dwFlags, pEncodePara, pbEncoded, pcbEncoded);
+        for (i = 0; i < set.cValue; i++) LocalFree(set.rgValue[i].pbData);
+        free(set.rgValue);
+    }
+    __EXCEPT_PAGE_FAULT
+    {
+        SetLastError(STATUS_ACCESS_VIOLATION);
+        ret = FALSE;
+    }
+    __ENDTRY
+    return ret;
+}
+
 static BOOL WINAPI CRYPT_AsnEncodeIssuingDistPoint(DWORD dwCertEncodingType,
  LPCSTR lpszStructType, const void *pvStructInfo, DWORD dwFlags,
  PCRYPT_ENCODE_PARA pEncodePara, BYTE *pbEncoded, DWORD *pcbEncoded)
@@ -4780,6 +4840,9 @@ static CryptEncodeObjectExFunc CRYPT_GetBuiltinEncoder(DWORD dwCertEncodingType,
         case LOWORD(X509_ENHANCED_KEY_USAGE):
             encodeFunc = CRYPT_AsnEncodeEnhancedKeyUsage;
             break;
+        case LOWORD(X509_KEY_USAGE_RESTRICTION):
+            encodeFunc = CRYPT_AsnEncodeKeyUsageRestriction;
+            break;
         case LOWORD(PKCS_CTL):
             encodeFunc = CRYPT_AsnEncodeCTL;
             break;
@@ -4867,6 +4930,8 @@ static CryptEncodeObjectExFunc CRYPT_GetBuiltinEncoder(DWORD dwCertEncodingType,
         encodeFunc = CRYPT_AsnEncodeCertPolicyConstraints;
     else if (!strcmp(lpszStructType, szOID_ENHANCED_KEY_USAGE))
         encodeFunc = CRYPT_AsnEncodeEnhancedKeyUsage;
+    else if (!strcmp(lpszStructType, szOID_KEY_USAGE_RESTRICTION))
+        encodeFunc = CRYPT_AsnEncodeKeyUsageRestriction;
     else if (!strcmp(lpszStructType, szOID_ISSUING_DIST_POINT))
         encodeFunc = CRYPT_AsnEncodeIssuingDistPoint;
     else if (!strcmp(lpszStructType, szOID_NAME_CONSTRAINTS))
