@@ -6034,6 +6034,15 @@ static void say_fixed_beyond_16g( const void *base, SIZE_T size )
               base, (unsigned long)(size >> 20) );
     say_beyond_16g( what );
 }
+
+/* A reservation with no address at least as large as 16 GiB. */
+static void say_no_room_16g( SIZE_T size )
+{
+    char what[64];
+
+    snprintf( what, sizeof(what), "a reservation of %lu GiB did not fit", (unsigned long)(size >> 30) );
+    say_beyond_16g( what );
+}
 #endif
 
 /***********************************************************************
@@ -6061,6 +6070,9 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
         /* (lowered to wasm32, the limit is 4 GiB, so a large fixed
          * reservation ends here before the address check below) */
         if (*ret) say_fixed_beyond_16g( *ret, size );
+        /* (and one with no address as large as the whole of gex's largest
+         * memory, which no memory can hold: an RLBox sandbox's 16 GiB) */
+        else if (size >= ((SIZE_T)16 << 30)) say_no_room_16g( size );
 #endif
 #ifdef W64_CODE_SPLIT
         /* (and one with no address larger than the whole lowered space) */
@@ -6183,12 +6195,7 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
     {
         ERR( "out of memory for allocation, base %p size %08lx\n", base, size );
 #ifdef __wasm64__
-        if (size > ((SIZE_T)16 << 30))
-        {
-            char what[64];
-            snprintf( what, sizeof(what), "a reservation of %lu GiB did not fit", (unsigned long)(size >> 30) );
-            say_beyond_16g( what );
-        }
+        if (size >= ((SIZE_T)16 << 30)) say_no_room_16g( size );
 #endif
     }
 
