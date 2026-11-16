@@ -26,10 +26,13 @@ import "unknwn.idl";
 import "dxgicommon.idl";
 import "dxgi1_2.idl";
 
+cpp_quote("#include <d3d9types.h>")
+cpp_quote("#if 0")
 typedef struct _D3DMATRIX
 {
     float m[4][4];
 } D3DMATRIX;
+cpp_quote("#endif")
 
 [
     local,
