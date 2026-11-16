@@ -3579,9 +3579,13 @@ static NTSTATUS map_image_into_view( struct file_view *view, const UNICODE_STRIN
     /* relocate to where it is mapped, as Windows does when it maps an image:
      * another process can look at it (a suspended child's program, that the
      * loader relocates only once the child runs) and code that maps an image
-     * section itself has no loader to relocate it */
+     * section itself has no loader to relocate it. Only a dynamically
+     * relocated image (DYNAMIC_BASE): one without it, mapped away from its
+     * base, is left as in the file with its header's ImageBase as linked
+     * (STATUS_IMAGE_NOT_AT_BASE), and its loader relocates it */
 
     if ((delta = (ULONG_PTR)ptr - image_info->base) &&
+        (image_info->image_flags & IMAGE_FLAGS_ImageDynamicallyRelocated) &&
         !(image_info->image_charact & IMAGE_FILE_RELOCS_STRIPPED))
     {
         TRACE_(module)( "relocating %s dynamic base %lx -> %p\n", debugstr_us(nt_name),
