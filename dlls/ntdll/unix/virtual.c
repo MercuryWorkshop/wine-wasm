@@ -334,21 +334,70 @@ static void say_beyond_code_space( const char *what, const void *base, size_t si
         TRACE( "%s %p-%p outside gex's code space refused\n", what, base, (const char *)base + size );
 }
 
+static BOOL restart_wanted;
+
 /* a reservation with no address the lowered memory has no room for, told to
  * gex (its PR_GEX_SHORT prctl): a 64-bit memory may hold it. gex only notes
  * it, and gives the program that memory from its next start if it then ends
  * abnormally. Said for each size at least as large as the last said: a
  * program that falls back asks for less, and one that asks again for as
- * much cannot go on without it, which gex ends (an allocator retrying for
- * ever, failed here by the view search with no mmap gex would see).
- * virtual_mutex held. */
+ * much cannot go on without it, which gex would end (an allocator retrying
+ * for ever, failed here by the view search with no mmap gex would see).
+ * Told that this process starts its program again itself (the third
+ * argument), gex instead answers 1 once it has recorded the program for a
+ * 64-bit memory, and the allocation that asked starts it
+ * (restart_in_64bit_memory). virtual_mutex held. */
 static void say_short( size_t size )
 {
     static size_t said;
 
     if (size < said) return;
     said = size;
-    prctl( 0x47450003, size, 0, 0, 0 );
+    if (prctl( 0x47450003, size, 1, 0, 0 ) == 1) restart_wanted = TRUE;
+}
+
+/* gex recorded this process's program for a 64-bit memory (say_short), which
+ * its next start gets: that start is now, so the program goes on without
+ * being started again by hand. Its image again, with the command line,
+ * environment, directory and standard handles it was started with, as a
+ * new process of this one; then this one exits, without a crash. No lock
+ * held. */
+static void restart_in_64bit_memory(void)
+{
+    RTL_USER_PROCESS_PARAMETERS *params = peb->ProcessParameters;
+    UNICODE_STRING *image = &params->ImagePathName;
+    static const WCHAR prefix[] = {'\\','?','?','\\'};
+    PS_CREATE_INFO info;
+    PS_ATTRIBUTE_LIST attr;
+    HANDLE process, thread;
+    NTSTATUS status;
+    WCHAR *nt;
+    ULONG len;
+
+    if (!restart_wanted) return;
+    restart_wanted = FALSE;
+    len = sizeof(prefix) + image->Length;
+    if (!(nt = malloc( len ))) return;
+    memcpy( nt, prefix, sizeof(prefix) );
+    memcpy( (char *)nt + sizeof(prefix), image->Buffer, image->Length );
+    memset( &info, 0, sizeof(info) );
+    info.Size = sizeof(info);
+    memset( &attr, 0, sizeof(attr) );
+    attr.TotalLength = sizeof(attr);
+    attr.Attributes[0].Attribute = PS_ATTRIBUTE_IMAGE_NAME;
+    attr.Attributes[0].Size = len;
+    attr.Attributes[0].ValuePtr = nt;
+    status = NtCreateUserProcess( &process, &thread, PROCESS_ALL_ACCESS, THREAD_ALL_ACCESS, NULL, NULL,
+                                  0, 0, params, &info, &attr );
+    free( nt );
+    if (status)
+    {
+        ERR( "could not start %s again in a 64-bit memory: %08x\n", debugstr_us( image ), (int)status );
+        return;
+    }
+    NtClose( thread );
+    NtClose( process );
+    NtTerminateProcess( NtCurrentProcess(), 0 );
 }
 #endif
 
@@ -6104,6 +6153,7 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
             server_enter_uninterrupted_section( &virtual_mutex, &sigset );
             say_short( size );
             server_leave_uninterrupted_section( &virtual_mutex, &sigset );
+            restart_in_64bit_memory();
         }
 #endif
         return STATUS_WORKING_SET_LIMIT_RANGE;
@@ -6219,6 +6269,9 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
         ERR( "out of memory for allocation, base %p size %08lx\n", base, size );
 #ifdef __wasm64__
         if (size >= ((SIZE_T)16 << 30)) say_no_room_16g( size );
+#endif
+#ifdef W64_CODE_SPLIT
+        restart_in_64bit_memory();
 #endif
     }
 
