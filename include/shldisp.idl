@@ -841,3 +841,6 @@ interface IAsyncOperation : IUnknown
             [in, unique] IBindCtx *pbcReserved,
             [in] DWORD dwEffects);
 }
+cpp_quote("#define IDataObjectAsyncCapability IAsyncOperation")
+cpp_quote("#define IID_IDataObjectAsyncCapability IID_IAsyncOperation")
+cpp_quote("#define LPDATAOBJECTASYNCCAPABILITY LPASYNCOPERATION")
