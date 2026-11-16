@@ -296,6 +296,12 @@ extern "C" {
  */
 WINOLE32API DWORD WINAPI CoBuildVersion(void);
 
+#define COM_RIGHTS_EXECUTE         1
+#define COM_RIGHTS_EXECUTE_LOCAL   2
+#define COM_RIGHTS_EXECUTE_REMOTE  4
+#define COM_RIGHTS_ACTIVATE_LOCAL  8
+#define COM_RIGHTS_ACTIVATE_REMOTE 16
+
 typedef enum tagCOINIT
 {
     COINIT_APARTMENTTHREADED  = 0x2, /* Apartment model */

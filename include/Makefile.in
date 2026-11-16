@@ -369,6 +369,7 @@ SOURCES = \
 	gdiplustypes.h \
 	getdts.idl \
 	guiddef.h \
+	handleapi.h \
 	hidusage.h \
 	highlevelmonitorconfigurationapi.h \
 	hlguids.h \

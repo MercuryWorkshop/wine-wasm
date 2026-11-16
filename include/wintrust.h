@@ -43,6 +43,7 @@ typedef struct WINTRUST_CATALOG_INFO_
     BYTE*         pbCalculatedFileHash;
     DWORD         cbCalculatedFileHash;
     PCCTL_CONTEXT pcCatalogContext;
+    HANDLE        hCatAdmin;
 } WINTRUST_CATALOG_INFO, *PWINTRUST_CATALOG_INFO;
 
 typedef struct WINTRUST_BLOB_INFO_
