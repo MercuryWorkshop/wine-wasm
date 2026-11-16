@@ -245,6 +245,7 @@
 
 #define _When_(exp1, exp2)
 
+#define __checkReturn
 #define __bcount(size)
 #define __bcount_opt(size)
 
