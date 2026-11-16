@@ -31,7 +31,7 @@ typedef struct tagSMALL_RECT
     SHORT Top;
     SHORT Right;
     SHORT Bottom;
-} SMALL_RECT,*LPSMALL_RECT;
+} SMALL_RECT,*LPSMALL_RECT,*PSMALL_RECT;
 
 typedef struct tagKEY_EVENT_RECORD
 {
@@ -122,7 +122,7 @@ typedef struct tagCHAR_INFO
         CHAR AsciiChar;
     } Char;
     WORD Attributes;
-} CHAR_INFO,*LPCHAR_INFO;
+} CHAR_INFO,*LPCHAR_INFO,*PCHAR_INFO;
 
 typedef struct _CONSOLE_FONT_INFO
 {

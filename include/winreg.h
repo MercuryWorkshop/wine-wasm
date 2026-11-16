@@ -52,6 +52,9 @@ typedef struct value_entW {
     DWORD	ve_type;
 } VALENTW, *PVALENTW;
 
+DECL_WINELIB_TYPE_AW(VALENT)
+DECL_WINELIB_TYPE_AW(PVALENT)
+
 typedef ACCESS_MASK REGSAM;
 typedef LONG LSTATUS;
 

@@ -488,6 +488,11 @@ typedef struct _FILE_ID_BOTH_DIR_INFO {
     WCHAR         FileName[1];
 } FILE_ID_BOTH_DIR_INFO, *PFILE_ID_BOTH_DIR_INFO;
 
+typedef struct _FILE_ID_INFO {
+    ULONGLONG VolumeSerialNumber;
+    struct { BYTE Identifier[16]; } FileId;
+} FILE_ID_INFO, *PFILE_ID_INFO;
+
 typedef struct _FILE_BASIC_INFO {
     LARGE_INTEGER CreationTime;
     LARGE_INTEGER LastAccessTime;
