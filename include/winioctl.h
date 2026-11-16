@@ -698,4 +698,7 @@ DEFINE_GUID(GUID_DEVINTERFACE_SERENUM_BUS_ENUMERATOR, 0x4D36E978, 0xE325,
 
 #endif /* DEFINE_GUID */
 
+/* the storage property queries */
+#include <ntddstor.h>
+
 #endif

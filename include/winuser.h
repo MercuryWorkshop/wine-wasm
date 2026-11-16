@@ -1090,6 +1090,25 @@ WINUSERAPI BOOL     WINAPI SetSysColors(INT,const INT*,const COLORREF*);
 #define PBT_APMRESUMEAUTOMATIC    0x0012
 #define PBT_POWERSETTINGCHANGE    0x8013
 
+typedef struct {
+    GUID  PowerSetting;
+    DWORD DataLength;
+    UCHAR Data[1];
+} POWERBROADCAST_SETTING, *PPOWERBROADCAST_SETTING;
+
+/* wParam for WM_WTSSESSION_CHANGE */
+#define WTS_CONSOLE_CONNECT                0x1
+#define WTS_CONSOLE_DISCONNECT             0x2
+#define WTS_REMOTE_CONNECT                 0x3
+#define WTS_REMOTE_DISCONNECT              0x4
+#define WTS_SESSION_LOGON                  0x5
+#define WTS_SESSION_LOGOFF                 0x6
+#define WTS_SESSION_LOCK                   0x7
+#define WTS_SESSION_UNLOCK                 0x8
+#define WTS_SESSION_REMOTE_CONTROL         0x9
+#define WTS_SESSION_CREATE                 0xa
+#define WTS_SESSION_TERMINATE              0xb
+
 #define PBTF_APMRESUMEFROMFAILURE       0x00000001
 
 

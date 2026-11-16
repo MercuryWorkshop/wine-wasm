@@ -251,6 +251,9 @@ typedef struct _BP_PAINTPARAMS
 
 THEMEAPI_(HPAINTBUFFER) BeginBufferedPaint(HDC, const RECT *, BP_BUFFERFORMAT, BP_PAINTPARAMS *,HDC *);
 THEMEAPI EndBufferedPaint(HPAINTBUFFER, BOOL);
+BOOL WINAPI BeginPanningFeedback(HWND);
+BOOL WINAPI UpdatePanningFeedback(HWND,LONG,LONG,BOOL);
+BOOL WINAPI EndPanningFeedback(HWND,BOOL);
 THEMEAPI BufferedPaintClear(HPAINTBUFFER, const RECT *);
 THEMEAPI BufferedPaintSetAlpha(HPAINTBUFFER, const RECT *, BYTE);
 THEMEAPI GetBufferedPaintBits(HPAINTBUFFER, RGBQUAD **, int *);

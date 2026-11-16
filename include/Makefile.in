@@ -803,6 +803,7 @@ SOURCES = \
 	pktdef.h \
 	poppack.h \
 	powersetting.h \
+	powerbase.h \
 	powrprof.h \
 	prntvpt.h \
 	processsnapshot.h \

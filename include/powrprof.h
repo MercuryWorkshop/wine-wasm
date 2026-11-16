@@ -19,6 +19,8 @@
 #ifndef __WINE_POWRPROF_H
 #define __WINE_POWRPROF_H 1
 
+#include <powerbase.h>
+
 #define EnableSysTrayBatteryMeter	0x01
 #define EnableMultiBatteryDisplay	0x02
 #define EnablePasswordLogon		0x04
@@ -176,6 +178,7 @@ BOOLEAN WINAPI WritePwrScheme(PUINT, LPWSTR, LPWSTR, PPOWER_POLICY);
 
 /* Power scheme */
 POWER_PLATFORM_ROLE WINAPI PowerDeterminePlatformRole(void);
+POWER_PLATFORM_ROLE WINAPI PowerDeterminePlatformRoleEx(ULONG);
 
 #ifdef __cplusplus
 }
