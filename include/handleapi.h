@@ -22,6 +22,10 @@
 #include <windef.h>
 #include <apisetcconv.h>
 
+#ifndef INVALID_HANDLE_VALUE
+#define INVALID_HANDLE_VALUE ((HANDLE)~(ULONG_PTR)0)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -134,7 +134,9 @@ typedef struct _OFSTRUCT
 
 #define MAX_COMPUTERNAME_LENGTH    15
 
+#ifndef INVALID_HANDLE_VALUE
 #define INVALID_HANDLE_VALUE     ((HANDLE)~(ULONG_PTR)0)
+#endif
 #define INVALID_FILE_SIZE        (~0u)
 #define INVALID_SET_FILE_POINTER (~0u)
 #define INVALID_FILE_ATTRIBUTES  (~0u)

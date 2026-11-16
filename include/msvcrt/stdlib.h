@@ -296,8 +296,19 @@ static inline char* itoa(int value, char* str, int radix) { return _itoa(value, 
 static inline char* ltoa(__msvcrt_long value, char* str, int radix) { return _ltoa(value, str, radix); }
 static inline _onexit_t onexit(_onexit_t func) { return _onexit(func); }
 static inline int putenv(const char* str) { return _putenv(str); }
+#ifdef _UCRT
+#ifdef __cplusplus
+extern "C" {
+#endif
+_ACRTIMP __int64 __cdecl strtoll(const char*,char**,int);
+_ACRTIMP unsigned __int64 __cdecl strtoull(const char*,char**,int);
+#ifdef __cplusplus
+}
+#endif
+#else
 static inline __int64 strtoll(const char *ptr, char **endptr, int base) { return _strtoi64(ptr, endptr, base); }
 static inline unsigned __int64 __cdecl strtoull(const char *ptr, char **endptr, int base) { return _strtoui64(ptr, endptr, base); }
+#endif
 static inline void swab(char* src, char* dst, int len) { _swab(src, dst, len); }
 static inline char* ultoa(__msvcrt_ulong value, char* str, int radix) { return _ultoa(value, str, radix); }
 
