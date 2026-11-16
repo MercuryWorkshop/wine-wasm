@@ -337,13 +337,16 @@ static void say_beyond_code_space( const char *what, const void *base, size_t si
 /* a reservation with no address the lowered memory has no room for, told to
  * gex (its PR_GEX_SHORT prctl): a 64-bit memory may hold it. gex only notes
  * it, and gives the program that memory from its next start if it then ends
- * abnormally. Said once for each size larger than any said before (a
- * program that falls back asks for less). virtual_mutex held. */
+ * abnormally. Said for each size at least as large as the last said: a
+ * program that falls back asks for less, and one that asks again for as
+ * much cannot go on without it, which gex ends (an allocator retrying for
+ * ever, failed here by the view search with no mmap gex would see).
+ * virtual_mutex held. */
 static void say_short( size_t size )
 {
     static size_t said;
 
-    if (size <= said) return;
+    if (size < said) return;
     said = size;
     prctl( 0x47450003, size, 0, 0, 0 );
 }
