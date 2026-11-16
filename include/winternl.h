@@ -3173,7 +3173,8 @@ typedef struct _SYSTEM_PROCESS_INFORMATION {
     SYSTEM_THREAD_INFORMATION ti[1];   /* b8/100 */
 #else
     ULONG NextEntryOffset;             /* 00/00 */
-    BYTE Reserved1[52];                /* 04/04 */
+    ULONG NumberOfThreads;             /* 04/04 */
+    BYTE Reserved1[48];                /* 08/08 */
     PVOID Reserved2[3];                /* 38/38 */
     HANDLE UniqueProcessId;            /* 44/50 */
     PVOID Reserved3;                   /* 48/58 */
