@@ -92,7 +92,9 @@
 #  undef FD_SET
 #  undef FD_ZERO
 #  undef FD_ISSET
-#  undef _TIMEVAL_DEFINED
+#  ifndef __WINE_USE_MSVCRT
+#   undef _TIMEVAL_DEFINED
+#  endif
 
 #  define WS_DEFINE_SELECT
 # endif /* FD_CLR */
