@@ -4025,6 +4025,16 @@ interface IShellLibrary : IUnknown
 cpp_quote("HRESULT WINAPI SetCurrentProcessExplicitAppUserModelID(PCWSTR id);")
 cpp_quote("HRESULT WINAPI GetCurrentProcessExplicitAppUserModelID(PWSTR *id);")
 
+[
+    object,
+    uuid(1f76a169-f994-40ac-8fc8-0959e8874710),
+    pointer_default(unique)
+]
+interface IApplicationAssociationRegistrationUI : IUnknown
+{
+    HRESULT LaunchAdvancedAssociationUI([in, string] LPCWSTR app_registry_name);
+}
+
 /*****************************************************************************
  * ShellObjects typelibrary
  */
@@ -4097,6 +4107,14 @@ library ShellObjects
     coclass ApplicationAssociationRegistration
     {
         interface IApplicationAssociationRegistration;
+    }
+
+    [
+        uuid(1968106d-f3b5-44cf-890e-116fcb9ecef1)
+    ]
+    coclass ApplicationAssociationRegistrationUI
+    {
+        interface IApplicationAssociationRegistrationUI;
     }
 
     [
