@@ -32,6 +32,9 @@ _ACRTIMP void*   __cdecl memmove(void*,const void*,size_t);
 
 _ACRTIMP wchar_t* __cdecl _wcsdup(const wchar_t*) __WINE_DEALLOC(free) __WINE_MALLOC;
 _ACRTIMP wchar_t* __cdecl _wcserror(int);
+_ACRTIMP errno_t __cdecl _wcserror_s(wchar_t*,size_t,int);
+_ACRTIMP wchar_t* __cdecl __wcserror(const wchar_t*);
+_ACRTIMP errno_t __cdecl __wcserror_s(wchar_t*,size_t,const wchar_t*);
 _ACRTIMP int      __cdecl _wcsicmp(const wchar_t*,const wchar_t*);
 _ACRTIMP int      __cdecl _wcsicmp_l(const wchar_t*,const wchar_t*, _locale_t);
 _ACRTIMP int      __cdecl _wcsicoll(const wchar_t*,const wchar_t*);
