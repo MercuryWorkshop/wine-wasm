@@ -1186,6 +1186,7 @@ SOURCES = \
 	winresrc.h \
 	winsafer.h \
 	winscard.h \
+	winsdkver.h \
 	winsmcrd.h \
 	winsnmp.h \
 	winsock.h \
