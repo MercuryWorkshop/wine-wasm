@@ -2080,6 +2080,22 @@ static DWORD get_win32_prot( BYTE vprot, unsigned int map_prot )
     return ret;
 }
 
+/* A committed page's protection as a program sees it. A writable section
+ * of an image is mapped copy-on-write, and Windows shows it PAGE_WRITECOPY
+ * only until its first write, PAGE_READWRITE after (a relocated image's
+ * data pages, written by its fixups, are so before the program runs). Wine
+ * never sees that first write (the page is mapped writable), so such a page
+ * is shown as written: a conservative collector's root scan (Boehm GC's
+ * takes a DLL's data only when it is READWRITE) finds a DLL's data where it
+ * does on Windows. A copy-on-write view of a file that is not an image
+ * keeps saying PAGE_WRITECOPY. */
+static DWORD get_page_prot( BYTE vprot, unsigned int map_prot )
+{
+    if ((map_prot & SEC_IMAGE) && (vprot & VPROT_WRITECOPY))
+        vprot = (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE;
+    return get_win32_prot( vprot, map_prot );
+}
+
 
 /***********************************************************************
  *           get_vprot_flags
@@ -6550,7 +6566,7 @@ NTSTATUS WINAPI NtProtectVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T 
         /* Make sure all the pages are committed */
         if (get_committed_size( view, base, size, &vprot, VPROT_COMMITTED ) >= size && (vprot & VPROT_COMMITTED))
         {
-            old = get_win32_prot( vprot, view->protect );
+            old = get_page_prot( vprot, view->protect );
             status = set_protection( view, base, size, new_prot );
         }
         else status = STATUS_NOT_COMMITTED;
@@ -6720,7 +6736,7 @@ static unsigned int fill_basic_memory_info( const void *addr, MEMORY_BASIC_INFOR
         info->AllocationBase = alloc_base;
         info->RegionSize = get_committed_size( view, base, ~(size_t)0, &vprot, ~VPROT_WRITEWATCH );
         info->State = (vprot & VPROT_COMMITTED) ? MEM_COMMIT : MEM_RESERVE;
-        info->Protect = (vprot & VPROT_COMMITTED) ? get_win32_prot( vprot, view->protect ) : 0;
+        info->Protect = (vprot & VPROT_COMMITTED) ? get_page_prot( vprot, view->protect ) : 0;
         info->AllocationProtect = get_win32_prot( view->protect, view->protect );
         if (view->protect & SEC_IMAGE) info->Type = MEM_IMAGE;
         else if (view->protect & (SEC_FILE | SEC_RESERVE | SEC_COMMIT)) info->Type = MEM_MAPPED;
@@ -6908,7 +6924,7 @@ static void fill_working_set_info( struct fill_working_set_info_data *d, struct 
         if (p->VirtualAttributes.Shared && p->VirtualAttributes.Valid)
             p->VirtualAttributes.ShareCount = 1; /* FIXME */
         if (p->VirtualAttributes.Valid)
-            p->VirtualAttributes.Win32Protection = get_win32_prot( vprot, view->protect );
+            p->VirtualAttributes.Win32Protection = get_page_prot( vprot, view->protect );
     }
 }
 #else
@@ -6981,7 +6997,7 @@ static void fill_working_set_info( struct fill_working_set_info_data *d, struct 
         if (p->VirtualAttributes.Shared && p->VirtualAttributes.Valid)
             p->VirtualAttributes.ShareCount = 1; /* FIXME */
         if (p->VirtualAttributes.Valid)
-            p->VirtualAttributes.Win32Protection = get_win32_prot( vprot, view->protect );
+            p->VirtualAttributes.Win32Protection = get_page_prot( vprot, view->protect );
     }
 }
 #endif
