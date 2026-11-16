@@ -6026,15 +6026,22 @@ void virtual_set_large_address_space(void)
 
 #ifdef __wasm64__
 /* More than gex's largest memory (a 64-bit one, 16 GiB) can hold: no
- * memory flavour runs this program (a Chromium-based one's 32 GiB allocator
- * pools; MSYS2's and Cygwin's heap reserved at 32 GiB). Said once, whatever
- * the debug channels. */
+ * memory flavour runs this program as it wants (a Chromium-based one's
+ * 32 GiB allocator pools; MSYS2's and Cygwin's heap reserved at 32 GiB; a
+ * wasm sandbox's 16 GiB). Said once, whatever the debug channels. */
 static void say_beyond_16g( const char *what )
 {
     static LONG said;
-    if (!InterlockedExchange( &said, 1 ))
-        MESSAGE( "wine: %s needs more than 16 GiB of address space (%s)\n",
-                 debugstr_us( &peb->ProcessParameters->ImagePathName ), what );
+    char text[160];
+    int len;
+
+    if (InterlockedExchange( &said, 1 )) return;
+    MESSAGE( "wine: %s needs more than 16 GiB of address space (%s)\n",
+             debugstr_us( &peb->ProcessParameters->ImagePathName ), what );
+    /* and to gex, which shows it to whoever runs the program (its
+     * PR_GEX_NOTICE prctl) */
+    len = snprintf( text, sizeof(text), "needs more than 16 GiB of address space (%s)", what );
+    prctl( 0x47450004, text, min( len, (int)sizeof(text) - 1 ), 0, 0 );
 }
 
 /* A reservation at a fixed address that ends past 16 GiB, inside Windows'
