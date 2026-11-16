@@ -40,6 +40,9 @@ static inline int write(int fd, const void* buf, unsigned int size) { return _wr
 #if defined(__GNUC__) && (__GNUC__ < 4)
 _ACRTIMP int __cdecl open(const char*,int,...) __attribute__((alias("_open")));
 _ACRTIMP int __cdecl sopen(const char*,int,int,...) __attribute__((alias("_sopen")));
+#elif defined(__wasm__)
+_ACRTIMP int __cdecl open(const char*,int,...) __asm__("_open");
+_ACRTIMP int __cdecl sopen(const char*,int,int,...) __asm__("_sopen");
 #else
 #define open _open
 #define sopen _sopen

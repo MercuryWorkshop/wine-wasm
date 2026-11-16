@@ -20,6 +20,19 @@
 #define _HANDLEAPI_H_
 
 #include <windef.h>
-#include <winbase.h>
+#include <apisetcconv.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+WINBASEAPI BOOL WINAPI CloseHandle(HANDLE);
+WINBASEAPI BOOL WINAPI DuplicateHandle(HANDLE,HANDLE,HANDLE,HANDLE*,DWORD,BOOL,DWORD);
+WINBASEAPI BOOL WINAPI GetHandleInformation(HANDLE,LPDWORD);
+WINBASEAPI BOOL WINAPI SetHandleInformation(HANDLE,DWORD,DWORD);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _HANDLEAPI_H_ */
