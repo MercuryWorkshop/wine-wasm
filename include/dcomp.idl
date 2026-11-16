@@ -23,6 +23,8 @@ import "dcommon.idl";
 import "dcompanimation.idl";
 import "dcomptypes.idl";
 import "unknwn.idl";
+import "dxgicommon.idl";
+import "dxgi1_2.idl";
 
 typedef struct _D3DMATRIX
 {
@@ -702,5 +704,61 @@ interface IDCompositionDesktopDevice : IDCompositionDevice2
     HRESULT CreateSurfaceFromHwnd([in] HWND hwnd, [out] IUnknown **surface);
 }
 
+[
+    object,
+    uuid(a1a3c64a-224f-4a81-9773-4f03a89d3c6c),
+    local,
+    pointer_default(unique)
+]
+interface IDCompositionDeviceDebug : IUnknown
+{
+    HRESULT EnableDebugCounters();
+    HRESULT DisableDebugCounters();
+}
+
+[
+    object,
+    uuid(fed2b808-5eb4-43a0-aea3-35f65280f91b),
+    local,
+    pointer_default(unique)
+]
+interface IDCompositionVisualDebug : IDCompositionVisual2
+{
+    /* C++ method: HRESULT EnableHeatMap(const D2D1_COLOR_F &color); Use pointer instead of reference */
+    HRESULT EnableHeatMap([in] const D2D1_COLOR_F *color);
+    HRESULT DisableHeatMap();
+    HRESULT EnableRedrawRegions();
+    HRESULT DisableRedrawRegions();
+}
+
+[
+    object,
+    uuid(929bb1aa-725f-433b-abd7-273075a835f2),
+    local,
+    pointer_default(unique)
+]
+interface IDCompositionTexture : IUnknown
+{
+    /* C++ method: HRESULT SetSourceRect(const D2D_RECT_U &rect); Use pointer instead of reference */
+    HRESULT SetSourceRect([in] const D2D_RECT_U *rect);
+    HRESULT SetColorSpace([in] DXGI_COLOR_SPACE_TYPE color_space);
+    HRESULT SetAlphaMode([in] DXGI_ALPHA_MODE alpha_mode);
+    HRESULT GetAvailableFence([out] UINT64 *fence_value, [in] REFIID iid, [out, iid_is(iid)] void **fence);
+}
+
+[
+    object,
+    uuid(85fc5cca-2da6-494c-86b6-4a775c049b8a),
+    local,
+    pointer_default(unique)
+]
+interface IDCompositionDevice4 : IDCompositionDevice3
+{
+    HRESULT CheckCompositionTextureSupport([in] IUnknown *rendering_device, [out] BOOL *supported);
+    HRESULT CreateCompositionTexture([in] IUnknown *d3d_texture, [out] IDCompositionTexture **texture);
+}
+
 cpp_quote("STDAPI DCompositionCreateDevice(IDXGIDevice *dxgi_device, REFIID iid, void **device);")
 cpp_quote("STDAPI DCompositionCreateDevice2(IUnknown *rendering_device, REFIID iid, void **device);")
+cpp_quote("STDAPI DCompositionCreateDevice3(IUnknown *rendering_device, REFIID iid, void **device);")
+cpp_quote("STDAPI DCompositionCreateSurfaceHandle(DWORD access, SECURITY_ATTRIBUTES *attributes, HANDLE *handle);")
