@@ -652,6 +652,52 @@ HRESULT WINAPI MFUnwrapMediaType(IMFMediaType *wrapped, IMFMediaType **original)
 
 #if defined(__cplusplus)
 }
+
+static inline UINT32 HI32(UINT64 value) { return (UINT32)(value >> 32); }
+static inline UINT32 LO32(UINT64 value) { return (UINT32)value; }
+
+static inline HRESULT MFGetAttribute2UINT32asUINT64(IMFAttributes *attributes, REFGUID key, UINT32 *high, UINT32 *low)
+{
+    UINT64 value;
+    HRESULT hr = attributes->GetUINT64(key, &value);
+    if (SUCCEEDED(hr))
+    {
+        *high = HI32(value);
+        *low = LO32(value);
+    }
+    return hr;
+}
+
+static inline HRESULT MFGetAttributeSize(IMFAttributes *attributes, REFGUID key, UINT32 *width, UINT32 *height)
+{
+    return MFGetAttribute2UINT32asUINT64(attributes, key, width, height);
+}
+
+static inline HRESULT MFGetAttributeRatio(IMFAttributes *attributes, REFGUID key, UINT32 *numerator, UINT32 *denominator)
+{
+    return MFGetAttribute2UINT32asUINT64(attributes, key, numerator, denominator);
+}
+
+static inline UINT32 MFGetAttributeUINT32(IMFAttributes *attributes, REFGUID key, UINT32 fallback)
+{
+    UINT32 value;
+    if (FAILED(attributes->GetUINT32(key, &value))) value = fallback;
+    return value;
+}
+
+static inline UINT64 MFGetAttributeUINT64(IMFAttributes *attributes, REFGUID key, UINT64 fallback)
+{
+    UINT64 value;
+    if (FAILED(attributes->GetUINT64(key, &value))) value = fallback;
+    return value;
+}
+
+static inline double MFGetAttributeDouble(IMFAttributes *attributes, REFGUID key, double fallback)
+{
+    double value;
+    if (FAILED(attributes->GetDouble(key, &value))) value = fallback;
+    return value;
+}
 #endif
 
 #endif /* __WINE_MFAPI_H */

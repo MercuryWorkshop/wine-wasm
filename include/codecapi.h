@@ -19,6 +19,14 @@
 #ifndef __CODECAPI_H
 #define __CODECAPI_H
 
+#include <icodecapi.h>
+
+#ifndef DEFINE_CODECAPI_GUID
+#define DEFINE_CODECAPI_GUID(name, guidstr, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8) \
+    static const GUID CODECAPI_##name##_guid = { l, w1, w2, { b1, b2, b3, b4, b5, b6, b7, b8 } };
+#define DEFINE_CODECAPI_GUIDNAMED(name) CODECAPI_##name##_guid
+#endif
+
 enum eAVEncH264VProfile
 {
     eAVEncH264VProfile_unknown  = 0,
