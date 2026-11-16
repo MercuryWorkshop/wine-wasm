@@ -19,6 +19,11 @@
 #ifndef __VCRUNTIME_NEW_H
 #define __VCRUNTIME_NEW_H
 
+/* (libc++'s <new> declares all of these: under it, its) */
+#if defined(__cplusplus) && __has_include(<__config>)
+#include <new>
+#else
+
 #ifdef __cplusplus
 extern "C++"
 {
@@ -61,5 +66,7 @@ inline void operator delete[](void*, void*) noexcept {}
 
 }
 #endif /* __cplusplus */
+
+#endif
 
 #endif /* __VCRUNTIME_NEW_H */

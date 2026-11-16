@@ -325,6 +325,8 @@ inline float abs(float x) throw() { return ::fabsf(x); }
 inline double abs(double x) throw() { return ::fabs(x); }
 inline long double abs(long double x) throw() { return ::fabs((double)x); }
 #endif
+/* (nor the classification templates libc++'s <math.h> has its own of) */
+#ifndef _LIBCPP_MATH_H
 template <class T> inline bool isfinite(T x) throw() { return fpclassify(x) <= 0; }
 template <class T> inline bool isinf(T x) throw() { return fpclassify(x) == FP_INFINITE; }
 template <class T> inline bool isnan(T x) throw() { return fpclassify(x) == FP_NAN; }
@@ -335,6 +337,7 @@ template <class T1, class T2> inline bool isless(T1 x, T2 y) throw() { return (_
 template <class T1, class T2> inline bool islessequal(T1 x, T2 y) throw() { return (_fpcomp(x, y) & (_FP_LT | _FP_EQ)) != 0; }
 template <class T1, class T2> inline bool islessgreater(T1 x, T2 y) throw() { return (_fpcomp(x, y) & (_FP_LT | _FP_GT)) != 0; }
 template <class T1, class T2> inline bool isunordered(T1 x, T2 y) throw() { return _fpcomp(x, y) == 0; }
+#endif
 } /* extern "C++" */
 
 #elif _MSVCR_VER >= 120
