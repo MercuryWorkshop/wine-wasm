@@ -2587,7 +2587,7 @@ typedef struct _NT_TIB64
     ULONG64 FiberData;            /* 0020 */
     ULONG64 ArbitraryUserPointer; /* 0028 */
     ULONG64 Self;                 /* 0030 */
-} NT_TIB64;
+} NT_TIB64, *PNT_TIB64;
 
 struct _TEB;
 
