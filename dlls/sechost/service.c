@@ -268,7 +268,8 @@ SC_HANDLE WINAPI DECLSPEC_HOTPATCH OpenSCManagerA( const char *machine, const ch
 /* A session booted without wineboot (WINEGEX_NO_WINEBOOT, gex-eject "wineboot":
  * "skip") has no services.exe: the first caller of the service manager starts
  * it, as wineboot would have, and waits until it serves. Whoever creates the
- * started event starts it; a caller that finds the event waits on it. */
+ * started event starts it; a caller that finds the event waits on it. One
+ * that has not served in 60 s is ended by whoever started it. */
 static BOOL start_services_on_demand(void)
 {
     static const WCHAR started_event[] = SVCCTL_STARTED_EVENT;
@@ -295,9 +296,16 @@ static BOOL start_services_on_demand(void)
     CloseHandle( pi.hThread );
     handles[1] = pi.hProcess;
     ret = WaitForMultipleObjects( 2, handles, FALSE, 60000 );
+    /* one that never serves is ended, so the next caller starts another
+     * instead of waiting on this one again */
+    if (ret == WAIT_TIMEOUT)
+    {
+        ERR( "services.exe did not serve in 60 s: ended, the next caller starts it again\n" );
+        TerminateProcess( pi.hProcess, 1 );
+    }
+    else if (ret != WAIT_OBJECT_0) ERR( "services.exe did not start (%lu)\n", ret );
     CloseHandle( pi.hProcess );
     CloseHandle( handles[0] );
-    if (ret != WAIT_OBJECT_0) ERR( "services.exe did not start (%lu)\n", ret );
     return ret == WAIT_OBJECT_0;
 }
 #endif
