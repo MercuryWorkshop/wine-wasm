@@ -202,6 +202,7 @@ extern "C" {
 #endif
 #define TRUE  1
 
+#ifndef _NO_W32_PSEUDO_MODIFIERS
 #ifndef IN
 #define IN
 #endif
@@ -212,6 +213,7 @@ extern "C" {
 
 #ifndef OPTIONAL
 #define OPTIONAL
+#endif
 #endif
 
 /* Standard data types */
