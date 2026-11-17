@@ -21,6 +21,7 @@
 #include "config.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdarg.h>
 #include <sys/types.h>
 
@@ -366,10 +367,34 @@ struct desktop *get_thread_desktop( struct thread *thread, unsigned int access )
     return get_desktop_obj( thread->process, thread->desktop, access );
 }
 
+/* WINEGEX_DESKTOP_TRACE=1 (debug, off by default): a line on stderr for each
+ * change of a desktop's users, naming the thread and process, and when the
+ * close timeout is armed, cancelled or fires: what closed a desktop whose
+ * program still runs. Off, it costs one test of a cached flag. */
+static int desktop_trace(void)
+{
+    static int on = -1;
+    if (on < 0) on = getenv( "WINEGEX_DESKTOP_TRACE" ) && strcmp( getenv( "WINEGEX_DESKTOP_TRACE" ), "0" );
+    return on;
+}
+
+static void desktop_trace_line( const char *what, struct desktop *desktop, struct thread *thread )
+{
+    struct process *manager = get_top_window_owner( desktop );
+    fprintf( stderr, "wineserver: desktop %p %s: thread %04x of process %04x (state %d, %d running)%s; "
+             "%u users, manager %04x with %d running threads, close timeout %s\n",
+             desktop, what, thread ? thread->id : 0, thread ? thread->process->id : 0,
+             thread ? (int)thread->state : -1, thread ? thread->process->running_threads : 0,
+             thread && thread->process == manager ? " (the manager's)" : "",
+             desktop->users, manager ? manager->id : 0, manager ? manager->running_threads : 0,
+             desktop->close_timeout ? "armed" : "not armed" );
+}
+
 static void close_desktop_timeout( void *private )
 {
     struct desktop *desktop = private;
 
+    if (desktop_trace()) desktop_trace_line( "closes (WM_CLOSE to its owner)", desktop, NULL );
     desktop->close_timeout = NULL;
     unlink_named_object( &desktop->obj );  /* make sure no other process can open it */
     post_desktop_message( desktop, WM_CLOSE, 0, 0 );  /* and signal the owner to quit */
@@ -384,6 +409,7 @@ static void add_desktop_thread( struct desktop *desktop, struct thread *thread )
     if (!thread->process->is_system)
     {
         desktop->users++;
+        if (desktop_trace()) desktop_trace_line( desktop->close_timeout ? "user added, close cancelled" : "user added", desktop, thread );
         if (desktop->close_timeout)
         {
             remove_timeout_user( desktop->close_timeout );
@@ -408,7 +434,11 @@ static void remove_desktop_user( struct desktop *desktop, struct thread *thread 
     if ((process = get_top_window_owner( desktop )) &&
         desktop->users == process->running_threads - (thread->process == process && thread->state == TERMINATED) &&
         !desktop->close_timeout)
+    {
         desktop->close_timeout = add_timeout_user( -TICKS_PER_SEC, close_desktop_timeout, desktop );
+        if (desktop_trace()) desktop_trace_line( "user gone, close armed for 1 s", desktop, thread );
+    }
+    else if (desktop_trace()) desktop_trace_line( "user gone", desktop, thread );
 }
 
 /* remove a thread from the list of threads attached to a desktop */
