@@ -516,6 +516,7 @@ static BOOL copy_file( const WCHAR *source, const WCHAR *dest, COPYFILE2_EXTENDE
     HANDLE h1, h2;
     FILE_BASIC_INFORMATION info;
     IO_STATUS_BLOCK io;
+    LARGE_INTEGER size;
     DWORD count;
     BOOL ret = FALSE;
     char *buffer;
@@ -587,6 +588,25 @@ static BOOL copy_file( const WCHAR *source, const WCHAR *dest, COPYFILE2_EXTENDE
         HeapFree( GetProcessHeap(), 0, buffer );
         CloseHandle( h1 );
         return FALSE;
+    }
+
+    /* the file system's own copy, which shares the data where it can */
+    if (GetFileSizeEx( h1, &size ) && size.QuadPart)
+    {
+        DUPLICATE_EXTENTS_DATA dup;
+
+        memset( &dup, 0, sizeof(dup) );
+        dup.FileHandle = h1;
+        dup.ByteCount = size;
+        if (!NtFsControlFile( h2, NULL, NULL, NULL, &io, FSCTL_DUPLICATE_EXTENTS_TO_FILE,
+                              &dup, sizeof(dup), NULL, 0 ))
+        {
+            ret = TRUE;
+            goto done;
+        }
+        /* whatever it did is undone: the copy starts again empty */
+        SetFilePointer( h2, 0, NULL, FILE_BEGIN );
+        SetEndOfFile( h2 );
     }
 
     while (ReadFile( h1, buffer, buffer_size, &count, NULL ) && count)

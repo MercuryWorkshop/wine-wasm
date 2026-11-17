@@ -6717,6 +6717,59 @@ static void ignore_server_ioctl_struct_holes( ULONG code, const void *in_buffer,
 }
 
 
+/* FSCTL_DUPLICATE_EXTENTS_TO_FILE: the file system's own copy of a range
+ * of another file into this one, which shares the data where the file
+ * system can (copy_file_range). Not supported where there is none, so the
+ * caller copies the bytes itself. */
+static NTSTATUS duplicate_extents( HANDLE handle, const void *in_buffer, ULONG in_size )
+{
+#if defined(__linux__) && defined(__NR_copy_file_range)
+    const DUPLICATE_EXTENTS_DATA *dup = in_buffer;
+    int src_fd, dst_fd, src_close, dst_close;
+    long long src_off, dst_off, left;
+    NTSTATUS status;
+
+    if (!dup || in_size < sizeof(*dup)) return STATUS_INVALID_PARAMETER;
+    src_off = dup->SourceFileOffset.QuadPart;
+    dst_off = dup->TargetFileOffset.QuadPart;
+    left = dup->ByteCount.QuadPart;
+    if (src_off < 0 || dst_off < 0 || left < 0) return STATUS_INVALID_PARAMETER;
+
+    if ((status = server_get_unix_fd( handle, FILE_WRITE_DATA, &dst_fd, &dst_close, NULL, NULL ))) return status;
+    if ((status = server_get_unix_fd( dup->FileHandle, FILE_READ_DATA, &src_fd, &src_close, NULL, NULL )))
+    {
+        if (dst_close) close( dst_fd );
+        return status;
+    }
+    while (left > 0)
+    {
+        long ret = syscall( __NR_copy_file_range, src_fd, &src_off, dst_fd, &dst_off,
+                            (size_t)min( left, 1 << 30 ), 0 );
+        if (ret < 0)
+        {
+            if (errno == EINTR) continue;
+            if (errno == ENOSYS || errno == EXDEV || errno == EINVAL || errno == EOPNOTSUPP)
+                status = STATUS_NOT_SUPPORTED;
+            else
+                status = errno_to_status( errno );
+            break;
+        }
+        if (!ret)
+        {
+            status = STATUS_END_OF_FILE;
+            break;
+        }
+        left -= ret;
+    }
+    if (src_close) close( src_fd );
+    if (dst_close) close( dst_fd );
+    return status;
+#else
+    return STATUS_NOT_SUPPORTED;
+#endif
+}
+
+
 /******************************************************************************
  *              NtFsControlFile   (NTDLL.@)
  */
@@ -6810,6 +6863,11 @@ NTSTATUS WINAPI NtFsControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE ap
         TRACE("FSCTL_SET_SPARSE: Ignoring request\n");
         status = STATUS_SUCCESS;
         break;
+
+    case FSCTL_DUPLICATE_EXTENTS_TO_FILE:
+        status = duplicate_extents( handle, in_buffer, in_size );
+        break;
+
     default:
         return server_ioctl_file( handle, event, apc, apc_context, io, code,
                                   in_buffer, in_size, out_buffer, out_size );

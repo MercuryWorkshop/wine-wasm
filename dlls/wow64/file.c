@@ -451,7 +451,19 @@ NTSTATUS WINAPI wow64_NtFsControlFile( UINT *args )
 
     IO_STATUS_BLOCK io;
     NTSTATUS status;
+    DUPLICATE_EXTENTS_DATA dup;
 
+    if (code == FSCTL_DUPLICATE_EXTENTS_TO_FILE && in_buf && in_len >= sizeof(DUPLICATE_EXTENTS_DATA32))
+    {
+        const DUPLICATE_EXTENTS_DATA32 *dup32 = in_buf;
+
+        dup.FileHandle = LongToHandle( dup32->FileHandle );
+        dup.SourceFileOffset = dup32->SourceFileOffset;
+        dup.TargetFileOffset = dup32->TargetFileOffset;
+        dup.ByteCount = dup32->ByteCount;
+        in_buf = &dup;
+        in_len = sizeof(dup);
+    }
     status = NtFsControlFile( handle, event, apc_32to64( apc ), apc_param_32to64( apc, apc_param ),
                               iosb_32to64( &io, io32 ), code, in_buf, in_len, out_buf, out_len );
     put_iosb( io32, &io );

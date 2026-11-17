@@ -591,6 +591,22 @@ typedef struct RETRIEVAL_POINTERS_BUFFER {
     } Extents[1];
 } RETRIEVAL_POINTERS_BUFFER, *PRETRIEVAL_POINTERS_BUFFER;
 
+typedef struct _DUPLICATE_EXTENTS_DATA {
+    HANDLE        FileHandle;
+    LARGE_INTEGER SourceFileOffset;
+    LARGE_INTEGER TargetFileOffset;
+    LARGE_INTEGER ByteCount;
+} DUPLICATE_EXTENTS_DATA, *PDUPLICATE_EXTENTS_DATA;
+
+#ifdef _WIN64
+typedef struct _DUPLICATE_EXTENTS_DATA32 {
+    UINT32        FileHandle;
+    LARGE_INTEGER SourceFileOffset;
+    LARGE_INTEGER TargetFileOffset;
+    LARGE_INTEGER ByteCount;
+} DUPLICATE_EXTENTS_DATA32, *PDUPLICATE_EXTENTS_DATA32;
+#endif
+
 /* End: _WIN32_WINNT >= 0x0400 */
 
 /*
