@@ -383,6 +383,7 @@ SOURCES = \
 	http.h \
 	httprequest.idl \
 	httprequestid.h \
+	hvsocket.h \
 	i_cryptasn1tls.h \
 	iads.idl \
 	icftypes.idl \
