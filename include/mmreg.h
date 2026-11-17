@@ -821,7 +821,9 @@ typedef struct tagEXBMINFOHEADER {
 
 #pragma pack(pop)
 
-#if defined(DEFINE_GUID) && !defined(__WINE_KSDATAFORMAT_SUBTYPE_PCM_DEFINED)
+/* (for programs, as the SDK's mmreg.h: Wine's own code takes them from
+ * ksmedia.h, and its mfuuid defines them) */
+#if defined(DEFINE_GUID) && !defined(__WINE_KSDATAFORMAT_SUBTYPE_PCM_DEFINED) && !defined(__WINESRC__)
 #define __WINE_KSDATAFORMAT_SUBTYPE_PCM_DEFINED
 DEFINE_GUID(KSDATAFORMAT_SUBTYPE_PCM, 0x00000001, 0x0000, 0x0010, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71);
 DEFINE_GUID(KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, 0x00000003, 0x0000, 0x0010, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71);
