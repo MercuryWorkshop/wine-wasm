@@ -301,6 +301,19 @@ static RPC_BINDING_HANDLE get_irot_handle(void)
     } \
     return hr;
 
+/* A call about what an rpcss holds (a registration's cookie): with no rpcss
+ * running there is nothing of it to change, and none is started for it. A
+ * process ending revokes its class objects, and would otherwise wait on the
+ * service manager for an rpcss that never had them. */
+#define RPCSS_CALL_END_RUNNING \
+        } __EXCEPT(rpc_filter) { \
+            hr = HRESULT_FROM_WIN32(GetExceptionCode()); \
+        } \
+        __ENDTRY \
+        break; \
+    } \
+    return hr;
+
 HRESULT rpcss_get_next_seqid(DWORD *id)
 {
     RPCSS_CALL_START
@@ -336,7 +349,7 @@ HRESULT WINAPI InternalIrotNoteChangeTime(IrotCookie cookie, const FILETIME *tim
 {
     RPCSS_CALL_START
     hr = IrotNoteChangeTime(get_irot_handle(), cookie, time);
-    RPCSS_CALL_END
+    RPCSS_CALL_END_RUNNING
 }
 
 HRESULT WINAPI InternalIrotGetTimeOfLastChange(const MonikerComparisonData *moniker_data, FILETIME *time)
@@ -358,7 +371,7 @@ HRESULT WINAPI InternalIrotRevoke(IrotCookie cookie, IrotContextHandle *ctxt_han
 {
     RPCSS_CALL_START
     hr = IrotRevoke(get_irot_handle(), cookie, ctxt_handle, object, moniker);
-    RPCSS_CALL_END
+    RPCSS_CALL_END_RUNNING
 }
 
 static HRESULT rpcss_server_register(REFCLSID clsid, DWORD flags, MInterfacePointer *obj, unsigned int *cookie)
@@ -372,7 +385,7 @@ HRESULT rpc_revoke_local_server(unsigned int cookie)
 {
     RPCSS_CALL_START
     hr = irpcss_server_revoke(get_irpcss_handle(), cookie);
-    RPCSS_CALL_END
+    RPCSS_CALL_END_RUNNING
 }
 
 static HRESULT rpcss_get_class_object(REFCLSID rclsid, PMInterfacePointer *objref)
