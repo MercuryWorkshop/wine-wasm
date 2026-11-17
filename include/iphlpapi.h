@@ -26,6 +26,9 @@ extern "C" {
 #include <ipexport.h>
 #include <iptypes.h>
 #include <tcpestats.h>
+#ifdef __WS2IPDEF__
+#include <netioapi.h>
+#endif
 
 #ifndef IPHLPAPI_DLL_LINKAGE
 #define IPHLPAPI_DLL_LINKAGE DECLSPEC_IMPORT

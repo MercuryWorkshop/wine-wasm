@@ -51,6 +51,18 @@ typedef struct _INTERFACE_INFO
     WS(sockaddr_gen)  iiNetmask;           /* Network mask */
 } INTERFACE_INFO, * LPINTERFACE_INFO;
 
+#ifndef USE_WS_PREFIX
+#define SIO_GET_MULTICAST_FILTER _IOW('t', 124 | IOC_IN, ULONG)
+#define SIO_SET_MULTICAST_FILTER _IOW('t', 125, ULONG)
+#define SIOCSIPMSFILTER          SIO_SET_MULTICAST_FILTER
+#define SIOCGIPMSFILTER          SIO_GET_MULTICAST_FILTER
+#else
+#define WS_SIO_GET_MULTICAST_FILTER WS__IOW('t', 124 | WS_IOC_IN, ULONG)
+#define WS_SIO_SET_MULTICAST_FILTER WS__IOW('t', 125, ULONG)
+#define WS_SIOCSIPMSFILTER          WS_SIO_SET_MULTICAST_FILTER
+#define WS_SIOCGIPMSFILTER          WS_SIO_GET_MULTICAST_FILTER
+#endif /* USE_WS_PREFIX */
+
 /* Possible flags for the  iiFlags - bitmask  */
 #ifndef USE_WS_PREFIX
 #define IFF_UP                0x00000001 /* Interface is up */

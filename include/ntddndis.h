@@ -21,6 +21,8 @@
 
 #include <ifdef.h>
 #include <devpkey.h>
+
+#define NDIS_IF_MAX_STRING_SIZE IF_MAX_STRING_SIZE
 /* #include <pciprop.h> */
 
 #ifndef GUID_DEFINED

@@ -62,6 +62,7 @@ static DWORD get_adapter_luid( const WCHAR *adapter, NET_LUID *luid )
     return ConvertInterfaceNameToLuidW( adapter, luid );
 }
 
+#undef IF_NAMESIZE  /* (netioapi.h's is Windows'; this is the Unix name's) */
 #define IF_NAMESIZE 16
 static DWORD get_adapter_name( const WCHAR *adapter, char *unix_name, DWORD len )
 {

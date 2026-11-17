@@ -29,6 +29,8 @@
 #define ANY_SIZE 1
 #endif
 
+#define IF_NAMESIZE NDIS_IF_MAX_STRING_SIZE
+
 typedef enum _MIB_IF_TABLE_LEVEL
 {
     MibIfTableNormal,
