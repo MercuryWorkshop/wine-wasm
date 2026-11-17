@@ -6085,12 +6085,12 @@ static void say_beyond_16g( const char *what )
     int len;
 
     if (InterlockedExchange( &said, 1 )) return;
+    /* to gex, which shows it to whoever runs the program, once (its
+     * PR_GEX_NOTICE prctl); said here only when gex takes no notice */
+    len = snprintf( text, sizeof(text), "needs more than 16 GiB of address space (%s)", what );
+    if (!prctl( 0x47450004, text, min( len, (int)sizeof(text) - 1 ), 0, 0 )) return;
     MESSAGE( "wine: %s needs more than 16 GiB of address space (%s)\n",
              debugstr_us( &peb->ProcessParameters->ImagePathName ), what );
-    /* and to gex, which shows it to whoever runs the program (its
-     * PR_GEX_NOTICE prctl) */
-    len = snprintf( text, sizeof(text), "needs more than 16 GiB of address space (%s)", what );
-    prctl( 0x47450004, text, min( len, (int)sizeof(text) - 1 ), 0, 0 );
 }
 
 /* A reservation at a fixed address that ends past 16 GiB, inside Windows'
