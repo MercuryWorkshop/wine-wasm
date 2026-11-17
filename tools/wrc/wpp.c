@@ -82,6 +82,19 @@ static char *wpp_lookup(const char *name, int type, const char *parent_name)
     }
     *cptr = '\0';
 
+    /* An absolute name is opened as it is, not under a search directory */
+    if(cpy[0] == '/')
+    {
+        fd = open( cpy, O_RDONLY );
+        if (fd == -1)
+        {
+            free( cpy );
+            return NULL;
+        }
+        close( fd );
+        return cpy;
+    }
+
     if(type && parent_name)
     {
         /* Search directory of parent include and then -I path */
