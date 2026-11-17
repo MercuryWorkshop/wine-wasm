@@ -11,8 +11,8 @@
  * goes in RAX or XMM0.
  *
  * The types come from the ICALL pass's gexw.sig64 section in the objects
- * (pointer or integer, a byval struct's size, a struct return's size),
- * else from the wasm signature.
+ * (pointer or integer, a byval struct's size, a struct return's size, a
+ * struct of one float or double), else from the wasm signature.
  *
  * Copyright 2026 the gex authors
  *
@@ -31,8 +31,10 @@
 
 #include "build.h"
 
-/* One parameter or result: its kind (v i I p f d X b s) and, for b and s,
- * the struct's size. */
+/* One parameter or result: its kind (v i I p f d X b s F D) and, for b and
+ * s, the struct's size. F and D: a struct of one float or one double, which
+ * the wasm function takes and returns as the scalar and Win64 passes and
+ * returns in an integer slot (RAX for a result), as any 4- or 8-byte struct. */
 struct kind64 { char k; unsigned int size; };
 
 struct sig64
@@ -46,7 +48,7 @@ struct sig64
 static int parse_kind( const char **p, struct kind64 *out )
 {
     char k = **p;
-    if (!k || !strchr( "viIpfdXbs", k )) return 0;
+    if (!k || !strchr( "viIpfdXbsFD", k )) return 0;
     (*p)++;
     out->k = k;
     out->size = 0;
@@ -79,8 +81,8 @@ static const char *c_type64( const struct kind64 *k )
     case 'i': return "int";
     case 'I': return "long long";
     case 'p': case 'b': return "void *";
-    case 'f': return "float";
-    case 'd': return "double";
+    case 'f': case 'F': return "float";
+    case 'd': case 'D': return "double";
     case 'X': return "__int128";
     case 'v': case 's': return "void";
     }
@@ -112,6 +114,9 @@ static void output_arg64( const struct kind64 *p, unsigned int k )
     case 'p': output( "(void *)__gexw_arg(ctx, %u)", k ); break;
     case 'f': output( "__gexw_argf32(ctx, %u)", k ); break;
     case 'd': output( "__gexw_argf64(ctx, %u)", k ); break;
+    /* the integer slot's bits */
+    case 'F': output( "((union { unsigned int u; float f; }){ (unsigned int)__gexw_arg(ctx, %u) }).f", k ); break;
+    case 'D': output( "((union { unsigned long long u; double d; }){ __gexw_arg(ctx, %u) }).d", k ); break;
     case 'X': output( "*(__int128 *)__gexw_arg(ctx, %u)", k ); break;  /* by reference */
     case 'b':
         /* a small struct by value is in its slot; any other by reference */
@@ -259,6 +264,9 @@ const char *output_adapter64( const ORDDEF *odp, const char *wasm_sig )
     case 'p': output( "    return __gexw_ret(ctx, ret, (unsigned long long)r);\n" ); break;
     case 'f': output( "    return __gexw_ret_f32(ctx, ret, r);\n" ); break;
     case 'd': output( "    return __gexw_ret_f64(ctx, ret, r);\n" ); break;
+    /* in RAX */
+    case 'F': output( "    return __gexw_ret(ctx, ret, ((union { float f; unsigned int u; }){ r }).u);\n" ); break;
+    case 'D': output( "    return __gexw_ret(ctx, ret, ((union { double d; unsigned long long u; }){ r }).u);\n" ); break;
     }
     output( "}\n\n" );
     if (!str)
