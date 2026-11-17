@@ -61,6 +61,47 @@ typedef enum PSS_QUERY_INFORMATION_CLASS
     PSS_QUERY_PERFORMANCE_COUNTERS        = 7
 } PSS_QUERY_INFORMATION_CLASS;
 
+typedef enum PSS_PROCESS_FLAGS
+{
+    PSS_PROCESS_FLAGS_NONE        = 0x00000000,
+    PSS_PROCESS_FLAGS_PROTECTED   = 0x00000001,
+    PSS_PROCESS_FLAGS_WOW64       = 0x00000002,
+    PSS_PROCESS_FLAGS_RESERVED_03 = 0x00000004,
+    PSS_PROCESS_FLAGS_RESERVED_04 = 0x00000008,
+    PSS_PROCESS_FLAGS_FROZEN      = 0x00000010
+} PSS_PROCESS_FLAGS;
+DEFINE_ENUM_FLAG_OPERATORS(PSS_PROCESS_FLAGS);
+
+typedef struct PSS_PROCESS_INFORMATION
+{
+    DWORD             ExitStatus;
+    void             *PebBaseAddress;
+    ULONG_PTR         AffinityMask;
+    LONG              BasePriority;
+    DWORD             ProcessId;
+    DWORD             ParentProcessId;
+    PSS_PROCESS_FLAGS Flags;
+    FILETIME          CreateTime;
+    FILETIME          ExitTime;
+    FILETIME          KernelTime;
+    FILETIME          UserTime;
+    DWORD             PriorityClass;
+    ULONG_PTR         PeakVirtualSize;
+    ULONG_PTR         VirtualSize;
+    DWORD             PageFaultCount;
+    ULONG_PTR         PeakWorkingSetSize;
+    ULONG_PTR         WorkingSetSize;
+    ULONG_PTR         QuotaPeakPagedPoolUsage;
+    ULONG_PTR         QuotaPagedPoolUsage;
+    ULONG_PTR         QuotaPeakNonPagedPoolUsage;
+    ULONG_PTR         QuotaNonPagedPoolUsage;
+    ULONG_PTR         PagefileUsage;
+    ULONG_PTR         PeakPagefileUsage;
+    ULONG_PTR         PrivateUsage;
+    DWORD             ExecuteFlags;
+    wchar_t           ImageFileName[MAX_PATH];
+} PSS_PROCESS_INFORMATION;
+
 DECLARE_HANDLE(HPSS);
 
 DWORD WINAPI PssCaptureSnapshot(HANDLE,PSS_CAPTURE_FLAGS,DWORD,HPSS*);

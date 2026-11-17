@@ -19,6 +19,8 @@
 #ifndef __WS2BTH_H__
 #define __WS2BTH_H__
 
+#include <bthdef.h>
+
 #pragma pack(push,1)
 
 #ifndef USE_WS_PREFIX

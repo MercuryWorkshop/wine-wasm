@@ -1536,10 +1536,6 @@ typedef struct _FILE_INTERNAL_INFORMATION {
     LARGE_INTEGER IndexNumber;
 } FILE_INTERNAL_INFORMATION, *PFILE_INTERNAL_INFORMATION;
 
-typedef struct _FILE_ID_128 {
-    UCHAR Identifier[16];
-} FILE_ID_128, *PFILE_ID_128;
-
 typedef struct _FILE_ID_INFORMATION {
     ULONGLONG VolumeSerialNumber;
     FILE_ID_128 FileId;

@@ -106,6 +106,8 @@ _ACRTIMP size_t      __cdecl _strftime_l(char*,size_t,const char*,const struct t
 _ACRTIMP __time32_t  __cdecl _time32(__time32_t*);
 _ACRTIMP __time64_t  __cdecl _time64(__time64_t*);
 
+static inline void tzset(void) { _tzset(); }
+
 #ifndef _USE_32BIT_TIME_T
 static inline char* ctime(const time_t *t) { return _ctime64(t); }
 static inline errno_t ctime_s(char *res, size_t len, const __time64_t *t) { return _ctime64_s(res, len, t); }

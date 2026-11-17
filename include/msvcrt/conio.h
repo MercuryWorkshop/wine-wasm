@@ -23,6 +23,10 @@ _ACRTIMP int   __cdecl _getche(void);
 _ACRTIMP int   __cdecl _kbhit(void);
 _ACRTIMP int   __cdecl _putch(int);
 _ACRTIMP int   __cdecl _ungetch(int);
+_ACRTIMP wint_t __cdecl _getwch(void);
+_ACRTIMP wint_t __cdecl _getwche(void);
+_ACRTIMP wint_t __cdecl _putwch(wchar_t);
+_ACRTIMP wint_t __cdecl _ungetwch(wint_t);
 
 #ifdef _M_IX86
 _ACRTIMP int            __cdecl _inp(unsigned short);
