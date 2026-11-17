@@ -19,7 +19,11 @@
 #ifndef __CODECAPI_H
 #define __CODECAPI_H
 
+/* (ICodecAPI, for programs: Wine's own units include icodecapi.h
+ * themselves, and two with initguid.h would each define its IID) */
+#ifndef __WINESRC__
 #include <icodecapi.h>
+#endif
 
 #ifndef DEFINE_CODECAPI_GUID
 #define DEFINE_CODECAPI_GUID(name, guidstr, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8) \
