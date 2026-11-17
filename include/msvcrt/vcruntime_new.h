@@ -19,8 +19,9 @@
 #ifndef __VCRUNTIME_NEW_H
 #define __VCRUNTIME_NEW_H
 
-/* (libc++'s <new> declares all of these: under it, its) */
-#if defined(__cplusplus) && __has_include(<__config>)
+/* (a real libc++'s <new> declares all of these: under it, its; Wine's
+ * own import of libc++ 8 has no __config_site) */
+#if defined(__cplusplus) && __has_include(<__config_site>)
 #include <new>
 #else
 
