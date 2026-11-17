@@ -87,7 +87,10 @@
 #  undef FD_SET
 #  undef FD_ZERO
 #  undef FD_ISSET
-#  ifndef __WINE_USE_MSVCRT
+/* (a guard alone, as libldap's -D_TIMEVAL_DEFINED, is dropped so the
+ * struct below is defined; a struct timeval a sys/time.h already defined,
+ * which says so with _SYS_TIME_TIMEVAL, keeps it) */
+#  ifndef _SYS_TIME_TIMEVAL
 #   undef _TIMEVAL_DEFINED
 #  endif
 
