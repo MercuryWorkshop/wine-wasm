@@ -2021,6 +2021,19 @@ struct gex_section_ref
 };
 static struct list gex_section_refs = LIST_INIT( gex_section_refs );
 
+/* a pagefile section's whole range, reserved at its first view and filled
+ * from the file as views cover it (gex reads in, and commits, all it maps):
+ * every view of the section is inside it (virtual_map_section) */
+struct gex_section_whole
+{
+    struct list       entry;
+    struct file_view *view;
+    dev_t             dev;
+    ino_t             ino;
+    unsigned char    *filled;  /* a bit per page mapped from the file */
+};
+static struct list gex_section_wholes = LIST_INIT( gex_section_wholes );
+
 /* VIEW is going (deleted or made a placeholder): its references go with it,
  * so an alias left is an address no longer mapped, as on Windows once the
  * view it was is unmapped. */
@@ -2033,6 +2046,17 @@ static void gex_section_refs_forget( struct file_view *view )
         if (ref->view != view) continue;
         list_remove( &ref->entry );
         free( ref );
+    }
+    {
+        struct gex_section_whole *w, *wnext;
+
+        LIST_FOR_EACH_ENTRY_SAFE( w, wnext, &gex_section_wholes, struct gex_section_whole, entry )
+        {
+            if (w->view != view) continue;
+            list_remove( &w->entry );
+            free( w->filled );
+            free( w );
+        }
     }
 }
 #endif
@@ -4110,9 +4134,9 @@ done:
  * (gex_host_data_sync) before a probe, or a section's first view placed
  * there was taken for part of it. */
 
-/* the largest section gex_section_alias's first view maps whole: a memory
- * bound, as gex reads in (and commits) all it maps */
-#define GEX_SECTION_WHOLE_MAX (16 << 20)
+/* the largest section whose whole range a first view reserves (address
+ * space only: its pages are mapped as views cover them) */
+#define GEX_SECTION_WHOLE_MAX (256 << 20)
 
 static struct gex_section_ref *gex_section_ref_at( const void *addr )
 {
@@ -4167,6 +4191,40 @@ static BOOL gex_section_ref_drop( struct gex_section_ref *ref )
  * anywhere comes back inside that view if the file is mapped shared there.
  * Otherwise the page is a new mapping of its own, and unmapped. virtual_mutex
  * held. */
+/* the whole range of the section open as FD, if one is reserved */
+static struct gex_section_whole *gex_section_whole_of( int fd )
+{
+    struct gex_section_whole *w;
+    struct stat st;
+
+    if (list_empty( &gex_section_wholes ) || fstat( fd, &st )) return NULL;
+    LIST_FOR_EACH_ENTRY( w, &gex_section_wholes, struct gex_section_whole, entry )
+        if (w->dev == st.st_dev && w->ino == st.st_ino) return w;
+    return NULL;
+}
+
+/* map [OFFSET, OFFSET + SIZE) of W's section from FD where it is not yet,
+ * with VPROT: a view's own pages, read in only now */
+static NTSTATUS gex_section_fill( struct gex_section_whole *w, int fd, size_t offset, size_t size,
+                                  unsigned int vprot, BOOL removable )
+{
+    size_t page = offset >> page_shift, end = (offset + size + page_mask) >> page_shift, run;
+    NTSTATUS res;
+
+    while (page < end)
+    {
+        if (w->filled[page / 8] & (1 << (page % 8))) { page++; continue; }
+        for (run = page; run < end && !(w->filled[run / 8] & (1 << (run % 8))); run++) ;
+        if ((res = map_file_into_view( w->view, fd, page << page_shift, (run - page) << page_shift,
+                                       page << page_shift, vprot, removable )))
+            return res;
+        set_page_vprot( (char *)w->view->base + (page << page_shift), (run - page) << page_shift, vprot );
+        mprotect_range( (char *)w->view->base + (page << page_shift), (run - page) << page_shift, VPROT_COMMITTED, 0 );
+        for (; page < run; page++) w->filled[page / 8] |= 1 << (page % 8);
+    }
+    return STATUS_SUCCESS;
+}
+
 static void *gex_section_alias( int fd, off_t offset, SIZE_T size, struct file_view **view_ret )
 {
     struct file_view *view;
@@ -4300,7 +4358,17 @@ static unsigned int virtual_map_section( HANDLE handle, PVOID *addr_ptr, ULONG_P
 #ifdef __wasm__
     if (!base && !(alloc_type & (MEM_RESERVE | MEM_REPLACE_PLACEHOLDER)) && !(vprot & VPROT_WRITECOPY))
     {
-        void *alias = gex_section_alias( unix_handle, offset.QuadPart, size, &view );
+        struct gex_section_whole *w = gex_section_whole_of( unix_handle );
+        void *alias = NULL;
+
+        /* inside the section's whole range: its pages there filled first */
+        if (w && offset.QuadPart + size <= w->view->size)
+        {
+            if ((res = gex_section_fill( w, unix_handle, offset.QuadPart, size, vprot, needs_close ))) goto done;
+            view = w->view;
+            alias = (char *)view->base + offset.QuadPart;
+        }
+        else alias = gex_section_alias( unix_handle, offset.QuadPart, size, &view );
 
         if (alias)
         {
@@ -4339,29 +4407,44 @@ static unsigned int virtual_map_section( HANDLE handle, PVOID *addr_ptr, ULONG_P
         }
     }
     /* A section no file backs (shared memory) mapped here for the first
-     * time: the whole of it, once, so that every later view, whatever its
-     * offset and size, is inside it and its pages (gex_section_alias). Only
-     * the first view's own range was mapped before, and a larger or later
-     * view was a separate copy, which met the first only when gex read one
-     * from the file again: a program handing bytes over from one view to
-     * another (shared memory between two threads) could read what neither
-     * wrote. Up to GEX_SECTION_WHOLE_MAX, as gex reads in what it maps;
-     * the view asked for is a reference on it (its base may not be the
-     * section's). Not a view at a base address, in a reservation or a
-     * placeholder, nor a write-copy one: those keep their own range. */
+     * time: the whole of it reserved, once, so that every later view,
+     * whatever its offset and size, is inside it and its pages. Only the
+     * first view's own range was mapped before, and a larger or later view
+     * was a separate copy, which met the first only when gex read one from
+     * the file again: a program handing bytes over from one view to another
+     * (shared memory between two threads) could read what neither wrote.
+     * Only the pages views cover are mapped from the file
+     * (gex_section_fill), as gex reads in and commits all it maps; the
+     * view asked for is a reference on it (its base may not be the
+     * section's). Up to GEX_SECTION_WHOLE_MAX of address space. Not a view
+     * at a base address, in a reservation or a placeholder, nor a
+     * write-copy one: those keep their own range. */
     if (!base && !(alloc_type & (MEM_RESERVE | MEM_REPLACE_PLACEHOLDER)) && !(vprot & VPROT_WRITECOPY) &&
         !(sec_flags & (SEC_FILE | SEC_IMAGE)) && full_size <= GEX_SECTION_WHOLE_MAX &&
         (offset.QuadPart || size < ROUND_SIZE( 0, full_size, page_mask )))
     {
         SIZE_T whole = ROUND_SIZE( 0, full_size, page_mask );
+        struct gex_section_whole *w;
+        struct stat st;
         char *at;
 
-        res = map_view( &view, NULL, whole, alloc_type, vprot, limit_low, limit_high, 0 );
+        if (fstat( unix_handle, &st )) { res = STATUS_INVALID_PARAMETER; goto done; }
+        res = map_view( &view, NULL, whole, alloc_type, vprot & ~VPROT_COMMITTED, limit_low, limit_high, 0 );
         if (res) goto done;
-        res = map_file_into_view( view, unix_handle, 0, whole, 0, vprot, needs_close );
+        if (!(w = calloc( 1, sizeof(*w) )) || !(w->filled = calloc( 1, ((whole >> page_shift) + 7) / 8 )))
+        {
+            free( w );
+            delete_view( view );
+            res = STATUS_NO_MEMORY;
+            goto done;
+        }
+        w->view = view;
+        w->dev = st.st_dev;
+        w->ino = st.st_ino;
+        list_add_head( &gex_section_wholes, &w->entry );
+        res = gex_section_fill( w, unix_handle, offset.QuadPart, size, vprot, needs_close );
         if (res == STATUS_SUCCESS)
         {
-            mprotect_range( view->base, view->size, VPROT_COMMITTED, 0 );
             SERVER_START_REQ( map_view )
             {
                 req->mapping = wine_server_obj_handle( handle );
