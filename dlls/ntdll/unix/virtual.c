@@ -4110,9 +4110,9 @@ done:
  * (gex_host_data_sync) before a probe, or a section's first view placed
  * there was taken for part of it. */
 
-/* the largest section gex_section_alias's first view maps whole (gex reads
- * in what it maps) */
-#define GEX_SECTION_WHOLE_MAX (256 << 20)
+/* the largest section gex_section_alias's first view maps whole: a memory
+ * bound, as gex reads in (and commits) all it maps */
+#define GEX_SECTION_WHOLE_MAX (16 << 20)
 
 static struct gex_section_ref *gex_section_ref_at( const void *addr )
 {
@@ -4319,6 +4319,14 @@ static unsigned int virtual_map_section( HANDLE handle, PVOID *addr_ptr, ULONG_P
                 if ((vprot & VPROT_EXEC) && !(get_page_vprot( alias ) & VPROT_EXEC))
                 {
                     set_page_vprot_bits( alias, size, VPROT_EXEC, 0 );
+                    mprotect_range( alias, size, 0, 0 );
+                }
+                /* and written, when this view may write it and the first
+                 * may not (a read-only first view of shared memory; the
+                 * handle's access was checked) */
+                if ((vprot & VPROT_WRITE) && !(get_page_vprot( alias ) & VPROT_WRITE))
+                {
+                    set_page_vprot_bits( alias, size, VPROT_WRITE, 0 );
                     mprotect_range( alias, size, 0, 0 );
                 }
                 TRACE( "handle=%p size=%lx offset=%s: %p, in view %p\n", handle, size,
