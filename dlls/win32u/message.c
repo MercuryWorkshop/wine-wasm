@@ -2953,7 +2953,9 @@ static BOOL check_queue_bits( UINT wake_mask, UINT changed_mask, UINT signal_bit
         {
             *wake_bits = queue_shm->wake_bits;
             *changed_bits = queue_shm->changed_bits;
-            skip = get_tick_count() - (UINT64)queue_shm->access_time / 10000 < 3000; /* avoid hung queue */
+            /* avoid hung queue; signed: a client's tick may trail the server's
+             * time by up to the shared page's update interval */
+            skip = (INT64)(get_tick_count() - (UINT64)queue_shm->access_time / 10000) < 3000;
         }
     }
 
@@ -3335,7 +3337,8 @@ static BOOL check_queue_masks( UINT wake_mask, UINT changed_mask )
     while ((status = get_shared_queue( &lock, &queue_shm )) == STATUS_PENDING)
     {
         if (queue_shm->wake_mask != wake_mask || queue_shm->changed_mask != changed_mask) skip = FALSE;
-        else skip = get_tick_count() - (UINT64)queue_shm->access_time / 10000 < 3000; /* avoid hung queue */
+        /* avoid hung queue (signed, as in check_queue_bits) */
+        else skip = (INT64)(get_tick_count() - (UINT64)queue_shm->access_time / 10000) < 3000;
     }
 
     if (status) return FALSE;
