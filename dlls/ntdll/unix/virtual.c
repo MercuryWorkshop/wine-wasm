@@ -3942,6 +3942,22 @@ static BOOL gex_host_data_sync(void)
             char *end = ROUND_ADDR( (ULONG_PTR)r[2 * i + 1] + host_page_mask, host_page_mask );
             struct file_view *view;
 
+            /* a range gex has unmapped since, listed the other way round
+             * (start after end): its view goes, or it would outlive the
+             * pages, and an address gex hands out there again (a section's
+             * first view, gex_section_alias's probe) would be taken for
+             * part of it */
+            if (end < base)
+            {
+                char *gone = ROUND_ADDR( (ULONG_PTR)r[2 * i + 1], host_page_mask );
+                char *gone_end = ROUND_ADDR( (ULONG_PTR)r[2 * i] + host_page_mask, host_page_mask );
+
+                if ((view = find_view( gone, 0 )) && (view->protect & VPROT_SYSTEM) &&
+                    view->base == gone && (char *)view->base + view->size == gone_end &&
+                    !get_builtin_module( view->base ))
+                    delete_view( view );
+                continue;
+            }
             if (end <= base) continue;
             /* one of Wine's own (a range gex unmapped and Wine took since) */
             if ((view = find_view_range( base, end - base )) && !(view->protect & VPROT_SYSTEM))
@@ -4089,7 +4105,15 @@ done:
  * read-only view of a writable one can be written, and VirtualQuery
  * reports the first's, and the first's base as AllocationBase), with
  * execute added when the alias may run its pages. A
- * write-copy view never is one, nor has one: its pages are its own. */
+ * write-copy view never is one, nor has one: its pages are its own.
+ * Ended threads' native TLS, which gex unmaps, is dropped from the views
+ * (gex_host_data_sync) before a probe, or a section's first view placed
+ * there was taken for part of it. */
+
+/* the largest section gex_section_alias's first view maps whole (gex reads
+ * in what it maps) */
+#define GEX_SECTION_WHOLE_MAX (256 << 20)
+
 static struct gex_section_ref *gex_section_ref_at( const void *addr )
 {
     struct gex_section_ref *ref;
@@ -4115,6 +4139,15 @@ static BOOL gex_section_ref_add( void *addr, struct file_view *view, unsigned in
     return TRUE;
 }
 
+/* whether any reference names VIEW */
+static BOOL gex_section_view_refd( struct file_view *view )
+{
+    struct gex_section_ref *ref;
+    LIST_FOR_EACH_ENTRY( ref, &gex_section_refs, struct gex_section_ref, entry )
+        if (ref->view == view) return TRUE;
+    return FALSE;
+}
+
 /* whether VIEW has references left besides the one REF held (dropped) */
 static BOOL gex_section_ref_drop( struct gex_section_ref *ref )
 {
@@ -4137,17 +4170,29 @@ static BOOL gex_section_ref_drop( struct gex_section_ref *ref )
 static void *gex_section_alias( int fd, off_t offset, SIZE_T size, struct file_view **view_ret )
 {
     struct file_view *view;
-    char *addr = mmap( NULL, page_size, PROT_READ, MAP_SHARED, fd, offset );
+    char *addr;
+
+    /* the views of ranges gex has unmapped dropped first */
+    gex_host_data_sync();
+    addr = mmap( NULL, page_size, PROT_READ, MAP_SHARED, fd, offset );
 
     if (addr == MAP_FAILED) return NULL;
-    if (!(view = find_view( addr, 0 )))
+    /* A view that cannot be a shared mapping of this file: the probe is a
+     * fresh page gex placed where that view's pages are not (a range gex
+     * mapped for a native module and unmapped since, which Wine's view of
+     * it outlived, or a reservation), so it is unmapped like one in no view.
+     * Taken for an alias, it was never unmapped, and every later view of
+     * the section, aliased to it and too large for the view around it,
+     * was a separate copy of the file (Firefox's Shmem: its two sides' views
+     * of a WebRender blob met only when gex refreshed one from the file). */
+    if (!(view = find_view( addr, 0 )) || is_view_valloc( view ) ||
+        (view->protect & (VPROT_SYSTEM | SEC_IMAGE | VPROT_WRITECOPY)))
     {
         munmap( addr, page_size );
         return NULL;
     }
     /* never munmap an alias: gex would unmap the view it is part of */
-    if (is_view_valloc( view ) || (view->protect & (SEC_IMAGE | VPROT_WRITECOPY)) ||
-        addr + size > (char *)view->base + view->size)
+    if (addr + size > (char *)view->base + view->size)
     {
         WARN( "section at offset %s, %lx bytes, is partly mapped at %p (view %p-%p): a separate copy\n",
               wine_dbgstr_longlong(offset), (unsigned long)size, addr, view->base, (char *)view->base + view->size );
@@ -4259,7 +4304,10 @@ static unsigned int virtual_map_section( HANDLE handle, PVOID *addr_ptr, ULONG_P
 
         if (alias)
         {
-            if (!gex_section_ref_at( view->base ) && !gex_section_ref_add( view->base, view, 1 ))
+            /* the first view's own base counts once, unless its views are
+             * counted already (a whole section's view, below: each of its
+             * views a reference) */
+            if (!gex_section_view_refd( view ) && !gex_section_ref_add( view->base, view, 1 ))
                 res = STATUS_NO_MEMORY;
             else if (!gex_section_ref_add( alias, view, 1 ))
                 res = STATUS_NO_MEMORY;
@@ -4281,6 +4329,55 @@ static unsigned int virtual_map_section( HANDLE handle, PVOID *addr_ptr, ULONG_P
             }
             goto done;
         }
+    }
+    /* A section no file backs (shared memory) mapped here for the first
+     * time: the whole of it, once, so that every later view, whatever its
+     * offset and size, is inside it and its pages (gex_section_alias). Only
+     * the first view's own range was mapped before, and a larger or later
+     * view was a separate copy, which met the first only when gex read one
+     * from the file again: a program handing bytes over from one view to
+     * another (shared memory between two threads) could read what neither
+     * wrote. Up to GEX_SECTION_WHOLE_MAX, as gex reads in what it maps;
+     * the view asked for is a reference on it (its base may not be the
+     * section's). Not a view at a base address, in a reservation or a
+     * placeholder, nor a write-copy one: those keep their own range. */
+    if (!base && !(alloc_type & (MEM_RESERVE | MEM_REPLACE_PLACEHOLDER)) && !(vprot & VPROT_WRITECOPY) &&
+        !(sec_flags & (SEC_FILE | SEC_IMAGE)) && full_size <= GEX_SECTION_WHOLE_MAX &&
+        (offset.QuadPart || size < ROUND_SIZE( 0, full_size, page_mask )))
+    {
+        SIZE_T whole = ROUND_SIZE( 0, full_size, page_mask );
+        char *at;
+
+        res = map_view( &view, NULL, whole, alloc_type, vprot, limit_low, limit_high, 0 );
+        if (res) goto done;
+        res = map_file_into_view( view, unix_handle, 0, whole, 0, vprot, needs_close );
+        if (res == STATUS_SUCCESS)
+        {
+            mprotect_range( view->base, view->size, VPROT_COMMITTED, 0 );
+            SERVER_START_REQ( map_view )
+            {
+                req->mapping = wine_server_obj_handle( handle );
+                req->access  = access;
+                req->base    = wine_server_client_ptr( view->base );
+                req->size    = whole;
+                req->start   = 0;
+                res = wine_server_call( req );
+            }
+            SERVER_END_REQ;
+        }
+        else ERR( "mapping %p %lx (the whole section) failed\n", view->base, whole );
+        at = (char *)view->base + offset.QuadPart;
+        if (NT_SUCCESS(res) && !gex_section_ref_add( at, view, 1 )) res = STATUS_NO_MEMORY;
+        if (NT_SUCCESS(res))
+        {
+            TRACE( "handle=%p size=%lx offset=%s: %p, in the section's whole view %p\n", handle, size,
+                   wine_dbgstr_longlong(offset.QuadPart), at, view->base );
+            *addr_ptr = at;
+            *size_ptr = size;
+            VIRTUAL_DEBUG_DUMP_VIEW( view );
+        }
+        else delete_view( view );
+        goto done;
     }
 #endif
     res = map_view( &view, base, size, alloc_type, vprot, limit_low, limit_high, 0 );
