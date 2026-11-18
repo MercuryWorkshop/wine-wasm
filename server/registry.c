@@ -2029,6 +2029,10 @@ static void save_registry( struct key *key, obj_handle_t handle )
     }
 }
 
+/* a save's stdio buffer: a branch is over a megabyte, and stdio's own
+ * buffer would make that a thousand writes */
+static char save_buffer[65536];
+
 /* save a registry branch to a file */
 static int save_branch( struct key *key, const char *filename )
 {
@@ -2077,6 +2081,7 @@ static int save_branch( struct key *key, const char *filename )
         close( fd );
         goto done;
     }
+    setvbuf( f, save_buffer, _IOFBF, sizeof(save_buffer) );
 
     if (debug_level > 1)
     {
