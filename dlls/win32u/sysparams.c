@@ -7151,11 +7151,18 @@ int get_system_metrics( int index )
     case SM_CYMAXTRACK:
         return get_system_metrics( SM_CYVIRTUALSCREEN ) + 4 + 2 * get_system_metrics( SM_CYFRAME );
     case SM_CXMAXIMIZED:
-        /* FIXME: subtract the width of any vertical application toolbars*/
-        return get_system_metrics( SM_CXSCREEN ) + 2 * get_system_metrics( SM_CXFRAME );
     case SM_CYMAXIMIZED:
-        /* FIXME: subtract the width of any horizontal application toolbars*/
-        return get_system_metrics( SM_CYSCREEN ) + 2 * get_system_metrics( SM_CYCAPTION );
+    {
+        /* A maximized window covers the primary work area, which excludes the
+         * taskbar and any application toolbars, with its frame outside it, as
+         * on Windows. SM_C[XY]FULLSCREEN follow from these. */
+        RECT work = {0};
+        if (!NtUserSystemParametersInfo( SPI_GETWORKAREA, 0, &work, 0 ))
+            work = get_primary_monitor_rect( get_thread_dpi() );
+        if (index == SM_CXMAXIMIZED)
+            return work.right - work.left + 2 * get_system_metrics( SM_CXFRAME );
+        return work.bottom - work.top + 2 * get_system_metrics( SM_CYFRAME );
+    }
     case SM_NETWORK:
         return 3;  /* FIXME */
     case SM_CLEANBOOT:
