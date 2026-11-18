@@ -285,6 +285,43 @@ static void select_launcher( HWND hwnd, const struct launcher *launcher )
     if (!IsRectEmpty( &rect )) RedrawWindow( hwnd, &rect, 0, RDW_INVALIDATE | RDW_ERASE );
 }
 
+/* Typing on the desktop selects the icon whose title starts with what was
+ * typed, as Windows' desktop list view does: characters typed within a second
+ * of each other make one prefix, the selected icon kept while it still
+ * matches; one character, or the same one again, goes to the next icon after
+ * the selected one that starts with it. */
+static void type_select_launcher( WCHAR ch )
+{
+    static WCHAR typed[MAX_PATH];
+    static unsigned int len;
+    static DWORD last;
+    DWORD now = GetTickCount();
+    unsigned int i, start = 0, cur = nb_launchers, n;
+    BOOL repeat = TRUE;
+
+    if (!iswgraph( ch ) || !nb_launchers) return;
+    if (len && now - last < 1000 && len < ARRAY_SIZE(typed) - 1) typed[len++] = ch;
+    else
+    {
+        typed[0] = ch;
+        len = 1;
+    }
+    last = now;
+    for (i = 1; i < len; i++) if (typed[i] != typed[0]) repeat = FALSE;
+    n = repeat ? 1 : len;
+    for (i = 0; i < nb_launchers; i++) if (launchers[i] == selected_launcher) cur = i;
+    if (cur < nb_launchers) start = repeat ? cur + 1 : cur;
+    for (i = 0; i < nb_launchers; i++)
+    {
+        const struct launcher *launcher = launchers[(start + i) % nb_launchers];
+        if (!wcsnicmp( launcher->title, typed, n ))
+        {
+            select_launcher( GetDesktopWindow(), launcher );
+            return;
+        }
+    }
+}
+
 /* a selected launcher, as a list view draws its selected and focused item: the icon
  * blended with the selection colour, the title on the selection colour with a focus
  * rectangle around it */
@@ -918,17 +955,40 @@ static WNDPROC desktop_orig_wndproc;
  * its submenus (New, Send To). */
 static IContextMenu2 *desktop_menu2;
 
-/* The foreground window while a desktop menu is open: a hidden top-level
- * window of the desktop's thread, as Windows' Progman is. The desktop window
- * itself is never foreground (the server leaves nothing foreground for it),
- * and with nothing foreground of this thread the menu's keys -- Escape, the
- * arrows, Enter -- would go to the program that was, not to the menu. */
+static WNDPROC static_wnd_proc;
+
+/* the desktop's keys, from the foreground window below: typing selects an
+ * icon, Enter opens the selected one */
+static LRESULT WINAPI desktop_keys_wnd_proc( HWND hwnd, UINT message, WPARAM wp, LPARAM lp )
+{
+    switch (message)
+    {
+    case WM_CHAR:
+        type_select_launcher( wp );
+        return 0;
+    case WM_KEYDOWN:
+        if (wp != VK_RETURN || !selected_launcher) break;
+        ShellExecuteW( NULL, L"open", selected_launcher->path, NULL, NULL, SW_SHOWNORMAL );
+        return 0;
+    }
+    return CallWindowProcW( static_wnd_proc, hwnd, message, wp, lp );
+}
+
+/* The foreground window once the desktop is clicked, and while a desktop menu
+ * is open: a hidden top-level window of the desktop's thread, as Windows'
+ * Progman is. The desktop window itself is never foreground (the server leaves
+ * nothing foreground for it), and with nothing foreground of this thread the
+ * keys typed on the desktop would go to no window, and a menu's -- Escape,
+ * the arrows, Enter -- to the program that was, not to the menu. */
 static HWND menu_foreground(void)
 {
     static HWND hwnd;
 
     if (!hwnd || !IsWindow( hwnd ))
+    {
         hwnd = CreateWindowExW( WS_EX_TOOLWINDOW, L"Static", L"", WS_POPUP, 0, 0, 0, 0, 0, 0, 0, 0 );
+        if (hwnd) static_wnd_proc = (WNDPROC)SetWindowLongPtrW( hwnd, GWLP_WNDPROC, (LONG_PTR)desktop_keys_wnd_proc );
+    }
     return hwnd;
 }
 
@@ -1036,9 +1096,11 @@ static LRESULT WINAPI desktop_wnd_proc( HWND hwnd, UINT message, WPARAM wp, LPAR
 
     case WM_LBUTTONDOWN:
     case WM_RBUTTONDOWN:
-        /* a click selects the icon under it (a right-click before its menu), or none */
+        /* a click selects the icon under it (a right-click before its menu), or
+         * none, and gives the desktop the keyboard */
         if (using_root) break;
         select_launcher( hwnd, launcher_from_point( (short)LOWORD(lp), (short)HIWORD(lp) ) );
+        SetForegroundWindow( menu_foreground() );
         return 0;
 
     case WM_RBUTTONUP:
@@ -1578,7 +1640,11 @@ void manage_desktop( WCHAR *arg )
     if (hwnd)
     {
         TRACE( "desktop message loop starting on hwnd %p\n", hwnd );
-        while (GetMessageW( &msg, 0, 0, 0 )) DispatchMessageW( &msg );
+        while (GetMessageW( &msg, 0, 0, 0 ))
+        {
+            TranslateMessage( &msg );
+            DispatchMessageW( &msg );
+        }
         TRACE( "desktop message loop exiting for hwnd %p\n", hwnd );
     }
 
