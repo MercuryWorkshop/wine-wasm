@@ -3677,6 +3677,68 @@ static void map_dpi_winpos( WINDOWPOS *winpos )
 /***********************************************************************
  *           calc_winpos
  */
+/* Keep a captioned top-level window's caption inside the work area of the
+ * monitor it is on, when it is first shown or a program moves it: a window
+ * taller than the screen (or placed by a program that centres a window larger
+ * than the work area) otherwise opens with its caption out of reach, and it can
+ * then be neither moved nor closed with the mouse. Only a first show shrinks a
+ * window that still does not fit, so a program that sizes itself on WM_SIZE is
+ * not fought. Left alone: the user's own moves and sizes (the move/size loop),
+ * maximized, minimized, fullscreen, tool and caption-less windows, and windows
+ * wholly off every monitor, which programs park there on purpose. */
+static void keep_caption_on_screen( WINDOWPOS *winpos )
+{
+    DWORD style = get_window_long( winpos->hwnd, GWL_STYLE ), ex_style = get_window_long( winpos->hwnd, GWL_EXSTYLE );
+    BOOL show = (winpos->flags & SWP_SHOWWINDOW) && !(style & WS_VISIBLE);
+    BOOL move = !(winpos->flags & SWP_NOMOVE) && (style & WS_VISIBLE);
+    struct window_rects rects, *old_rects = &rects;
+    GUITHREADINFO gui = {.cbSize = sizeof(gui)};
+    MONITORINFO info;
+    int x, y, cx, cy, caption, work_height;
+    RECT rect;
+
+    if (!show && !move) return;
+    if ((style & WS_CAPTION) != WS_CAPTION) return;
+    if (style & (WS_CHILD | WS_MAXIMIZE | WS_MINIMIZE)) return;
+    if (ex_style & WS_EX_TOOLWINDOW) return;
+    if (NtUserGetAncestor( winpos->hwnd, GA_PARENT ) != get_desktop_window()) return;
+    if (NtUserGetGUIThreadInfo( GetCurrentThreadId(), &gui ) && (gui.flags & GUI_INMOVESIZE)) return;
+    if (!get_window_rects( winpos->hwnd, COORDS_PARENT, &rects, get_thread_dpi() )) return;
+
+    x = (winpos->flags & SWP_NOMOVE) ? old_rects->window.left : winpos->x;
+    y = (winpos->flags & SWP_NOMOVE) ? old_rects->window.top : winpos->y;
+    cx = (winpos->flags & SWP_NOSIZE) ? old_rects->window.right - old_rects->window.left : winpos->cx;
+    cy = (winpos->flags & SWP_NOSIZE) ? old_rects->window.bottom - old_rects->window.top : winpos->cy;
+    if (cx <= 0 || cy <= 0) return;
+    caption = old_rects->client.top - old_rects->window.top;
+    if (caption <= 0 || caption >= cy)
+        caption = get_system_metrics( SM_CYCAPTION ) + get_system_metrics( SM_CYFRAME );
+
+    SetRect( &rect, x, y, x + cx, y + cy );
+    if (!NtUserMonitorFromRect( &rect, MONITOR_DEFAULTTONULL )) return;
+    info = monitor_info_from_rect( rect, get_thread_dpi() );
+    if (IsRectEmpty( &info.rcWork )) return;
+    if (rect.left <= info.rcMonitor.left && rect.top <= info.rcMonitor.top &&
+        rect.right >= info.rcMonitor.right && rect.bottom >= info.rcMonitor.bottom) return;
+    if (y >= info.rcWork.top && y + caption <= info.rcWork.bottom) return;
+
+    work_height = info.rcWork.bottom - info.rcWork.top;
+    if (y < info.rcWork.top) y = info.rcWork.top;
+    else y = max( info.rcWork.top, info.rcWork.bottom - cy );
+    if (show && cy > work_height)
+    {
+        cy = work_height;
+        winpos->cx = cx;
+        winpos->cy = cy;
+        winpos->flags &= ~SWP_NOSIZE;
+    }
+    TRACE( "hwnd %p: caption kept in the work area %s, %d,%d -> %d,%d %dx%d\n", winpos->hwnd,
+           wine_dbgstr_rect( &info.rcWork ), rect.left, rect.top, x, y, cx, cy );
+    winpos->x = x;
+    winpos->y = y;
+    winpos->flags &= ~SWP_NOMOVE;
+}
+
 static BOOL calc_winpos( WINDOWPOS *winpos, struct window_rects *old_rects, struct window_rects *new_rects )
 {
     WND *win;
@@ -3685,6 +3747,8 @@ static BOOL calc_winpos( WINDOWPOS *winpos, struct window_rects *old_rects, stru
     if (!(winpos->flags & SWP_NOSENDCHANGING)
            && !((winpos->flags & SWP_AGG_NOCLIENTCHANGE) && (winpos->flags & SWP_SHOWWINDOW)))
         send_message( winpos->hwnd, WM_WINDOWPOSCHANGING, 0, (LPARAM)winpos );
+    /* After the program's say, and once: no second WM_WINDOWPOSCHANGING. */
+    keep_caption_on_screen( winpos );
 
     if (!(win = get_win_ptr( winpos->hwnd )) ||
         win == WND_OTHER_PROCESS || win == WND_DESKTOP) return FALSE;
