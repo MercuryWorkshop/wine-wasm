@@ -71,6 +71,7 @@ static const struct fd_ops handler_fd_ops =
 
 static struct handler *handler_sighup;
 static struct handler *handler_sigterm;
+static struct handler *handler_sigusr1;
 static struct handler *handler_sigint;
 static struct handler *handler_sigchld;
 static struct handler *handler_sigio;
@@ -163,6 +164,14 @@ static void sigterm_callback(void)
     exit(1);
 }
 
+/* SIGUSR1 callback: the registry saved now, the server going on (gex: a page
+ * going away asks for it, so the changes since the last periodic save are in
+ * the prefix's files before the page keeps them) */
+static void sigusr1_callback(void)
+{
+    flush_registry();
+}
+
 /* SIGINT callback */
 static void sigint_callback(void)
 {
@@ -179,6 +188,12 @@ static void do_sighup( int signum )
 static void do_sigterm( int signum )
 {
     do_signal( handler_sigterm );
+}
+
+/* SIGUSR1 handler */
+static void do_sigusr1( int signum )
+{
+    do_signal( handler_sigusr1 );
 }
 
 /* SIGINT handler */
@@ -250,6 +265,7 @@ void init_signals(void)
 
     if (!(handler_sighup  = create_handler( sighup_callback ))) goto error;
     if (!(handler_sigterm = create_handler( sigterm_callback ))) goto error;
+    if (!(handler_sigusr1 = create_handler( sigusr1_callback ))) goto error;
     if (!(handler_sigint  = create_handler( sigint_callback ))) goto error;
     if (!(handler_sigchld = create_handler( sigchld_callback ))) goto error;
     if (!(handler_sigio   = create_handler( sigio_callback ))) goto error;
@@ -262,6 +278,7 @@ void init_signals(void)
     sigaddset( &blocked_sigset, SIGIO );
     sigaddset( &blocked_sigset, SIGQUIT );
     sigaddset( &blocked_sigset, SIGTERM );
+    sigaddset( &blocked_sigset, SIGUSR1 );
 #ifdef SIG_PTHREAD_CANCEL
     sigaddset( &blocked_sigset, SIG_PTHREAD_CANCEL );
 #endif
@@ -277,6 +294,8 @@ void init_signals(void)
     sigaction( SIGHUP, &action, NULL );
     action.sa_handler = do_sigint;
     sigaction( SIGINT, &action, NULL );
+    action.sa_handler = do_sigusr1;
+    sigaction( SIGUSR1, &action, NULL );
     action.sa_handler = do_sigalrm;
     sigaction( SIGALRM, &action, NULL );
     action.sa_handler = do_sigterm;
